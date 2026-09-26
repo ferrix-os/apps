@@ -256,7 +256,7 @@ const HEIGHT: u32 = 768;
 /// The layout of a terminal that is the only window on a 1024x768 monitor,
 /// which is what `cargo xtask test-compositor` boots.
 ///
-/// Asked of `compositor/layout` rather than worked out here: the gaps and
+/// Asked of `userland/compositor/layout` rather than worked out here: the gaps and
 /// the border are the configuration's, and a test that assumed them would
 /// be a test that broke when a default changed.
 fn one_window() -> compositor_layout::MonitorLayout {
@@ -318,8 +318,8 @@ fn version_frame(width: usize, height: usize) -> Vec<u8> {
 ///
 /// This is what `cargo xtask test-compositor` requires from a screendump of
 /// the guest, so it is drawn the way the compositor draws one: the window
-/// where `compositor/layout` puts it, the border and the background
-/// `compositor/render` gives it, and the terminal's pixels inside.
+/// where `userland/compositor/layout` puts it, the border and the background
+/// `userland/compositor/render` gives it, and the terminal's pixels inside.
 #[test]
 fn a_terminal_running_a_program_is_the_expected_image() {
     use std::collections::BTreeMap;

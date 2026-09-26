@@ -11,7 +11,7 @@ use std::io::Write as _;
 fn main() {
     // A program that is init is handed a shell's arguments, because the
     // kernel starts `sh -c <script>` and this is what it starts instead:
-    // `compositor/evecho`'s `unshell` turns them back into its own.
+    // `userland/compositor/evecho`'s `unshell` turns them back into its own.
     let arguments =
         compositor_evecho::init::unshell(std::env::args().skip(1).collect::<Vec<String>>());
     let headless = arguments.iter().any(|word| word == "--headless");
