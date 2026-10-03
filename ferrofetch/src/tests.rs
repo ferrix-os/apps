@@ -105,8 +105,14 @@ fn the_mark_stands_beside_the_lines_and_runs_on_below_them() {
     );
     let lines: Vec<&str> = out.as_str().lines().collect();
     assert_eq!(lines.len(), logo::ROWS.len());
-    assert_eq!(lines[0], format!("{:<w$}   h", logo::ROWS[0], w = logo::WIDTH));
-    assert_eq!(lines[1], format!("{:<w$}   -", logo::ROWS[1], w = logo::WIDTH));
+    assert_eq!(
+        lines[0],
+        format!("{:<w$}   h", logo::ROWS[0], w = logo::WIDTH)
+    );
+    assert_eq!(
+        lines[1],
+        format!("{:<w$}   -", logo::ROWS[1], w = logo::WIDTH)
+    );
     // Past the column, the mark's own rows, with no padding after them.
     assert_eq!(&lines[2..], &logo::ROWS[2..]);
 }
@@ -131,7 +137,9 @@ fn colour_is_the_brands_and_always_reset() {
     // The label in rust, bold; the F in grey and the slash in rust; a reset on
     // every row that coloured anything.
     assert!(text.contains("\x1b[1m\x1b[38;2;255;122;43mOS\x1b[0m: Ferrix 0.1.0 x86_64"));
-    assert!(text.contains("\x1b[38;2;203;205;209m#####################/  \x1b[38;2;255;122;43m/######/\x1b[0m"));
+    assert!(text.contains(
+        "\x1b[38;2;203;205;209m#####################/  \x1b[38;2;255;122;43m/######/\x1b[0m"
+    ));
     for line in text.lines().filter(|line| line.contains('\x1b')) {
         assert!(line.contains("\x1b[0m"), "{line:?} is left coloured");
     }
