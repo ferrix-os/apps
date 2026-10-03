@@ -1,0 +1,30 @@
+# hypridle, an app (docs/APPS.md): the desktop carries it whether or not the
+# app is installed (xtask's compositor), so it is not in an image by default.
+
+[package]
+name = "hypridle"
+version = "0.1.0"
+description = "hypridle: run commands when the seat goes idle and comes back, and the loginctl that reaches it"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "hypridle"
+to = "bin/hypridle"
+mode = "755"
+
+[[package.files]]
+from = "loginctl"
+to = "bin/loginctl"
+mode = "755"
+
+[build]
+kind = "cargo"
+
+[image]
+default = false
+
+[check]
+host-tests = true
