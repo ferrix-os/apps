@@ -4,7 +4,8 @@
 //! `user@host`, a rule under it, one `Label: value` line for each fact the
 //! program found, and the terminal's sixteen colours. A fact it did not find
 //! has no line. The colours are the brand's (`docs/brand/BRAND.md`): rust for
-//! what matters -- the labels, the name, the core -- and grey for the rest.
+//! what matters -- the labels, the name, the mark's slash -- and grey for the
+//! rest.
 
 use core::fmt::{self, Write};
 
@@ -15,12 +16,10 @@ use crate::parse::{Cpu, Memory, Options};
 /// The most displays the lines name.
 pub const MAX_DISPLAYS: usize = 4;
 
-/// Rust, `#ff7a2b`: the labels, the name and the core.
+/// Rust, `#ff7a2b`: the labels, the name and the slash.
 const RUST: &str = "\x1b[38;2;255;122;43m";
-/// Muted grey, `#9aa4b2`: the lattice.
-const MUTED: &str = "\x1b[38;2;154;164;178m";
-/// The atoms' lighter grey, `#c9d1db`.
-const ATOM: &str = "\x1b[38;2;201;209;219m";
+/// The mark's grey, `#cbcdd1`: the F and the chip.
+const GREY: &str = "\x1b[38;2;203;205;209m";
 /// Bold.
 const BOLD: &str = "\x1b[1m";
 /// Back to the terminal's own colours.
@@ -196,9 +195,8 @@ pub fn render(out: &mut impl Write, facts: &Facts, options: Options) -> fmt::Res
     for row in 0..rows {
         let line = column.get(row);
         if options.logo {
-            let art = logo::ROWS.get(row).copied().unwrap_or_default();
             let width = if line.is_some() { logo::WIDTH } else { 0 };
-            mark_row(out, art, width, options.color)?;
+            mark_row(out, row, width, options.color)?;
             if line.is_some() {
                 out.write_str(GAP)?;
             }
@@ -211,16 +209,16 @@ pub fn render(out: &mut impl Write, facts: &Facts, options: Options) -> fmt::Res
     Ok(())
 }
 
-/// One row of the mark, padded with spaces to `width`.
-fn mark_row(out: &mut impl Write, art: &str, width: usize, color: bool) -> fmt::Result {
+/// Row `row` of the mark, padded with spaces to `width`.
+fn mark_row(out: &mut impl Write, row: usize, width: usize, color: bool) -> fmt::Result {
+    let art = logo::ROWS.get(row).copied().unwrap_or_default();
     let mut current = Part::Space;
-    for character in art.bytes() {
-        let part = logo::part(character);
+    for (column, character) in art.bytes().enumerate() {
+        let part = logo::part(row, column);
         if color && part != Part::Space && part != current {
             out.write_str(match part {
-                Part::Lattice => MUTED,
-                Part::Atom => ATOM,
-                Part::Core | Part::Space => RUST,
+                Part::Body => GREY,
+                Part::Slash | Part::Space => RUST,
             })?;
             current = part;
         }

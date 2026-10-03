@@ -3,12 +3,12 @@
 //! The mark beside a few lines about the machine, the shell and the session:
 //!
 //! ```text
-//!             o              ferrix@ferrix
-//!         _.-' '-._          -------------
-//!     _.-'         '-._      OS: Ferrix 0.1.0 x86_64
-//!   o'-._           _.-'o    Kernel: Ferrix 6.1.0-ferrix
-//!   |    '-._   _.-'    |    Uptime: 3 hours, 25 mins
-//!   |        (@)        |    ...
+//! #####################/  /######/   ferrix@ferrix
+//! ###################/  /######/     -------------
+//! #####               /######/       OS: Ferrix 0.1.0 x86_64
+//! #####             /######/         Kernel: Ferrix 6.1.0-ferrix
+//! ################\ \####/           Uptime: 3 hours, 25 mins
+//! ##################\ \/             ...
 //! ```
 //!
 //! A native program, started from a shell by `execve` like any other

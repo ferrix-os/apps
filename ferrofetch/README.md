@@ -8,19 +8,18 @@ Ferrix's fastfetch: the Ferrix mark beside a few lines about the machine,
 the shell and the session.
 
 ```
-            o              root@ferrix
-        _.-' '-._          -----------
-    _.-'         '-._      OS: Ferrix 0.1.0 x86_64
-  o'-._           _.-'o    Kernel: Ferrix 6.1.0-ferrix
-  |    '-._   _.-'    |    Uptime: 8 secs
-  |        (@)        |    Processes: 6
-  |         |         |    Shell: zinc
-  |         |         |    Terminal: console
-  |         |         |    CPU: x86_64 (4)
-  o-._      |      _.-o    Memory: 50 MiB / 471 MiB (10%)
-      '-._  |  _.-'        Load: 0.08 0.02 0.01
-          '-|-'
-            o
+#####################/  /######/   root@ferrix
+###################/  /######/     -----------
+#####               /######/       OS: Ferrix 0.1.0 x86_64
+#####             /######/         Kernel: Ferrix 6.1.0-ferrix
+################\ \####/           Uptime: 8 secs
+##################\ \/             Processes: 6
+#####       \#######\              Shell: zinc
+#####      /\ \#######\            Terminal: console
+#####    /###\  \#######\          CPU: x86_64 (4)
+#####  /######/   \#######\        Memory: 50 MiB / 471 MiB (10%)
+#####  #####/       \#######\      Load: 0.08 0.02 0.01
+#####  ###/           \#######\
 ```
 
 `ferrofetch --no-logo` prints the lines alone, `--no-color` without the
