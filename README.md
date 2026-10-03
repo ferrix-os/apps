@@ -9,16 +9,23 @@ what its `app.toml` says; `cargo xtask apps` lists them.
 
 <table>
   <tr>
-    <td width="33%"><img src="https://raw.githubusercontent.com/ferrix-os/ferrix/main/docs/brand/screenshots/foot.png" alt="foot running zinc and ferrofetch on Ferrix"></td>
-    <td width="33%"><img src="https://raw.githubusercontent.com/ferrix-os/ferrix/main/docs/brand/screenshots/btop.png" alt="btop monitoring a Ferrix system"></td>
-    <td width="33%"><img src="https://raw.githubusercontent.com/ferrix-os/ferrix/main/docs/brand/screenshots/vkgears.png" alt="vkgears drawing Vulkan gears on Ferrix"></td>
+    <td width="33%"><a href="ferrofetch/"><img src="ferrofetch/screenshot.png" alt="ferrofetch on Ferrix"></a><br><b><a href="ferrofetch/">ferrofetch</a></b></td>
+    <td width="33%"><a href="btop/"><img src="btop/screenshot.png" alt="btop on Ferrix"></a><br><b><a href="btop/">btop</a></b></td>
+    <td width="33%"><a href="vkgears/"><img src="vkgears/screenshot.png" alt="vkgears on Ferrix"></a><br><b><a href="vkgears/">vkgears</a></b></td>
   </tr>
   <tr>
-    <td>foot, running zinc and <code>ferrofetch</code>.</td>
-    <td>btop, watching Chrome and Ferrix's drivers.</td>
-    <td>vkgears, drawing through Vulkan and Venus.</td>
+    <td width="33%"><a href="curl/"><img src="curl/screenshot.png" alt="curl on Ferrix"></a><br><b><a href="curl/">curl</a></b></td>
+    <td width="33%"><a href="git/"><img src="git/screenshot.png" alt="git on Ferrix"></a><br><b><a href="git/">git</a></b></td>
+    <td width="33%"><a href="statd/"><img src="statd/screenshot.png" alt="statd on Ferrix"></a><br><b><a href="statd/">statd</a></b></td>
+  </tr>
+  <tr>
+    <td width="33%"><a href="alsa-utils/"><img src="alsa-utils/screenshot.png" alt="alsa-utils on Ferrix"></a><br><b><a href="alsa-utils/">alsa-utils</a></b></td>
+    <td width="33%"><a href="alsa-lib/"><img src="alsa-lib/screenshot.png" alt="alsa-lib on Ferrix"></a><br><b><a href="alsa-lib/">alsa-lib</a></b></td>
+    <td width="33%"><a href="sshdt/"><img src="sshdt/screenshot.png" alt="sshdt on Ferrix"></a><br><b><a href="sshdt/">sshdt</a></b></td>
   </tr>
 </table>
+
+*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM) at main 2f067e40f, 2026-10-03. foot's and badapple's follow.*
 
 - **Ferrix's own:** `badapple`, `ferrofetch`, `statd`.
 - **Ported onto ferrousli**, Ferrix's C library, with its `tools/ports/`:

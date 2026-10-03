@@ -1,5 +1,9 @@
 # ferrix-statd
 
+![`ferrix-statd` sampling the machine for three seconds, a line of JSON a sample](screenshot.png)
+
+*`ferrix-statd` sampling the machine for three seconds, a line of JSON a sample. On Ferrix (x86-64 under KVM) at main 2f067e40f, 2026-10-03; nothing edited after capture.*
+
 Ferrix's stat service: a program like any other on Ferrix that reads what
 Linux's `vmstat` and `top` read (`/proc/stat`, `/proc/meminfo`,
 `/proc/uptime`, `/proc/<pid>/stat`) and writes one line of JSON a sample to
