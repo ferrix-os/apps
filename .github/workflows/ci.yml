@@ -1,0 +1,60 @@
+name: CI
+
+# This repository is a component of Ferrix (https://github.com/ferrix-os/ferrix): xtask builds
+# and gates it from a checkout of Ferrix's main with this repository at
+# src/user/apps (components.toml). So CI checks out exactly that.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  authors:
+    name: One author per commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v6
+        with:
+          repository: ferrix-os/ferrix
+          path: .ferrix
+          sparse-checkout: tools/common/check
+      - name: No commit carries a Co-authored-by trailer
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            BASE=${{ github.event.pull_request.base.sha }}; HEAD=${{ github.event.pull_request.head.sha }}
+          else
+            BASE=${{ github.event.before }}; HEAD=${{ github.sha }}
+          fi
+          case "$BASE" in 0000000000000000000000000000000000000000|"") BASE=$(git rev-list --max-parents=0 HEAD | tail -1) ;; esac
+          python3 .ferrix/tools/common/check/check-commit-authors.py "$BASE" "$HEAD"
+
+  check:
+    name: cargo xtask check-apps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ferrix-os/ferrix
+      - uses: actions/checkout@v6
+        with:
+          path: src/user/apps
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-unknown-none, aarch64-unknown-none-softfloat, armv7a-none-eabi, x86_64-unknown-uefi, aarch64-unknown-uefi, x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      # xtask's checks refuse to run with Ferrix's commit hooks unarmed.
+      - name: Arm the commit hooks
+        run: git config core.hooksPath .githooks
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+      - name: cargo xtask check-apps
+        run: cargo xtask check-apps
