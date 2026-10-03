@@ -6,6 +6,7 @@
 name = "badapple"
 version = "0.1.0"
 description = "Bad Apple!!: the shadow-art video on the screen, its song through /dev/snd, kept in step by the sound card's clock"
+license = "MIT"
 abi = "linux"
 arches = ["x86_64", "aarch64", "armv7a"]
 depends = []

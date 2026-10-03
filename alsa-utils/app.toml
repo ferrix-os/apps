@@ -6,6 +6,7 @@
 name = "alsa-utils"
 version = "1.2.16"
 description = "aplay, arecord and speaker-test, static against ferrousli"
+license = "GPL-2.0-or-later AND LGPL-2.1-or-later"
 abi = "linux"
 arches = ["x86_64"]
 depends = ["alsa-lib"]

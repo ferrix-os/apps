@@ -5,6 +5,7 @@
 name = "btop"
 version = "1.4.7"
 description = "btop, the resource monitor, static against ferrousli"
+license = "Apache-2.0 AND Apache-2.0 WITH LLVM-exception"
 abi = "linux"
 arches = ["x86_64"]
 depends = []

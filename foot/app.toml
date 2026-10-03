@@ -6,6 +6,7 @@
 name = "foot"
 version = "1.24.0"
 description = "foot, the Wayland terminal, static against ferrousli, with DejaVu"
+license = "MIT AND (FTL OR GPL-2.0-or-later) AND HPND-sell-variant AND Bitstream-Vera"
 abi = "linux"
 arches = ["x86_64"]
 depends = []

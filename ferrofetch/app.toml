@@ -4,6 +4,7 @@
 name = "ferrofetch"
 version = "0.1.0"
 description = "Ferrix's fastfetch: the mark beside a few lines about the machine, the shell and the session"
+license = "MIT"
 abi = "native"
 arches = ["x86_64", "aarch64", "armv7a"]
 depends = []

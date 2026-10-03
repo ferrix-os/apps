@@ -7,6 +7,7 @@
 name = "curl"
 version = "8.22.0"
 description = "curl, the URL transfer tool, static against ferrousli with Mbed TLS"
+license = "curl AND (Apache-2.0 OR GPL-2.0-or-later) AND MPL-2.0"
 abi = "linux"
 arches = ["x86_64", "aarch64", "armv7a"]
 depends = []
