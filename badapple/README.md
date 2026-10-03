@@ -1,5 +1,9 @@
 # badapple
 
+![Bad Apple!! frame 899 on Ferrix](screenshot.png)
+
+*Bad Apple!! on Ferrix: frame 899, thirty seconds in, as the player drew it and `cargo xtask test-badapple` held it for its screendump (x86-64 under KVM, main fee29d168, 2026-10-03). The video is fetched by `tools/common/fetch/fetch-badapple.sh`, not kept here.*
+
 Bad Apple!! on Ferrix: Anira's shadow-art video on the screen and its song
 through `/dev/snd`, the picture kept in step by the sound card's clock
 (`docs/MEDIA.md` has the whole design).

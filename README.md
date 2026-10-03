@@ -23,9 +23,12 @@ what its `app.toml` says; `cargo xtask apps` lists them.
     <td width="33%"><a href="alsa-lib/"><img src="alsa-lib/screenshot.png" alt="alsa-lib on Ferrix"></a><br><b><a href="alsa-lib/">alsa-lib</a></b></td>
     <td width="33%"><a href="sshdt/"><img src="sshdt/screenshot.png" alt="sshdt on Ferrix"></a><br><b><a href="sshdt/">sshdt</a></b></td>
   </tr>
+  <tr>
+    <td width="33%"><a href="badapple/"><img src="badapple/screenshot.png" alt="badapple on Ferrix"></a><br><b><a href="badapple/">badapple</a></b></td>
+  </tr>
 </table>
 
-*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM) at main 2f067e40f, 2026-10-03. foot's and badapple's follow.*
+*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM) at main 2f067e40f, 2026-10-03 (badapple's at fee29d168). foot's follows: foot takes no keyboard input on Ferrix yet.*
 
 - **Ferrix's own:** `badapple`, `ferrofetch`, `statd`.
 - **Ported onto ferrousli**, Ferrix's C library, with its `tools/ports/`:
