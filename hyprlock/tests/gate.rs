@@ -40,8 +40,7 @@ fn config() -> Config {
 }
 
 fn assets() -> System {
-    let fonts =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../assets/fonts/liberation");
+    let fonts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../assets/fonts/liberation");
     System::with_font_dirs(&[&fonts])
 }
 
