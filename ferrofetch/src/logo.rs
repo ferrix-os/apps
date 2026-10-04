@@ -49,7 +49,7 @@ pub fn part(row: usize, column: usize) -> Part {
     };
     match text.as_bytes().get(column) {
         None | Some(b' ') => Part::Space,
-        Some(_) if column >= SLASH[row] => Part::Slash,
+        Some(_) if SLASH.get(row).is_some_and(|slash| column >= *slash) => Part::Slash,
         Some(_) => Part::Body,
     }
 }
