@@ -2,7 +2,7 @@
 
 ![ferrofetch in the desktop's terminal](screenshot.png)
 
-*ferrofetch in the desktop's terminal. On Ferrix (x86-64 under KVM) at main 2f067e40f, 2026-10-03; nothing edited after capture.*
+*ferrofetch in the desktop's terminal, with the FX mark. On Ferrix (x86-64 under KVM) at main 65a33486c, 2026-10-04; nothing edited after capture.*
 
 Ferrix's fastfetch: the Ferrix mark beside a few lines about the machine,
 the shell and the session.
