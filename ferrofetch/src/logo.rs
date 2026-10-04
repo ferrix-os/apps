@@ -44,12 +44,12 @@ pub const WIDTH: usize = 32;
 /// What the character at `column` of `row` is.
 #[must_use]
 pub fn part(row: usize, column: usize) -> Part {
-    let Some(text) = ROWS.get(row) else {
+    let (Some(text), Some(&slash)) = (ROWS.get(row), SLASH.get(row)) else {
         return Part::Space;
     };
     match text.as_bytes().get(column) {
         None | Some(b' ') => Part::Space,
-        Some(_) if SLASH.get(row).is_some_and(|slash| column >= *slash) => Part::Slash,
+        Some(_) if column >= slash => Part::Slash,
         Some(_) => Part::Body,
     }
 }

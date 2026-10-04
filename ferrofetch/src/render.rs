@@ -192,6 +192,11 @@ pub fn render(out: &mut impl Write, facts: &Facts, options: Options) -> fmt::Res
     } else {
         column.len
     };
+    // With the mark, a blank line first: it keeps the mark off the command
+    // line above it, as neofetch does.
+    if options.logo {
+        out.write_str("\n")?;
+    }
     for row in 0..rows {
         let line = column.get(row);
         if options.logo {
