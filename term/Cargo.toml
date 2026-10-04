@@ -1,14 +1,20 @@
 [package]
 name = "compositor-term"
 description = "A terminal emulator: a pseudoterminal, a character grid, and a window to draw it in"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-# The code is the workspace's licence. The fonts in `font/`, and the coverage
-# cells `src/font.rs` holds, are Hack: MIT and the Bitstream Vera License, see
-# LICENSE-hack, which a binary shipping this crate must reproduce.
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+# The code is Ferrix's licence. The fonts in `font/`, and the coverage cells
+# `src/font.rs` holds, are Hack: MIT and the Bitstream Vera License, see
+# LICENSE-hack, which a binary shipping this crate must reproduce (app.toml
+# installs it with the program).
+license = "MIT"
+publish = false
+
+# An app (Ferrix's docs/APPS.md): a workspace of its own, a static Linux
+# program built with std against the target's own musl. It builds inside a
+# Ferrix checkout, where the compositor's libraries and fbtext are beside it.
+[workspace]
 
 [[bin]]
 name = "term"
@@ -19,19 +25,25 @@ name = "compositor_term"
 path = "src/lib.rs"
 
 [dependencies]
-compositor-evecho = { path = "../evecho" }
-compositor-protocol = { path = "../protocol" }
-compositor-shm = { path = "../shm" }
-compositor-socket = { path = "../socket" }
-compositor-wire = { path = "../wire" }
-compositor-xkb = { path = "../xkb" }
-ferrix-fbtext = { path = "../../../../../lib/kernel/fbtext" }
+compositor-evecho = { path = "../../system/linux/compositor/evecho" }
+compositor-protocol = { path = "../../system/linux/compositor/protocol" }
+compositor-shm = { path = "../../system/linux/compositor/shm" }
+compositor-socket = { path = "../../system/linux/compositor/socket" }
+compositor-wire = { path = "../../system/linux/compositor/wire" }
+compositor-xkb = { path = "../../system/linux/compositor/xkb" }
+ferrix-fbtext = { path = "../../../lib/kernel/fbtext" }
 # Declarations only: the pseudoterminal's `open`, `ioctl`, `fork` and `execve`.
 libc = "0.2.189"
 
 [dev-dependencies]
-compositor-layout = { path = "../layout" }
-compositor-render = { path = "../render" }
+compositor-layout = { path = "../../system/linux/compositor/layout" }
+compositor-render = { path = "../../system/linux/compositor/render" }
 
-[lints]
-workspace = true
+# As the compositor's: overflow checks on everywhere, and the tests built
+# optimised, since they wait on real time.
+[profile.dev]
+overflow-checks = true
+opt-level = 2
+
+[profile.release]
+overflow-checks = true

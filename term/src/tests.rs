@@ -692,11 +692,9 @@ fn a_terminal_running_a_program_is_the_expected_image() {
     let mut target = Target::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).expect("a target");
     canvas.present(&mut target, &full).expect("the frame fits");
 
+    // The render library's expected pictures, in Ferrix beside this app.
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("render")
-        .join("tests")
-        .join("data");
+        .join("../../system/linux/compositor/render/tests/data");
     compositor_render::golden::check_in(
         &directory,
         "terminal-hyprctl-version",
