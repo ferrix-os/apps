@@ -9,6 +9,16 @@ what its `app.toml` says; `cargo xtask apps` lists them.
 
 <table>
   <tr>
+    <td width="33%"><a href="term/"><img src="term/screenshot.png" alt="term on Ferrix"></a><br><b><a href="term/">term</a></b></td>
+    <td width="33%"><a href="foot/"><img src="foot/screenshot.png" alt="foot on Ferrix"></a><br><b><a href="foot/">foot</a></b></td>
+    <td width="33%"><a href="waybar/"><img src="waybar/screenshot.png" alt="waybar on Ferrix"></a><br><b><a href="waybar/">waybar</a></b></td>
+  </tr>
+  <tr>
+    <td width="33%"><a href="fuzzel/"><img src="fuzzel/screenshot.png" alt="fuzzel on Ferrix"></a><br><b><a href="fuzzel/">fuzzel</a></b></td>
+    <td width="33%"><a href="hyprlock/"><img src="hyprlock/screenshot.png" alt="hyprlock on Ferrix"></a><br><b><a href="hyprlock/">hyprlock</a></b></td>
+    <td width="33%"><a href="hypridle/"><img src="hypridle/screenshot.png" alt="hypridle on Ferrix"></a><br><b><a href="hypridle/">hypridle</a></b></td>
+  </tr>
+  <tr>
     <td width="33%"><a href="ferrofetch/"><img src="ferrofetch/screenshot.png" alt="ferrofetch on Ferrix"></a><br><b><a href="ferrofetch/">ferrofetch</a></b></td>
     <td width="33%"><a href="btop/"><img src="btop/screenshot.png" alt="btop on Ferrix"></a><br><b><a href="btop/">btop</a></b></td>
     <td width="33%"><a href="vkgears/"><img src="vkgears/screenshot.png" alt="vkgears on Ferrix"></a><br><b><a href="vkgears/">vkgears</a></b></td>
@@ -28,8 +38,10 @@ what its `app.toml` says; `cargo xtask apps` lists them.
   </tr>
 </table>
 
-*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM) at main 2f067e40f, 2026-10-03 (badapple's at fee29d168). foot's follows: foot takes no keyboard input on Ferrix yet.*
+*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM): the desktop's clients and foot at main def906ba2 (2026-10-04), the others at 2f067e40f and badapple at fee29d168 (2026-10-03).*
 
+- **The desktop's:** `term`, `waybar`, `fuzzel`, `hyprlock`, `hypridle`, which
+  every desktop carries.
 - **Ferrix's own:** `badapple`, `ferrofetch`, `statd`.
 - **Ported onto ferrousli**, Ferrix's C library, with its `tools/ports/`:
   `alsa-lib`, `alsa-utils`, `btop`, `curl`, `foot`, `git`, `sshdt`, `vkgears`.
