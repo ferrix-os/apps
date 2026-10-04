@@ -1,11 +1,16 @@
 [package]
 name = "compositor-fuzzel"
 description = "fuzzel, the application launcher, reading the user's fuzzel.ini unchanged"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# An app (Ferrix's docs/APPS.md): a workspace of its own, a static Linux
+# program built with std against the target's own musl. It builds inside a
+# Ferrix checkout, where the compositor's libraries are beside it.
+[workspace]
 
 [[bin]]
 name = "fuzzel"
@@ -17,19 +22,25 @@ path = "src/lib.rs"
 
 [dependencies]
 # PNG and SVG icons, into pixmaps.
-compositor-image = { path = "../image" }
+compositor-image = { path = "../../system/linux/compositor/image" }
 # Fonts, shaping and glyphs: fuzzel's fcft.
-compositor-text = { path = "../text" }
+compositor-text = { path = "../../system/linux/compositor/text" }
 # The Wayland client: the layer surface, the keyboard, the buffers.
-compositor-toolkit = { path = "../toolkit" }
+compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
 # The keymaps: which keysym names exist, and what a key makes.
-compositor-xkb = { path = "../xkb" }
+compositor-xkb = { path = "../../system/linux/compositor/xkb" }
 
 [dev-dependencies]
 # The boot's pictures are fuzzel's frames as the compositor lays out and
 # composites a layer surface; the tests draw them the same way.
-compositor-layout = { path = "../layout" }
-compositor-render = { path = "../render" }
+compositor-layout = { path = "../../system/linux/compositor/layout" }
+compositor-render = { path = "../../system/linux/compositor/render" }
 
-[lints]
-workspace = true
+# As the compositor's: overflow checks on everywhere, and the tests built
+# optimised, since they wait on real time.
+[profile.dev]
+overflow-checks = true
+opt-level = 2
+
+[profile.release]
+overflow-checks = true

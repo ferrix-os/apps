@@ -1,0 +1,26 @@
+# fuzzel, an app (docs/APPS.md): every desktop carries it whether or not the
+# app is installed (xtask's compositor), so it is not in an image by default.
+# The launcher entries it lists are the system's, which every desktop installs.
+
+[package]
+name = "fuzzel"
+version = "1.12.0"
+description = "fuzzel: the launcher, listing the installed applications' .desktop entries"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "fuzzel"
+to = "bin/fuzzel"
+mode = "755"
+
+[build]
+kind = "cargo"
+
+[image]
+default = false
+
+[check]
+host-tests = true

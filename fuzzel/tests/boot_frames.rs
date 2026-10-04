@@ -4,8 +4,9 @@
 //! The boot starts fuzzel with `data/boot/fuzzel.ini` over an empty screen,
 //! then has `/bin/vkbd` type `pat`, and requires QEMU's screendump to be
 //! these pictures pixel for pixel. They are made the way the guest makes
-//! them: fuzzel's own drawing of the same entries (`data/applications`) with
-//! the same font and icons, composited by `src/user/system/linux/compositor/render` as the
+//! them: fuzzel's own drawing of the same entries (the system's, in Ferrix's
+//! `src/user/system/linux/compositor/desktop`) with the same font and icons,
+//! composited by `src/user/system/linux/compositor/render` as the
 //! compositor composites a layer surface on the overlay layer, centred where
 //! `src/user/system/linux/compositor/layout` puts one with no anchor. The images are blessed with
 //! `COMPOSITOR_RENDER_BLESS=1` and kept with the renderer's.
@@ -38,6 +39,14 @@ const HEIGHT: u32 = 768;
 fn data(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("data")
+        .join(relative)
+}
+
+/// The system's launcher entries and icons, which every desktop installs:
+/// Ferrix's, beside this app's checkout.
+fn system(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../system/linux/compositor/desktop")
         .join(relative)
 }
 
@@ -77,7 +86,7 @@ fn entries(config: &Config) -> Vec<desktop::Application> {
     let mut apps = Vec::new();
     for name in ["terminal", "pattern", "top"] {
         let file = format!("{name}.desktop");
-        let text = read(&data(&format!("applications/{file}")));
+        let text = read(&system(&format!("applications/{file}")));
         apps.extend(desktop::parse_desktop_file(
             &text,
             &file,
@@ -95,7 +104,7 @@ fn entries(config: &Config) -> Vec<desktop::Application> {
 fn frame(config: &Config, launcher: &Launcher) -> (Vec<u8>, u32, u32) {
     let mut fonts = compositor_text::Fonts::new();
     let font = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../../../assets/fonts/liberation/LiberationSerif-Regular.ttf");
+        .join("../../../../assets/fonts/liberation/LiberationSerif-Regular.ttf");
     assert_eq!(fonts.add_file(&font), 1, "{}", font.display());
     // `dpi-aware=no`: 96 DPI at scale 1, whatever the screen reports.
     let scaling = Scaling {
@@ -111,7 +120,7 @@ fn frame(config: &Config, launcher: &Launcher) -> (Vec<u8>, u32, u32) {
         .iter()
         .map(|app| {
             app.icon_name.as_ref().map(|name| Found {
-                path: data(&format!("icons/{name}.svg")),
+                path: system(&format!("icons/{name}.svg")),
                 kind: Kind::Svg,
             })
         })
@@ -186,7 +195,7 @@ fn screen(argb: &[u8], width: u32, height: u32) -> Vec<u8> {
 }
 
 fn expected_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../render/tests/data")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../system/linux/compositor/render/tests/data")
 }
 
 #[test]
