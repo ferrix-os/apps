@@ -103,7 +103,10 @@ fn the_mark_stands_beside_the_lines_and_runs_on_below_them() {
             color: false,
         },
     );
-    let lines: Vec<&str> = out.as_str().lines().collect();
+    let all: Vec<&str> = out.as_str().lines().collect();
+    // A blank line above the mark, then the mark's rows.
+    assert_eq!(all.first(), Some(&""));
+    let lines = &all[1..];
     assert_eq!(lines.len(), logo::ROWS.len());
     assert_eq!(
         lines[0],
