@@ -747,9 +747,14 @@ impl Default for Label {
 
 /// One widget.
 #[derive(Clone, Debug, PartialEq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a file has a handful of widgets, each made once; boxing one kind buys nothing"
+// Large only where pointers are 64 bits: on ARMv7-A the variants are near
+// enough in size that the lint is quiet, and an `expect` there would fail.
+#[cfg_attr(
+    target_pointer_width = "64",
+    expect(
+        clippy::large_enum_variant,
+        reason = "a file has a handful of widgets, each made once; boxing one kind buys nothing"
+    )
 )]
 pub enum Widget {
     /// A background.
