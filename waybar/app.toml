@@ -1,0 +1,26 @@
+# waybar, an app (docs/APPS.md): every desktop carries it whether or not the
+# app is installed (xtask's compositor), so it is not in an image by default.
+# waybar-probe, the host-side checker of a config, is built and not packaged.
+
+[package]
+name = "waybar"
+version = "0.1.0"
+description = "waybar in Rust: the user's config.jsonc and GTK3 style.css, drawn as a layer-shell bar"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "waybar"
+to = "bin/waybar"
+mode = "755"
+
+[build]
+kind = "cargo"
+
+[image]
+default = false
+
+[check]
+host-tests = true

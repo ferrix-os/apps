@@ -1,11 +1,16 @@
 [package]
 name = "compositor-waybar"
 description = "waybar in Rust: the user's config.jsonc and GTK3 style.css, drawn as a layer-shell bar"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# An app (Ferrix's docs/APPS.md): a workspace of its own, a static Linux
+# program built with std against the target's own musl. It builds inside a
+# Ferrix checkout, where the compositor and its libraries are beside it.
+[workspace]
 
 [lib]
 name = "compositor_waybar"
@@ -25,11 +30,11 @@ path = "src/bin/probe.rs"
 [dependencies]
 # The clients' Wayland runtime: the layer surfaces, popups, pointer, timers,
 # children and signals the bar runs on.
-compositor-toolkit = { path = "../toolkit" }
+compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
 # Labels and tooltips in the user's fonts, with Pango markup.
-compositor-text = { path = "../text" }
+compositor-text = { path = "../../system/linux/compositor/text" }
 # The stylesheet's url() images: the chips' SVG caps and icons.
-compositor-image = { path = "../image" }
+compositor-image = { path = "../../system/linux/compositor/image" }
 # The PulseAudio native protocol's wire format, for the pulseaudio module's
 # volume, mute and description: the crate Ferrix's own sound server is
 # planned on (docs/AUDIO.md, U2), pure Rust, MIT. Its protocol module is
@@ -39,13 +44,19 @@ pulseaudio = "0.3.1"
 # reads an interface's address with.
 libc = "0.2.189"
 # The rasteriser the bar's CSS boxes are drawn with: the one version the
-# workspace pins (src/user/system/linux/compositor/render's reasons), so the foundation's glyphs
+# compositor pins (Ferrix's src/user/system/linux/compositor/render's reasons), so the foundation's glyphs
 # and images and this crate's boxes are one tiny-skia.
 tiny-skia = { version = "=0.12.0", default-features = false, features = ["std", "simd"] }
 
 [dev-dependencies]
 # The compositor, run in the test's own process, for the bar to draw on.
-hyprix = { path = "../hyprix" }
+hyprix = { path = "../../system/linux/compositor/hyprix" }
 
-[lints]
-workspace = true
+# As the compositor's: overflow checks on everywhere, and the tests built
+# optimised, since they wait on real time.
+[profile.dev]
+overflow-checks = true
+opt-level = 2
+
+[profile.release]
+overflow-checks = true
