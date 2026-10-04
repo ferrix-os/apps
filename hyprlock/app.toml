@@ -1,0 +1,26 @@
+# hyprlock, an app (docs/APPS.md): every desktop carries it whether or not
+# the app is installed (xtask's compositor), so it is not in an image by
+# default.
+
+[package]
+name = "hyprlock"
+version = "0.9.6"
+description = "hyprlock: the user's hyprlock.conf on ext-session-lock-v1 surfaces, passwords checked by authd"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "hyprlock"
+to = "bin/hyprlock"
+mode = "755"
+
+[build]
+kind = "cargo"
+
+[image]
+default = false
+
+[check]
+host-tests = true

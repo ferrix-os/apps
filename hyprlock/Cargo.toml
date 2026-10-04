@@ -1,11 +1,16 @@
 [package]
 name = "compositor-hyprlock"
 description = "hyprlock for Ferrix: the user's hyprlock.conf, drawn on ext-session-lock-v1 surfaces"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# An app (Ferrix's docs/APPS.md): a workspace of its own, a static Linux
+# program built with std against the target's own musl. It builds inside a
+# Ferrix checkout, where the compositor's libraries and authd's client are.
+[workspace]
 
 [[bin]]
 name = "hyprlock"
@@ -16,26 +21,32 @@ name = "compositor_hyprlock"
 path = "src/lib.rs"
 
 [dependencies]
-compositor-anim = { path = "../anim" }
-compositor-config = { path = "../config" }
-compositor-hyprlang = { path = "../hyprlang" }
-compositor-image = { path = "../image" }
-compositor-text = { path = "../text" }
-compositor-toolkit = { path = "../toolkit" }
+compositor-anim = { path = "../../system/linux/compositor/anim" }
+compositor-config = { path = "../../system/linux/compositor/config" }
+compositor-hyprlang = { path = "../../system/linux/compositor/hyprlang" }
+compositor-image = { path = "../../system/linux/compositor/image" }
+compositor-text = { path = "../../system/linux/compositor/text" }
+compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
 # authd's client and its records (docs/AUTH.md §3.3): the password goes to
 # authd over /run/ferrix/auth, and hyprlock never sees a credential.
-ferrix-auth-client = { path = "../../auth/client" }
-ferrix-auth-proto = { path = "../../../../../lib/proto/auth-proto" }
+ferrix-auth-client = { path = "../../system/linux/auth/client" }
+ferrix-auth-proto = { path = "../../../lib/proto/auth-proto" }
 # Declarations only: getuid(2).
 libc = "0.2.189"
 # The rasteriser the widgets are drawn with, at the version the workspace
-# pins (src/user/system/linux/compositor/render/Cargo.toml says why exactly); no new crates.
+# pins (Ferrix's src/user/system/linux/compositor/render/Cargo.toml says why exactly); no new crates.
 tiny-skia = { version = "=0.12.0", default-features = false, features = ["std", "simd"] }
 
 [dev-dependencies]
 # The expected images' format and the compositor's own compositing, which is
 # what makes a lock surface the guest's screen.
-compositor-render = { path = "../render" }
+compositor-render = { path = "../../system/linux/compositor/render" }
 
-[lints]
-workspace = true
+# As the compositor's: overflow checks on everywhere, and the tests built
+# optimised, since they wait on real time.
+[profile.dev]
+overflow-checks = true
+opt-level = 2
+
+[profile.release]
+overflow-checks = true
