@@ -8,15 +8,25 @@
 //!
 //! The parts here hold no socket and draw no pixel, so they are host-tested
 //! against the behaviour fuzzel's source defines.
+//!
+//! Finding the `.desktop` entries and their icons is the desktop's own
+//! `compositor-desktop`, [`desktop`] and [`icon`] here, since the Settings
+//! app lists the same applications; fuzzel's `xdg.c` and `icon.c` are
+//! followed there. So is what Ferrix adds to a start: an application the user
+//! switched to game mode in Settings is started with the mark
+//! ([`exec::Launch::mark`], Ferrix's `docs/SETTINGS.md`).
+
+/// The applications: fuzzel's `xdg.c`, in the desktop's own crate.
+pub use compositor_desktop::entry as desktop;
+/// The icons: fuzzel's `icon.c`, in the desktop's own crate.
+pub use compositor_desktop::icon;
 
 pub mod cache;
 pub mod cli;
 pub mod config;
-pub mod desktop;
 pub mod dmenu;
 pub mod exec;
 pub mod geometry;
-pub mod icon;
 pub mod keys;
 pub mod keysym;
 pub mod launcher;

@@ -1,0 +1,50 @@
+# settings, an app (docs/APPS.md): Ferrix's Settings. Its first page is game
+# mode (Ferrix's docs/SETTINGS.md).
+
+[package]
+name = "settings"
+version = "0.1.0"
+description = "Settings: a window of pages, the first of them which applications are started in game mode"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "settings"
+to = "bin/settings"
+mode = "755"
+
+# Its entry in a launcher and its icon, kept in this folder: fuzzel lists
+# every `.desktop` file in `usr/share/applications`.
+[[package.files]]
+from = "share/settings.desktop"
+source = "folder"
+to = "usr/share/applications/settings.desktop"
+mode = "644"
+
+[[package.files]]
+from = "share/ferrix-settings.svg"
+source = "folder"
+to = "usr/share/icons/hicolor/scalable/apps/ferrix-settings.svg"
+mode = "644"
+
+[build]
+kind = "cargo"
+
+# In every image a person runs: a desktop has its settings.
+[image]
+default = true
+
+[check]
+host-tests = true
+
+[[smoke]]
+run = "settings --version"
+expect = "settings 0.1.0"
+
+# The list a launcher's is, read with no window: the image's own entry for
+# Settings is in it, and nothing is in game mode on a fresh system.
+[[smoke]]
+run = "settings --list"
+expect = "off settings.desktop Settings"

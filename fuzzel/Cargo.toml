@@ -21,6 +21,9 @@ name = "compositor_fuzzel"
 path = "src/lib.rs"
 
 [dependencies]
+# The `.desktop` entries and their icons, which the Settings app lists too,
+# and the mark an application in game mode is started with.
+compositor-desktop = { path = "../../system/linux/compositor/desktop" }
 # PNG and SVG icons, into pixmaps.
 compositor-image = { path = "../../system/linux/compositor/image" }
 # Fonts, shaping and glyphs: fuzzel's fcft.

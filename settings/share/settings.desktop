@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+GenericName=System Settings
+Comment=Game mode: which applications are started as games
+Exec=/bin/settings
+Icon=ferrix-settings
+Terminal=false
+Keywords=settings;preferences;game;gamemode;configuration;
+Categories=Settings;System;
+StartupWMClass=rocks.magical.settings

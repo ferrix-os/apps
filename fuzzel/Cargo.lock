@@ -52,6 +52,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "compositor-desktop"
+version = "0.1.0"
+
+[[package]]
 name = "compositor-fan"
 version = "0.1.0"
 
@@ -59,6 +63,7 @@ version = "0.1.0"
 name = "compositor-fuzzel"
 version = "0.1.0"
 dependencies = [
+ "compositor-desktop",
  "compositor-image",
  "compositor-layout",
  "compositor-render",

@@ -662,13 +662,25 @@ impl Loop {
                     self.launcher.started(app);
                     return (code, true);
                 }
-                let plan = match exec::plan(chosen, &typed, config.launch_prefix.as_deref()) {
+                let mut plan = match exec::plan(chosen, &typed, config.launch_prefix.as_deref()) {
                     Ok(plan) => plan,
                     Err(refused) => {
                         self.log.error(&refused.to_string());
                         return (1, false);
                     }
                 };
+                // Ferrix's own: the mark of an application the user
+                // switched to game mode in Settings.
+                for complaint in plan.mark(chosen, &|name| std::env::var(name).ok()) {
+                    self.log.warn(&complaint);
+                }
+                if let Some(app) = plan.game.app() {
+                    self.log.info(&format!(
+                        "game mode: {app} is started with {}={}",
+                        compositor_desktop::game_mode::MARK,
+                        compositor_desktop::game_mode::ON
+                    ));
+                }
                 self.log.info(&format!(
                     "executing {}: \"{}\"",
                     chosen

@@ -8,8 +8,18 @@
 //! fuzzel starts an application with no files. The program is then run
 //! directly, not through a shell, with standard input on `/dev/null`, in the
 //! entry's `Path`; fuzzel does not wait for it.
+//!
+//! One thing here is Ferrix's and not fuzzel's: the game-mode mark. An
+//! application the user switched on in Settings is started with
+//! `FERRIX_GAME_MODE=1` in its environment, and any other with that taken
+//! out (`compositor_desktop::game_mode`, Ferrix's `docs/SETTINGS.md`). The
+//! launcher is where applications are started from, so it is where the mark
+//! is given; a command typed with nothing selected is no application and
+//! gets none.
 
 use std::process::{Command, Stdio};
+
+use compositor_desktop::game_mode::{self, Mark};
 
 use crate::desktop::Application;
 
@@ -138,6 +148,24 @@ pub struct Launch {
     pub env: Vec<(String, String)>,
     /// The line as fuzzel logs it: `executing <id>: "<line>"`.
     pub line: String,
+    /// Whether it is started in game mode: unmarked until [`Launch::mark`].
+    pub game: Mark,
+}
+
+impl Launch {
+    /// Decide the game-mode mark for starting `app` now, from the user's
+    /// file read through the environment `var` answers for. Answers what
+    /// there is to log: complaints about the file.
+    pub fn mark(
+        &mut self,
+        app: Option<&Application>,
+        var: &dyn Fn(&str) -> Option<String>,
+    ) -> Vec<String> {
+        let id = app.and_then(|app| app.id.as_deref());
+        let (mark, complaints) = game_mode::mark_for_launch(id, var);
+        self.game = mark;
+        complaints
+    }
 }
 
 /// Work out what executing `app` runs.
@@ -200,6 +228,7 @@ pub fn plan(
         dir: app.and_then(|app| app.path.clone()),
         env,
         line,
+        game: Mark::default(),
     })
 }
 
@@ -221,6 +250,7 @@ pub fn start(launch: &Launch, warnings: &mut Vec<String>) -> Result<(), String> 
         .args(args)
         .stdin(Stdio::null())
         .envs(launch.env.iter().cloned());
+    launch.game.apply(&mut command);
     if let Some(dir) = &launch.dir {
         if std::path::Path::new(dir).is_dir() {
             let _ = command.current_dir(dir);
@@ -339,6 +369,61 @@ mod tests {
             dir: None,
             env: Vec::new(),
             line: String::new(),
+            game: super::Mark::default(),
         }
+    }
+
+    #[test]
+    fn an_application_in_game_mode_is_started_with_the_mark() {
+        let dir = crate::testdir::TestDir::new("game-mode");
+        let _ = dir.write(".config/ferrix/game-mode.conf", "game.desktop\n");
+        let home = dir.path().to_string_lossy().into_owned();
+        let var = move |name: &str| (name == "HOME").then(|| home.clone());
+        let out = dir.path().join("out");
+        let entry = |id: &str| Application {
+            id: Some(id.to_owned()),
+            // `env` is on every host these tests run on; the shell is only
+            // what sends its output to a file.
+            exec: Some(format!("sh -c \"env > {}\"", out.display())),
+            ..Application::default()
+        };
+        let started = |app: &Application| {
+            let _ = std::fs::remove_file(&out);
+            let mut launch = plan(Some(app), "", None).unwrap_or_else(|_| unreachable_plan());
+            assert!(launch.mark(Some(app), &var).is_empty());
+            let game = launch.game.is_game();
+            assert_eq!(super::start(&launch, &mut Vec::new()), Ok(()));
+            // fuzzel does not wait for what it starts; the test must.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut text = String::new();
+            while std::time::Instant::now() < deadline {
+                text = std::fs::read_to_string(&out).unwrap_or_default();
+                if text.contains("PATH=") {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            (game, text)
+        };
+        let (game, environment) = started(&entry("game.desktop"));
+        assert!(game);
+        assert!(
+            environment.lines().any(|line| line == "FERRIX_GAME_MODE=1"),
+            "{environment}"
+        );
+        assert!(
+            environment
+                .lines()
+                .any(|line| line == "FERRIX_GAME_MODE_APP=game.desktop"),
+            "{environment}"
+        );
+        let (game, environment) = started(&entry("other.desktop"));
+        assert!(!game);
+        assert!(environment.contains("PATH="), "{environment}");
+        assert!(!environment.contains("FERRIX_GAME_MODE"), "{environment}");
+        // What was typed with nothing selected is no application.
+        let mut typed = plan(None, "echo hi", None).unwrap_or_else(|_| unreachable_plan());
+        assert!(typed.mark(None, &var).is_empty());
+        assert!(!typed.game.is_game());
     }
 }
