@@ -875,6 +875,12 @@ fn a_prompts_characters_have_glyphs_of_their_own() {
     for present in ["➜", "\u{E0B0}", "\u{E0A0}", "±", "─", "…", "✘", "⚡", "⚙"] {
         assert_ne!(frame(present), missing, "{present:?} is drawn as the box");
     }
+    // Every character Claude Code 2.1.280's TUI drew in a session on Ferrix
+    // that Hack lacks: the elbow under a tool call, the mode line's marks,
+    // the check mark and the spinner.
+    for present in ["⎿", "⏵", "⏸", "⏺", "✔", "✢", "✳", "✶", "✻", "✽"] {
+        assert_ne!(frame(present), missing, "{present:?} is drawn as the box");
+    }
 }
 
 /// agnoster's prompt as zinc renders it, byte for byte: a black segment, a

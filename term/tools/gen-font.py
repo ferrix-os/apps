@@ -92,6 +92,20 @@ STAND_INS = {
     0x2718: 0x00D7,  # ✘ HEAVY BALLOT X, as ×
     0x26A1: 0x21AF,  # ⚡ HIGH VOLTAGE SIGN, as ↯ DOWNWARDS ZIGZAG ARROW
     0x2699: 0x2756,  # ⚙ GEAR, as ❖ BLACK DIAMOND MINUS WHITE X
+    # Claude Code's TUI: the elbow under a tool call, the mode line's pause
+    # and play marks, its check mark, the dot before each step, and the
+    # spinner's asterisks, each a different stand-in so the spinner still
+    # turns.
+    0x23BF: 0x2514,  # ⎿ DENTISTRY SYMBOL LIGHT VERTICAL AND BOTTOM RIGHT, as └
+    0x23F5: 0x25B8,  # ⏵ BLACK MEDIUM RIGHT-POINTING TRIANGLE, as ▸
+    0x23F8: 0x2016,  # ⏸ DOUBLE VERTICAL BAR, as ‖ DOUBLE VERTICAL LINE
+    0x23FA: 0x25CF,  # ⏺ BLACK CIRCLE FOR RECORD, as ● BLACK CIRCLE
+    0x2714: 0x221A,  # ✔ HEAVY CHECK MARK, as √ SQUARE ROOT
+    0x2722: 0x002B,  # ✢ FOUR TEARDROP-SPOKED ASTERISK, as +
+    0x2733: 0x002A,  # ✳ EIGHT SPOKED ASTERISK, as *
+    0x2736: 0x2217,  # ✶ SIX POINTED BLACK STAR, as ∗ ASTERISK OPERATOR
+    0x273B: 0x002A,  # ✻ TEARDROP-SPOKED ASTERISK, as *
+    0x273D: 0x2217,  # ✽ HEAVY TEARDROP-SPOKED ASTERISK, as ∗
 }
 
 # Line segments a quadratic curve is flattened into. At 20 pixels per em the
