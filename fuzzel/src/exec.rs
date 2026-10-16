@@ -383,12 +383,18 @@ mod tests {
         let entry = |id: &str| Application {
             id: Some(id.to_owned()),
             // `env` is on every host these tests run on; the shell is only
-            // what sends its output to a file.
-            exec: Some(format!("sh -c \"env > {}\"", out.display())),
+            // what sends its output to a file. The file appears whole, by a
+            // rename of the finished one: read as it was written, it was seen
+            // with `PATH=` in and the lines after it not yet, under load.
+            exec: Some(format!(
+                "sh -c \"env > {0}.part && mv {0}.part {0}\"",
+                out.display()
+            )),
             ..Application::default()
         };
         let started = |app: &Application| {
             let _ = std::fs::remove_file(&out);
+            let _ = std::fs::remove_file(out.with_extension("part"));
             let mut launch = plan(Some(app), "", None).unwrap_or_else(|_| unreachable_plan());
             assert!(launch.mark(Some(app), &var).is_empty());
             let game = launch.game.is_game();
@@ -397,8 +403,9 @@ mod tests {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
             let mut text = String::new();
             while std::time::Instant::now() < deadline {
-                text = std::fs::read_to_string(&out).unwrap_or_default();
-                if text.contains("PATH=") {
+                // Only the renamed file is the whole dump.
+                if let Ok(whole) = std::fs::read_to_string(&out) {
+                    text = whole;
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(20));
