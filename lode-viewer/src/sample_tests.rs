@@ -405,3 +405,94 @@ fn ctrl_v_is_a_paste_never_the_letter_and_tab_skips_hidden_fields() {
     assert_eq!(view.app.borrow().form.value(FormField::Name), "n150");
     assert_eq!(view.app.borrow().form.focus, Some(FormField::Name));
 }
+
+/// A log of one record a second at these levels, from two sources in
+/// turn so that no two in a row fold.
+fn levels_log(levels: &[u8]) -> Log {
+    let mut text = String::new();
+    for (n, level) in levels.iter().enumerate() {
+        text.push_str(&format!(
+            "{{\"__REALTIME_TIMESTAMP\":\"{}\",\"__MONOTONIC_TIMESTAMP\":\"{}\",\"__SEQNUM\":\"{}\",\
+             \"_BOOT_ID\":\"062359e1029c423c0c0b4c9cf5216a14\",\"PRIORITY\":\"{level}\",\
+             \"_HOSTNAME\":\"ferrix\",\"MESSAGE\":\"line {n}\",\"SYSLOG_IDENTIFIER\":\"{}\",\
+             \"_TRANSPORT\":\"console\"}}\n",
+            1_792_776_100_000_000_u64 + n as u64 * 1_000_000,
+            n as u64 * 1_000_000,
+            n + 1,
+            if n % 2 == 0 { "even" } else { "odd" }
+        ));
+    }
+    let read = crate::json::read(&text);
+    assert_eq!(read.records.len(), levels.len());
+    Log::new(read.records)
+}
+
+/// The colours down the middle of the table's strip, top to bottom, each
+/// run of one colour once: `R` red, `A` amber, `.` anything else; the
+/// part-in-view outline's ink is passed over.
+fn strip_runs(levels: &[u8]) -> String {
+    let mut app = App::new(
+        levels_log(levels),
+        Origin::File("levels.jsonl".into()),
+        "levels".to_owned(),
+    );
+    app.act(&Action::Zoom(0));
+    app.page = Page::Logs;
+    let mut view = view_of(app, (1440, 1000));
+    let frame = view.frame((1440, 1000), 1.0).expect("a frame");
+    // The strip: the Logs page's 12-wide canvas.
+    let mut stack = vec![tole::Element::id(&view.logs)];
+    let mut strip = None;
+    while let Some(item) = stack.pop() {
+        if matches!(view.ui.kind(item), Some(tole::Kind::Canvas(_)))
+            && view
+                .ui
+                .common(item)
+                .is_some_and(|common| (view.ui.get(common.width) - 12.0).abs() < 0.5)
+        {
+            strip = view.ui.rect_of(item);
+        }
+        stack.extend(view.ui.children(item).iter().rev());
+    }
+    let strip = strip.expect("the strip is drawn");
+    let x = (strip.x + 6.0) as u32;
+    let red = crate::theme::RED;
+    let amber = crate::theme::AMBER;
+    let ink = crate::theme::Theme::of(crate::theme::Mode::Light).ink;
+    let mut out = String::new();
+    for y in strip.y as u32..(strip.y + strip.h) as u32 {
+        let pixel = frame.pixel(x, y).expect("in the frame");
+        let rgb = (pixel.red(), pixel.green(), pixel.blue());
+        let near = |c: crate::theme::Color| {
+            rgb.0.abs_diff(c.0) < 24 && rgb.1.abs_diff(c.1) < 24 && rgb.2.abs_diff(c.2) < 24
+        };
+        let mark = if near(red) {
+            'R'
+        } else if near(amber) {
+            'A'
+        } else if near(ink) || rgb.0 < 140 {
+            continue;
+        } else {
+            '.'
+        };
+        if !out.ends_with(mark) {
+            out.push(mark);
+        }
+    }
+    out
+}
+
+#[test]
+fn a_run_of_errors_is_one_block_in_the_strip() {
+    let runs = strip_runs(&[3; 50]);
+    assert_eq!(runs.trim_end_matches('.'), "R", "one red block: {runs}");
+}
+
+#[test]
+fn an_error_a_warning_and_an_error_are_three_touching_blocks() {
+    let mut levels = vec![6_u8; 20];
+    levels.extend([3, 4, 3]);
+    levels.extend([6; 20]);
+    let runs = strip_runs(&levels);
+    assert_eq!(runs, ".RAR.", "three blocks, touching: {runs}");
+}

@@ -342,21 +342,85 @@ fn draw_lane(c: &mut Pen<'_, '_>, t: &Theme, lane: &Lane, place: Rect) {
         c.hatch(span, theme::AMBER, t.bg);
         c.outline(span, 0.0, 1.0, theme::AMBER_EDGE);
     }
-    let mut last = f32::MIN;
+    // Errors and warnings as blocks: a column's worst, and a run of
+    // columns alike one bar, a change of kind a change of colour with no
+    // gap between.
+    let mut worst = vec![Severity::None; columns];
+    let column_of = |at: f32| ((at * columns as f32) as usize).min(columns - 1);
     for &at in &lane.warnings {
-        let x = place.x + place.w * at;
-        if x - last >= 6.0 {
-            c.dot(x, place.y + 5.0, 3.5, theme::AMBER);
-            last = x;
+        if let Some(slot) = worst.get_mut(column_of(at)) {
+            *slot = (*slot).max(Severity::Warning);
         }
     }
-    let mut last = f32::MIN;
     for &at in &lane.errors {
-        let x = place.x + place.w * at;
-        if x - last >= 7.0 {
-            c.dot(x, place.y + 5.0, 4.5, theme::RED);
-            last = x;
+        if let Some(slot) = worst.get_mut(column_of(at)) {
+            *slot = Severity::Error;
         }
+    }
+    let spans = worst
+        .iter()
+        .enumerate()
+        .map(|(column, kind)| (step * column as f32, step * (column + 1) as f32, *kind));
+    for (from, to, kind) in runs(spans) {
+        let ink = match kind {
+            Severity::Error => theme::RED,
+            _ => theme::AMBER,
+        };
+        c.fill(
+            Rect::new(place.x + from, place.y + 1.0, (to - from).max(1.0), 8.0),
+            0.0,
+            ink,
+        );
+    }
+}
+
+/// How bad a line or a column of the log is, as its blocks show it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    /// Nothing to show.
+    None,
+    /// A warning, or lines held.
+    Warning,
+    /// An error or worse, or a crash.
+    Error,
+}
+
+/// The runs of `spans` (each its start, end and severity, in order and
+/// touching): neighbours of one severity joined into one, and those of no
+/// severity left out. Each run is as long as what it covers.
+pub fn runs(spans: impl Iterator<Item = (f32, f32, Severity)>) -> Vec<(f32, f32, Severity)> {
+    let mut out: Vec<(f32, f32, Severity)> = Vec::new();
+    for (from, to, kind) in spans {
+        if kind == Severity::None {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if last.2 == kind && (from - last.1).abs() < 1e-3 => last.1 = to,
+            _ => out.push((from, to, kind)),
+        }
+    }
+    out
+}
+
+/// How bad a line of the table is.
+#[must_use]
+pub fn line_severity(app: &App, line: &Line) -> Severity {
+    let of = |index: usize| {
+        app.log.entries.get(index).map_or(Severity::None, |entry| {
+            if entry.is_error() || entry.row.kind == crate::data::Kind::Crash {
+                Severity::Error
+            } else if entry.is_warning() {
+                Severity::Warning
+            } else {
+                Severity::None
+            }
+        })
+    };
+    match line {
+        Line::Held(..) => Severity::Warning,
+        Line::Mark(_) => Severity::None,
+        Line::Record(index) | Line::Note(index) | Line::Detail(index, _) => of(*index),
+        Line::Fold { first, .. } => of(*first),
     }
 }
 
@@ -605,7 +669,9 @@ pub fn rate(app: &Shared) -> CanvasPainter {
 }
 
 /// The strip beside the table: where errors and warnings are among the
-/// lines. The part in view is drawn over it by the page.
+/// lines, a block for each run of lines alike, as tall as the lines it
+/// stands for and at least a pixel. The part in view is an outline the
+/// page draws over it.
 #[must_use]
 pub fn minimap(app: &Shared) -> CanvasPainter {
     painter(app, |app, c| {
@@ -613,29 +679,27 @@ pub fn minimap(app: &Shared) -> CanvasPainter {
         let place = Rect::new(0.0, 0.0, w, h);
         let t = Theme::of(app.mode);
         c.fill(place, 3.0, t.bg2);
+        // Each line's share of the strip, as tall as the line is; lines
+        // alike in a row one block.
         let total = app.table_height.max(1.0);
-        let mut last = (f32::MIN, 0_u8);
-        for (line, &top) in app.lines.iter().zip(&app.tops) {
-            let Line::Record(index) = line else {
-                if matches!(line, Line::Held(..)) {
-                    let y = place.y + place.h * top / total;
-                    c.fill(Rect::new(place.x, y, place.w, 2.0), 0.0, theme::AMBER);
-                }
-                continue;
+        let scale = place.h / total;
+        let spans = app.lines.iter().zip(&app.tops).map(|(line, &top)| {
+            (
+                top * scale,
+                (top + line.height()) * scale,
+                line_severity(app, line),
+            )
+        });
+        for (from, to, kind) in runs(spans) {
+            let ink = match kind {
+                Severity::Error => theme::RED,
+                _ => theme::AMBER,
             };
-            let Some(level) = app.log.entries.get(*index).map(|entry| entry.row.level) else {
-                continue;
-            };
-            if level > 4 {
-                continue;
-            }
-            let y = place.y + place.h * top / total;
-            if y - last.0 < 2.0 && last.1 <= level {
-                continue;
-            }
-            let ink = if level <= 3 { theme::RED } else { theme::AMBER };
-            c.fill(Rect::new(place.x, y, place.w, 2.0), 0.0, ink);
-            last = (y, level);
+            c.fill(
+                Rect::new(place.x, place.y + from, place.w, (to - from).max(1.0)),
+                0.0,
+                ink,
+            );
         }
     })
 }
