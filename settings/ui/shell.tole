@@ -1,0 +1,770 @@
+// The window: the header with the search and who is signed in, the
+// sidebar's groups and pages, and the page -- its title, then its rows,
+// each drawn by its kind. Rust makes the rows for the page shown
+// (`src/pages.rs`) and turns what is pressed into changes.
+import Fx
+import Fx.Controls
+
+enum RowKind {
+    // A heading over cards, with its note.
+    Section,
+    // A card: words on the left, a segmented choice on the right.
+    Choice,
+    // A card with a switch.
+    Switch,
+    // A card with a slider and its value said.
+    Slider,
+    // A tick box and words: a keyboard layout.
+    Check,
+    // A card of label and value lines.
+    Info,
+    // An application in game mode's list: a letter tile and a switch.
+    App,
+    // The accent's seven discs.
+    Accents,
+    // Words alone, faint: an empty list, a page not here yet.
+    Empty,
+    // A line to type in, across: game mode's filter, the keyboard's try.
+    Field,
+    // A card with a value and a button: Typing in ... Switch layout.
+    Action,
+    // The window layouts, as cards with a picture each.
+    Layouts,
+    // The desktop drawn small, in the accent and the spacing chosen.
+    Preview,
+    // The displays, as boxes to pick.
+    Monitors,
+    // A card with a line to type in and a button: the computer's name.
+    Name
+}
+
+struct PageRow {
+    kind: RowKind
+    title: string
+    desc: string
+    // What its change waits for, or that it is not kept.
+    note: string
+    options: list<string>
+    values: list<string>
+    colors: list<color>
+    nums: list<real>
+    current: int
+    on: bool
+    value: real
+    from: real
+    to: real
+    step: real
+    // The value as said: "600 ms".
+    shown: string
+    // A word at its right: "Default"; a tile's letter.
+    tag: string
+    enabled: bool
+}
+
+struct NavRow {
+    // A group's row, else a page's.
+    group: bool
+    label: string
+    open: bool
+    on: bool
+    badge: int
+    icon: int
+}
+
+export component Shell : Rectangle {
+    id: shell
+    property list<NavRow> nav
+    property bool noResults
+    property string query
+    property string who
+    property string title
+    property string subtitle
+    property list<string> modes
+    property int mode
+    property list<PageRow> rows
+    property painter preview
+    property real sidebar: shell.width >= 1100 ? 284 : 236
+    // The column the page's rows are in.
+    property real column: min(shell.width - sidebar - 72, 688)
+
+    signal searched(string text)
+    signal navigate(int index)
+    signal pickMode(int index)
+    signal pick(int row, int option)
+    signal flip(int row)
+    signal slide(int row, real value)
+    signal edited(int row, string text)
+    signal accepted(int row)
+    signal pressed(int row)
+
+    color: Look.bg
+
+    // The header.
+    Rectangle {
+        x: 24; y: 18
+        width: 40; height: 40
+        radius: 11
+        color: Look.accentSoft
+        Text {
+            anchors.centerIn: parent
+            text: "F"
+            font: Look.sans(20, 600)
+            color: Look.accentText
+        }
+    }
+    Text {
+        x: 78; y: 18
+        height: 40
+        text: "Settings"
+        font: Look.sans(21, 600)
+        color: Look.text
+    }
+    Rectangle {
+        id: search
+        x: shell.sidebar + 36
+        y: 18
+        width: min(340, shell.width - shell.sidebar - 72 - 180)
+        height: 40
+        radius: 10
+        color: Look.field
+        border.width: 1
+        border.color: searchInput.activeFocus ? Look.accent : Look.line2
+        Shape {
+            x: 13; y: 11
+            width: 18; height: 18
+            ShapePath {
+                strokeColor: Look.faint; strokeWidth: 1.6; fillColor: "transparent"
+                PathCircle { centerX: 8; centerY: 8; radius: 5.5 }
+            }
+            ShapePath {
+                strokeColor: Look.faint; strokeWidth: 1.6
+                startX: 12.2; startY: 12.2
+                PathLine { x: 15.5; y: 15.5 }
+            }
+        }
+        Text {
+            x: 40
+            height: 40
+            visible: searchInput.text == ""
+            text: "Search"
+            font: Look.sans(14)
+            color: Look.faint
+        }
+        TextInput {
+            id: searchInput
+            x: 40
+            width: search.width - 54
+            height: 40
+            text: shell.query
+            font: Look.sans(14)
+            color: Look.text
+            cursorColor: Look.text
+            selectionColor: alpha(Look.accent, 0.35)
+            activeFocusOnTab: true
+            onTextEdited: shell.searched(text)
+            Keys.onEscapePressed: shell.searched("")
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.IBeamCursor
+            onPressed: searchInput.forceActiveFocus()
+        }
+    }
+    Text {
+        x: shell.width - 36 - width
+        y: 18
+        height: 40
+        text: shell.who
+        font: Look.sans(13)
+        color: Look.faint
+    }
+
+    // The sidebar: groups, and the open group's pages under a line.
+    Column {
+        x: 16; y: 84
+        width: shell.sidebar - 32
+        Repeater {
+            model: shell.nav
+            Item {
+                width: shell.sidebar - 32
+                height: modelData.group ? 48 : 40
+                Rectangle {
+                    visible: modelData.group
+                    width: parent.width
+                    height: 44
+                    radius: 10
+                    color: modelData.open && !modelData.on ? Look.accentSoft : groupArea.containsMouse ? Look.hover : "transparent"
+                    GroupIcon {
+                        x: 12; y: 12
+                        kind: modelData.icon
+                        color: modelData.open ? Look.accentText : Look.text
+                    }
+                    Text {
+                        x: 44
+                        height: 44
+                        text: modelData.label
+                        font: Look.sans(15, 600)
+                        color: modelData.open ? Look.accentText : Look.text
+                    }
+                    Chevron {
+                        x: parent.width - 26; y: 19
+                        open: modelData.open
+                        color: modelData.open ? Look.accentText : Look.muted
+                    }
+                    MouseArea {
+                        id: groupArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: shell.navigate(index)
+                    }
+                }
+                Item {
+                    visible: !modelData.group
+                    width: parent.width
+                    height: 40
+                    Rectangle {
+                        x: 21
+                        width: modelData.on ? 2 : 1
+                        height: 40
+                        color: modelData.on ? Look.accent : Look.line
+                    }
+                    Text {
+                        x: 43
+                        height: 40
+                        text: modelData.label
+                        font: Look.sans(14, modelData.on ? 600 : 500)
+                        color: modelData.on ? Look.accentText : pageArea.containsMouse ? Look.text : Look.muted
+                    }
+                    Rectangle {
+                        visible: modelData.badge > 0
+                        x: parent.width - 12 - width
+                        y: 10
+                        width: max(count.implicitWidth + 12, 20)
+                        height: 20
+                        radius: 6
+                        color: Look.accentSoft
+                        Text {
+                            id: count
+                            anchors.centerIn: parent
+                            text: "${modelData.badge}"
+                            font: Look.sans(12, 600)
+                            color: Look.accentText
+                        }
+                    }
+                    MouseArea {
+                        id: pageArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: shell.navigate(index)
+                    }
+                }
+            }
+        }
+        Text {
+            visible: shell.noResults
+            x: 12
+            height: 40
+            text: "No setting matches “" + shell.query + "”."
+            font: Look.sans(14)
+            color: Look.faint
+        }
+    }
+
+    // The page.
+    Item {
+        id: page
+        x: shell.sidebar + 36
+        y: 84
+        width: shell.column
+        height: shell.height - 84
+        Text {
+            y: 4
+            text: shell.title
+            font: Look.sans(22, 600)
+            color: Look.text
+        }
+        Text {
+            y: 36
+            text: shell.subtitle
+            font: Look.sans(14)
+            color: Look.muted
+        }
+        Segmented {
+            visible: shell.modes.length > 0
+            x: page.width - width
+            y: 6
+            options: shell.modes
+            current: shell.mode
+            onPicked: shell.pickMode(option)
+        }
+        ListView {
+            id: body
+            y: 72
+            width: page.width
+            height: page.height - 72
+            clip: true
+            model: shell.rows
+            delegate: DelegateChooser {
+                role: "kind"
+                DelegateChoice {
+                    roleValue: RowKind.Section
+                    Item {
+                        width: body.width
+                        height: modelData.note == "" ? 50 : 70
+                        Text {
+                            y: 18
+                            height: 20
+                            text: modelData.title
+                            font: Look.sans(14, 600)
+                            color: Look.muted
+                        }
+                        Note { y: 40; text: modelData.note }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Choice
+                    Item {
+                        width: body.width
+                        height: card.height + 8
+                        Rectangle {
+                            id: card
+                            width: body.width
+                            height: max(words.implicitHeight + 32, 70)
+                            radius: 12
+                            color: Look.card
+                            border.width: 1
+                            border.color: Look.line
+                            Column {
+                                id: words
+                                x: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+                                Text { text: modelData.title; font: Look.sans(15, 500); color: Look.text }
+                                Text { visible: modelData.desc != ""; text: modelData.desc; font: Look.sans(13); color: Look.muted }
+                                Note { text: modelData.note }
+                            }
+                            Segmented {
+                                x: card.width - width - 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                options: modelData.options
+                                current: modelData.current
+                                onPicked: shell.pick(index, option)
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Switch
+                    Item {
+                        width: body.width
+                        height: card.height + 8
+                        Rectangle {
+                            id: card
+                            width: body.width
+                            height: max(words.implicitHeight + 32, 70)
+                            radius: 12
+                            color: Look.card
+                            border.width: 1
+                            border.color: Look.line
+                            Column {
+                                id: words
+                                x: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+                                Text { text: modelData.title; font: Look.sans(15, 500); color: Look.text }
+                                Text { visible: modelData.desc != ""; text: modelData.desc; font: Look.sans(13); color: Look.muted }
+                                Note { text: modelData.note }
+                            }
+                            Toggle {
+                                x: card.width - width - 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                on: modelData.on
+                                opacity: modelData.enabled ? 1 : 0.45
+                                onFlipped: if (modelData.enabled) { shell.flip(index) }
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Slider
+                    Item {
+                        width: body.width
+                        height: card.height + 8
+                        Rectangle {
+                            id: card
+                            width: body.width
+                            height: max(words.implicitHeight + 28, 54)
+                            radius: 12
+                            color: Look.card
+                            border.width: 1
+                            border.color: Look.line
+                            Column {
+                                id: words
+                                x: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+                                Text { text: modelData.title; font: Look.sans(15, 500); color: Look.text }
+                                Text { visible: modelData.desc != ""; text: modelData.desc; font: Look.sans(13); color: Look.muted }
+                                Note { text: modelData.note }
+                            }
+                            Text {
+                                id: said
+                                x: card.width - 20 - width
+                                height: card.height
+                                text: modelData.shown
+                                font: Look.sans(14)
+                                color: Look.text
+                            }
+                            Slider {
+                                x: card.width - 20 - 56 - width
+                                anchors.verticalCenter: parent.verticalCenter
+                                value: modelData.value
+                                from: modelData.from
+                                to: modelData.to
+                                step: modelData.step
+                                onMoved: shell.slide(index, value)
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Check
+                    Item {
+                        width: body.width
+                        height: 60
+                        Rectangle {
+                            width: body.width
+                            height: 52
+                            radius: 12
+                            color: checkArea.containsMouse ? Look.hover : Look.card
+                            border.width: 1
+                            border.color: Look.line
+                            Rectangle {
+                                x: 20; y: 15
+                                width: 22; height: 22
+                                radius: 6
+                                color: modelData.on ? Look.accent : "transparent"
+                                border.width: modelData.on ? 0 : 1.5
+                                border.color: Look.track
+                                Shape {
+                                    visible: modelData.on
+                                    ShapePath {
+                                        strokeColor: Look.bg; strokeWidth: 2
+                                        startX: 6; startY: 11.5
+                                        PathLine { x: 9.5; y: 15 }
+                                        PathLine { x: 16; y: 7.5 }
+                                    }
+                                }
+                            }
+                            Text {
+                                x: 58
+                                height: 52
+                                text: modelData.title
+                                font: Look.sans(15, 500)
+                                color: Look.text
+                            }
+                            Text {
+                                x: parent.width - 20 - width
+                                height: 52
+                                text: modelData.tag
+                                font: Look.sans(13)
+                                color: Look.faint
+                            }
+                            MouseArea {
+                                id: checkArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: shell.flip(index)
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Info
+                    Item {
+                        width: body.width
+                        height: infoCard.height + 8
+                        InfoCard {
+                            id: infoCard
+                            width: body.width
+                            labels: modelData.options
+                            values: modelData.values
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.App
+                    Item {
+                        width: body.width
+                        height: 70
+                        Rectangle {
+                            width: body.width
+                            height: 62
+                            radius: 12
+                            color: Look.card
+                            border.width: 1
+                            border.color: Look.line
+                            Rectangle {
+                                x: 20; y: 13
+                                width: 36; height: 36
+                                radius: 8
+                                color: Look.sel
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.tag
+                                    font: Look.sans(15, 600)
+                                    color: Look.text
+                                }
+                            }
+                            Column {
+                                x: 72
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
+                                Text { text: modelData.title; font: Look.sans(15, 500); color: Look.text }
+                                Text { visible: modelData.desc != ""; text: modelData.desc; font: Look.sans(12.5); color: Look.faint }
+                            }
+                            Toggle {
+                                x: parent.width - width - 20
+                                y: 18
+                                on: modelData.on
+                                onFlipped: shell.flip(index)
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Accents
+                    Item {
+                        width: body.width
+                        height: 80
+                        AccentCard {
+                            width: body.width
+                            colors: modelData.colors
+                            current: modelData.current
+                            onPicked: shell.pick(index, option)
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Empty
+                    Item {
+                        width: body.width
+                        height: 56
+                        Text {
+                            y: 12
+                            width: body.width
+                            text: modelData.title
+                            font: Look.sans(14)
+                            color: Look.faint
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Field
+                    Item {
+                        width: body.width
+                        height: 56
+                        Rectangle {
+                            width: body.width
+                            height: modelData.tag == "big" ? 48 : 40
+                            radius: 10
+                            color: Look.inset
+                            border.width: 1
+                            border.color: input.activeFocus ? Look.accent : Look.line
+                            Text {
+                                x: 16
+                                height: parent.height
+                                visible: input.text == ""
+                                text: modelData.desc
+                                font: Look.sans(modelData.tag == "big" ? 15 : 14)
+                                color: Look.faint
+                            }
+                            TextInput {
+                                id: input
+                                x: 16
+                                width: parent.width - 32
+                                height: parent.height
+                                text: modelData.shown
+                                font: Look.sans(modelData.tag == "big" ? 15 : 14)
+                                color: Look.text
+                                cursorColor: Look.text
+                                selectionColor: alpha(Look.accent, 0.35)
+                                activeFocusOnTab: true
+                                onTextEdited: shell.edited(index, text)
+                                onAccepted: shell.accepted(index)
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.IBeamCursor
+                                onPressed: input.forceActiveFocus()
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Action
+                    Item {
+                        width: body.width
+                        height: 78
+                        Rectangle {
+                            width: body.width
+                            height: 70
+                            radius: 12
+                            color: Look.card
+                            border.width: 1
+                            border.color: Look.line
+                            Column {
+                                x: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
+                                Text { text: modelData.desc; font: Look.sans(13); color: Look.muted }
+                                Text { text: modelData.title; font: Look.sans(16, 600); color: Look.text }
+                            }
+                            Rectangle {
+                                x: parent.width - 20 - width
+                                y: 17
+                                width: button.implicitWidth + 32
+                                height: 36
+                                radius: 8
+                                color: buttonArea.containsMouse && modelData.enabled ? Look.hover : Look.card
+                                border.width: 1
+                                border.color: Look.line2
+                                opacity: modelData.enabled ? 1 : 0.5
+                                Text {
+                                    id: button
+                                    anchors.centerIn: parent
+                                    text: modelData.tag
+                                    font: Look.sans(14, 500)
+                                    color: Look.text
+                                }
+                                MouseArea {
+                                    id: buttonArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: if (modelData.enabled) { shell.pressed(index) }
+                                }
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Name
+                    Item {
+                        width: body.width
+                        height: card.height + 8
+                        Rectangle {
+                            id: card
+                            width: body.width
+                            height: max(words.implicitHeight + 32, 70)
+                            radius: 12
+                            color: Look.card
+                            border.width: 1
+                            border.color: Look.line
+                            Column {
+                                id: words
+                                x: 20
+                                width: card.width - 340
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+                                Text { text: modelData.title; font: Look.sans(15, 500); color: Look.text }
+                                Text { visible: modelData.desc != ""; text: modelData.desc; font: Look.sans(13); color: Look.muted }
+                                Note { text: modelData.note }
+                            }
+                            Rectangle {
+                                id: nameField
+                                x: card.width - 20 - 82 - 8 - width
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 170; height: 38
+                                radius: 8
+                                color: Look.inset
+                                border.width: 1
+                                border.color: nameInput.activeFocus ? Look.accent : Look.line2
+                                TextInput {
+                                    id: nameInput
+                                    x: 12
+                                    width: 146
+                                    height: 38
+                                    text: modelData.shown
+                                    font: Look.sans(14)
+                                    color: Look.text
+                                    cursorColor: Look.text
+                                    selectionColor: alpha(Look.accent, 0.35)
+                                    activeFocusOnTab: true
+                                    onTextEdited: shell.edited(index, text)
+                                    onAccepted: shell.pressed(index)
+                                }
+                            }
+                            Rectangle {
+                                x: card.width - 20 - width
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 82; height: 38
+                                radius: 8
+                                color: Look.card
+                                border.width: 1
+                                border.color: Look.line2
+                                opacity: modelData.enabled ? 1 : 0.5
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.tag
+                                    font: Look.sans(14, 500)
+                                    color: modelData.enabled ? Look.text : Look.faint
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: if (modelData.enabled) { shell.pressed(index) }
+                                }
+                            }
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Preview
+                    Item {
+                        width: body.width
+                        height: 268
+                        Canvas {
+                            width: body.width
+                            height: 250
+                            painter: shell.preview
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Monitors
+                    Item {
+                        width: body.width
+                        height: 268
+                        MonitorCard {
+                            width: body.width
+                            names: modelData.options
+                            subs: modelData.values
+                            boxes: modelData.nums
+                            current: modelData.current
+                            onPicked: shell.pick(index, option)
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Layouts
+                    Item {
+                        width: body.width
+                        height: layoutCards.implicitHeight + 8
+                        LayoutCards {
+                            id: layoutCards
+                            width: body.width
+                            names: modelData.options
+                            descs: modelData.values
+                            current: modelData.current
+                            onPicked: shell.pick(index, option)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,6 +1,6 @@
 [package]
 name = "settings"
-description = "Ferrix's Settings: a window of pages, the first of them which applications are started in game mode"
+description = "Ferrix's Settings: the desktop, the session and the system, page by page, after the customer's design"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
@@ -23,15 +23,18 @@ test = false
 bench = false
 
 [dependencies]
-# The applications a launcher lists, their icons, and the game-mode file:
-# the same code the launcher reads them with.
+# The applications a launcher lists and the game-mode file: the same code
+# the launcher reads them with.
 compositor-desktop = { path = "../../system/linux/compositor/desktop" }
-# PNG and SVG icons, into pixmaps.
-compositor-image = { path = "../../system/linux/compositor/image" }
-# Fonts, shaping, glyphs and wrapped paragraphs.
-compositor-text = { path = "../../system/linux/compositor/text" }
-# The Wayland client: the window, the keyboard, the pointer, the buffers.
+# The Wayland client's events, which tole's window hands back.
 compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
+# tole, Ferrix's UI framework: the window's tree, from the markup under
+# `ui/`, drawn on the CPU with the desktop's own text.
+tole = { path = "../../system/linux/tole/tole", features = ["wayland"] }
+
+[build-dependencies]
+# The markup, compiled into Rust when Settings is built.
+tole-compiler = { path = "../../system/linux/tole/tole-compiler" }
 
 # As the compositor's: overflow checks on everywhere.
 [profile.dev]

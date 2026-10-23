@@ -65,6 +65,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "compositor-regex"
+version = "0.1.0"
+
+[[package]]
 name = "compositor-shm"
 version = "0.1.0"
 dependencies = [
@@ -323,9 +327,9 @@ name = "settings"
 version = "0.1.0"
 dependencies = [
  "compositor-desktop",
- "compositor-image",
- "compositor-text",
  "compositor-toolkit",
+ "tole",
+ "tole-compiler",
 ]
 
 [[package]]
@@ -399,6 +403,22 @@ dependencies = [
  "bytemuck",
  "strict-num",
 ]
+
+[[package]]
+name = "tole"
+version = "0.1.0"
+dependencies = [
+ "compositor-image",
+ "compositor-regex",
+ "compositor-text",
+ "compositor-toolkit",
+ "miniz_oxide 0.8.9",
+ "tiny-skia",
+]
+
+[[package]]
+name = "tole-compiler"
+version = "0.1.0"
 
 [[package]]
 name = "ttf-parser"

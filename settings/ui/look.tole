@@ -1,0 +1,41 @@
+// The customer's Settings design (Figtree and JetBrains Mono, dark first,
+// an accent of seven), as tokens: Rust works each colour out from the
+// palette and the accent (`src/look.rs`) and sets them here, and sets
+// Fx.Controls' Theme to match, so a text field or the file chooser is
+// drawn in the same look.
+singleton Look {
+    property bool dark: true
+
+    // Surfaces: the window, a card, what is set into a card (a
+    // segmented choice, a field), and the selected segment.
+    property color bg: "#0e0f11"
+    property color card: "#16171a"
+    property color inset: "#0b0c0e"
+    property color field: "#191a1d"
+    property color hover: "#1f2023"
+    property color sel: "#2a2b2e"
+    // Lines.
+    property color line: "#26272a"
+    property color line2: "#2c2d31"
+    // Ink, strongest first.
+    property color text: "#eeeff1"
+    property color muted: "#a9abaf"
+    property color faint: "#8b8d92"
+    // A switch's or a slider's track when off, and the knob.
+    property color track: "#34363a"
+    property color knob: "#f4f5f7"
+    // The accent: as a fill, as ink, and softly behind ink.
+    property color accent: "#5ea8f5"
+    property color accentText: "#9cc8f7"
+    property color accentSoft: "#163049"
+    property color warn: "#e6b45c"
+
+    property string sansFamily: "Figtree, Inter, Liberation Sans, sans-serif"
+    property string monoFamily: "JetBrains Mono, Liberation Mono, monospace"
+    function sans(px: real = 14, weight: int = 400): font {
+        return font(sansFamily, px, weight)
+    }
+    function mono(px: real = 12, weight: int = 400): font {
+        return font(monoFamily, px, weight)
+    }
+}

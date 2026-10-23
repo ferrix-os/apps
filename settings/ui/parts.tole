@@ -1,0 +1,460 @@
+// Settings' own parts, as the customer's design draws them, every colour
+// a Look token.
+import Fx
+
+// One of a few, side by side in a well: Spacing's Compact, Comfortable,
+// Spacious.
+component Segmented : Rectangle {
+    id: seg
+    property list<string> options
+    property int current: -1
+    signal picked(int option)
+
+    width: choices.implicitWidth + 8
+    height: 38
+    radius: 10
+    color: Look.inset
+    border.width: 1
+    border.color: Look.line
+    Row {
+        id: choices
+        x: 4; y: 3
+        spacing: 2
+        Repeater {
+            model: seg.options
+            Rectangle {
+                width: label.implicitWidth + 28
+                height: 32
+                radius: 7
+                color: index == seg.current ? Look.sel : pick.containsMouse ? Look.hover : "transparent"
+                Text {
+                    id: label
+                    anchors.centerIn: parent
+                    text: modelData
+                    font: Look.sans(13, 500)
+                    color: index == seg.current ? Look.text : Look.muted
+                }
+                MouseArea {
+                    id: pick
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: seg.picked(index)
+                }
+            }
+        }
+    }
+}
+
+// On or off: a pill with a knob.
+component Toggle : Rectangle {
+    id: toggle
+    property bool on
+    signal flipped()
+
+    width: 44; height: 26
+    radius: 13
+    color: on ? Look.accent : Look.track
+    Rectangle {
+        x: toggle.on ? 21 : 3
+        y: 3
+        width: 20; height: 20
+        radius: 10
+        color: Look.knob
+    }
+    MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: toggle.flipped()
+    }
+}
+
+// A value along a track, dragged or pressed; `moved` with the value at
+// the pointer, in steps.
+component Slider : Item {
+    id: slider
+    property real value
+    property real from: 0
+    property real to: 1
+    property real step: 1
+    signal moved(real value)
+
+    width: 178; height: 20
+    Rectangle {
+        y: 8; width: slider.width; height: 4; radius: 2
+        color: Look.track
+    }
+    Rectangle {
+        y: 8
+        width: slider.width * clamp((slider.value - slider.from) / max(slider.to - slider.from, 0.0001), 0, 1)
+        height: 4; radius: 2
+        color: Look.accent
+    }
+    Rectangle {
+        x: (slider.width - 14) * clamp((slider.value - slider.from) / max(slider.to - slider.from, 0.0001), 0, 1)
+        y: 3
+        width: 14; height: 14; radius: 7
+        color: Look.accent
+    }
+    MouseArea {
+        id: drag
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onPressed: slider.moved(slider.from + round(clamp(drag.mouseX / slider.width, 0, 1) * (slider.to - slider.from) / slider.step) * slider.step)
+        onPositionChanged: if (drag.pressed) { slider.moved(slider.from + round(clamp(drag.mouseX / slider.width, 0, 1) * (slider.to - slider.from) / slider.step) * slider.step) }
+    }
+}
+
+// A clock face: the note's mark.
+component Clock : Shape {
+    property color color
+    width: 12; height: 12
+    ShapePath {
+        strokeColor: color
+        strokeWidth: 1.2
+        fillColor: "transparent"
+        PathCircle { centerX: 6; centerY: 6; radius: 5 }
+    }
+    ShapePath {
+        strokeColor: color
+        strokeWidth: 1.2
+        startX: 6; startY: 3.2
+        PathLine { x: 6; y: 6 }
+        PathLine { x: 8; y: 7.2 }
+    }
+}
+
+// What a setting's change waits for, or that it is not kept: one line
+// under it, a clock before it.
+component Note : Item {
+    property string text
+    width: words.x + words.implicitWidth
+    height: text == "" ? 0 : 18
+    visible: text != ""
+    Clock { y: 3; color: Look.faint }
+    Text {
+        id: words
+        x: 19
+        height: 18
+        text: parent.text
+        font: Look.sans(13)
+        color: Look.faint
+    }
+}
+
+// A chevron, down when `open` is false, up when true.
+component Chevron : Shape {
+    property bool open
+    property color color
+    width: 10; height: 6
+    ShapePath {
+        strokeColor: color
+        strokeWidth: 1.6
+        startX: 0.5; startY: open ? 5.5 : 0.5
+        PathLine { x: 5; y: open ? 1 : 5 }
+        PathLine { x: 9.5; y: open ? 5.5 : 0.5 }
+    }
+}
+
+// The sidebar's group marks, 20 across, drawn rather than glyphs:
+// 0 a screen (Desktop), 1 a person (Session), 2 a chip (System), 3 a
+// terminal (Advanced).
+component GroupIcon : Item {
+    property int kind
+    property color color
+    width: 20; height: 20
+    Shape {
+        visible: kind == 0
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6; fillColor: "transparent"; closed: true
+            startX: 2.5; startY: 3.5
+            PathLine { x: 17.5; y: 3.5 }
+            PathLine { x: 17.5; y: 13.5 }
+            PathLine { x: 2.5; y: 13.5 }
+        }
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6
+            startX: 7; startY: 17
+            PathLine { x: 13; y: 17 }
+        }
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6
+            startX: 10; startY: 13.5
+            PathLine { x: 10; y: 17 }
+        }
+    }
+    Shape {
+        visible: kind == 1
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6; fillColor: "transparent"
+            PathCircle { centerX: 10; centerY: 6.5; radius: 3.5 }
+        }
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6; fillColor: "transparent"
+            startX: 3.5; startY: 17.5
+            PathCubic { x: 16.5; y: 17.5; control1X: 4; control1Y: 10.5; control2X: 16; control2Y: 10.5 }
+        }
+    }
+    Shape {
+        visible: kind == 2
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6; fillColor: "transparent"; closed: true
+            startX: 5; startY: 5
+            PathLine { x: 15; y: 5 }
+            PathLine { x: 15; y: 15 }
+            PathLine { x: 5; y: 15 }
+        }
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.4
+            startX: 8; startY: 2
+            PathLine { x: 8; y: 5 }
+            PathMove { x: 12; y: 2 }
+            PathLine { x: 12; y: 5 }
+            PathMove { x: 8; y: 15 }
+            PathLine { x: 8; y: 18 }
+            PathMove { x: 12; y: 15 }
+            PathLine { x: 12; y: 18 }
+            PathMove { x: 2; y: 8 }
+            PathLine { x: 5; y: 8 }
+            PathMove { x: 2; y: 12 }
+            PathLine { x: 5; y: 12 }
+            PathMove { x: 15; y: 8 }
+            PathLine { x: 18; y: 8 }
+            PathMove { x: 15; y: 12 }
+            PathLine { x: 18; y: 12 }
+        }
+    }
+    Shape {
+        visible: kind == 3
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6; fillColor: "transparent"; closed: true
+            startX: 2.5; startY: 4
+            PathLine { x: 17.5; y: 4 }
+            PathLine { x: 17.5; y: 16 }
+            PathLine { x: 2.5; y: 16 }
+        }
+        ShapePath {
+            strokeColor: color; strokeWidth: 1.6
+            startX: 6; startY: 8
+            PathLine { x: 8.5; y: 10 }
+            PathLine { x: 6; y: 12 }
+            PathMove { x: 10; y: 12.5 }
+            PathLine { x: 13.5; y: 12.5 }
+        }
+    }
+}
+
+// A window in a layout's picture, placed in fractions of it.
+component Pane : Rectangle {
+    property real fx
+    property real fy
+    property real fw
+    property real fh
+    x: 8 + (parent.width - 16) * fx
+    y: 8 + (parent.height - 16) * fy
+    width: (parent.width - 16) * fw - 4
+    height: (parent.height - 16) * fh - 4
+    radius: 3
+    color: Look.sel
+}
+
+// A window layout drawn small: 0 spiral, 1 main and stack, 2 one at a
+// time, 3 scrolling, 4 floating; the first window in the accent when
+// it is the one chosen.
+component LayoutThumb : Rectangle {
+    id: thumb
+    property int kind
+    property bool chosen
+    height: 92
+    radius: 8
+    color: Look.inset
+    Item {
+        visible: thumb.kind == 0
+        width: thumb.width; height: thumb.height
+        Pane { fx: 0; fy: 0; fw: 0.5; fh: 1; color: thumb.chosen ? Look.accentSoft : Look.sel }
+        Pane { fx: 0.5; fy: 0; fw: 0.5; fh: 0.5 }
+        Pane { fx: 0.5; fy: 0.5; fw: 0.25; fh: 0.5 }
+        Pane { fx: 0.75; fy: 0.5; fw: 0.25; fh: 0.5 }
+    }
+    Item {
+        visible: thumb.kind == 1
+        width: thumb.width; height: thumb.height
+        Pane { fx: 0; fy: 0; fw: 0.55; fh: 1; color: thumb.chosen ? Look.accentSoft : Look.sel }
+        Pane { fx: 0.55; fy: 0; fw: 0.45; fh: 0.34 }
+        Pane { fx: 0.55; fy: 0.34; fw: 0.45; fh: 0.33 }
+        Pane { fx: 0.55; fy: 0.67; fw: 0.45; fh: 0.33 }
+    }
+    Item {
+        visible: thumb.kind == 2
+        width: thumb.width; height: thumb.height
+        Pane { fx: 0; fy: 0; fw: 1; fh: 1; color: thumb.chosen ? Look.accentSoft : Look.sel }
+    }
+    Item {
+        visible: thumb.kind == 3
+        width: thumb.width; height: thumb.height
+        Pane { fx: 0; fy: 0; fw: 0.43; fh: 1; color: thumb.chosen ? Look.accentSoft : Look.sel }
+        Pane { fx: 0.45; fy: 0; fw: 0.43; fh: 1 }
+        Pane { fx: 0.9; fy: 0; fw: 0.12; fh: 1 }
+    }
+    Item {
+        visible: thumb.kind == 4
+        width: thumb.width; height: thumb.height
+        Pane { fx: 0.04; fy: 0.08; fw: 0.46; fh: 0.5; color: thumb.chosen ? Look.accentSoft : Look.sel }
+        Pane { fx: 0.62; fy: 0.04; fw: 0.34; fh: 0.38 }
+        Pane { fx: 0.3; fy: 0.42; fw: 0.46; fh: 0.54; border.width: 1; border.color: Look.line2 }
+    }
+}
+
+// A card of label and value lines: About.
+component InfoCard : Rectangle {
+    id: info
+    property list<string> labels
+    property list<string> values
+    height: lines.implicitHeight + 40
+    radius: 12
+    color: Look.card
+    border.width: 1
+    border.color: Look.line
+    Column {
+        id: lines
+        x: 20; y: 20
+        spacing: 8
+        Repeater {
+            model: info.labels
+            Item {
+                width: info.width - 40
+                height: 21
+                Text { height: 21; text: modelData; font: Look.sans(14); color: Look.muted }
+                Text {
+                    x: 184
+                    height: 21
+                    text: info.values[index]
+                    font: Look.sans(14, 500)
+                    color: Look.text
+                }
+            }
+        }
+    }
+}
+
+// The accent's discs, the chosen one ringed.
+component AccentCard : Rectangle {
+    id: accents
+    property list<color> colors
+    property int current
+    signal picked(int option)
+    height: 72
+    radius: 12
+    color: Look.card
+    border.width: 1
+    border.color: Look.line
+    Row {
+        x: 18; y: 18
+        spacing: 12
+        Repeater {
+            model: accents.colors
+            Item {
+                width: 36; height: 36
+                Rectangle {
+                    visible: index == accents.current
+                    width: 40; height: 40; x: -2; y: -2
+                    radius: 20
+                    color: "transparent"
+                    border.width: 2
+                    border.color: modelData
+                }
+                Rectangle {
+                    x: 1; y: 1
+                    width: 34; height: 34
+                    radius: 17
+                    color: modelData
+                    border.width: index == accents.current ? 3 : 0
+                    border.color: Look.card
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: accents.picked(index)
+                }
+            }
+        }
+    }
+}
+
+// The displays as boxes, placed by Rust: x, y, width, height each.
+component MonitorCard : Rectangle {
+    id: monitors
+    property list<string> names
+    property list<string> subs
+    property list<real> boxes
+    property int current
+    signal picked(int option)
+    height: 240
+    radius: 12
+    color: Look.inset
+    border.width: 1
+    border.color: Look.line
+    Repeater {
+        model: monitors.names
+        Rectangle {
+            x: monitors.boxes[index * 4]
+            y: monitors.boxes[index * 4 + 1]
+            width: monitors.boxes[index * 4 + 2]
+            height: monitors.boxes[index * 4 + 3]
+            radius: 8
+            color: Look.card
+            border.width: index == monitors.current ? 2 : 1.5
+            border.color: index == monitors.current ? Look.accent : Look.track
+            Column {
+                anchors.centerIn: parent
+                spacing: 2
+                Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData; font: Look.sans(13, 600); color: Look.text }
+                Text { anchors.horizontalCenter: parent.horizontalCenter; text: monitors.subs[index]; font: Look.sans(11); color: Look.muted }
+            }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: monitors.picked(index)
+            }
+        }
+    }
+}
+
+// The window layouts as cards of three across, each with its picture
+// and two lines of words.
+component LayoutCards : Grid {
+    id: cards
+    property list<string> names
+    property list<string> descs
+    property int current
+    signal picked(int option)
+    columns: 3
+    spacing: 10
+    Repeater {
+        model: cards.names
+        Rectangle {
+            width: (cards.width - 20) / 3
+            height: 178
+            radius: 12
+            color: layoutArea.containsMouse ? Look.hover : Look.card
+            border.width: 1
+            border.color: index == cards.current ? Look.accent : Look.line
+            LayoutThumb {
+                x: 12; y: 12
+                width: parent.width - 24
+                kind: index
+                chosen: index == cards.current
+            }
+            Text { x: 12; y: 116; text: modelData; font: Look.sans(14, 600); color: Look.text }
+            Text { x: 12; y: 136; text: cards.descs[index * 2]; font: Look.sans(13); color: Look.muted }
+            Text { x: 12; y: 152; text: cards.descs[index * 2 + 1]; font: Look.sans(13); color: Look.muted }
+            MouseArea {
+                id: layoutArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: cards.picked(index)
+            }
+        }
+    }
+}

@@ -1,11 +1,12 @@
-# settings, an app (docs/APPS.md): Ferrix's Settings. Its first page is game
-# mode (Ferrix's docs/SETTINGS.md).
+# settings, an app (docs/APPS.md): Ferrix's Settings, after the customer's
+# design, drawn with tole. Its pages are Ferrix's docs/RUNTIME-SETTINGS.md
+# settings; game mode is docs/SETTINGS.md.
 
 [package]
 name = "settings"
 version = "0.1.0"
-description = "Settings: a window of pages, the first of them which applications are started in game mode"
-license = "MIT"
+description = "Settings: the desktop, the session and the system, page by page, after the customer's design"
+license = "MIT AND OFL-1.1"
 abi = "linux"
 arches = ["x86_64", "aarch64", "armv7a"]
 depends = []
@@ -27,6 +28,27 @@ mode = "644"
 from = "share/ferrix-settings.svg"
 source = "folder"
 to = "usr/share/icons/hicolor/scalable/apps/ferrix-settings.svg"
+mode = "644"
+
+# The design's faces, Figtree and JetBrains Mono, where Settings and the
+# fonts the desktop scans find them, and their licences, which a package
+# carrying them must reproduce.
+[[package.files]]
+from = "share/fonts"
+source = "folder"
+tree = true
+to = "usr/share/fonts/settings"
+
+[[package.files]]
+from = "LICENSE-figtree"
+source = "folder"
+to = "usr/share/licenses/settings/LICENSE-figtree"
+mode = "644"
+
+[[package.files]]
+from = "LICENSE-jetbrains-mono"
+source = "folder"
+to = "usr/share/licenses/settings/LICENSE-jetbrains-mono"
 mode = "644"
 
 [build]
