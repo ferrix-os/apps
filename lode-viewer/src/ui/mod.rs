@@ -3,6 +3,7 @@
 //! sizes, its palette ([`crate::theme`]) and its two faces.
 
 mod logs;
+mod machines;
 mod overview;
 
 use crate::app::{Action, App, Origin, Page, ZOOMS, clock, clock_hm};
@@ -38,6 +39,7 @@ pub fn paint(app: &App, c: &mut Frame<'_, '_>) {
     match app.page {
         Page::Overview => overview::paint(app, c, &t, page),
         Page::Logs => logs::paint(app, c, &t, page),
+        Page::Machines => machines::paint(app, c, &t, page),
     }
     sidebar(app, c, &t, Rect::new(0.0, HEADER, SIDEBAR, height - HEADER));
     header(app, c, &t, width);
@@ -162,7 +164,7 @@ fn sidebar(app: &App, c: &mut Frame<'_, '_>, t: &Theme, bar: Rect) {
     c.fill(Rect::new(bar.right() - 1.0, bar.y, 1.0, bar.h), 0.0, t.line);
     let mut y = bar.y + 22.0;
     let crashes = app.crashes();
-    let pages: [(&str, Action, bool, usize); 3] = [
+    let pages: [(&str, Action, bool, usize); 4] = [
         (
             "Overview",
             Action::Page(Page::Overview),
@@ -171,6 +173,12 @@ fn sidebar(app: &App, c: &mut Frame<'_, '_>, t: &Theme, bar: Rect) {
         ),
         ("Logs", Action::Page(Page::Logs), app.page == Page::Logs, 0),
         ("Crashes", Action::Crashes, false, crashes),
+        (
+            "Machines",
+            Action::Page(Page::Machines),
+            app.page == Page::Machines,
+            0,
+        ),
     ];
     for (label, action, on, badge) in pages {
         let place = Rect::new(14.0, y, SIDEBAR - 28.0, 36.0);
@@ -334,10 +342,7 @@ pub(super) fn page_heading(
     let mut x = area.x + c.text(sans(18.0, 600), title, (area.x, y, 30.0), t.ink, None) + 16.0;
     // The machine, when the viewer holds several (lode-receive's stores).
     if !app.machines.is_empty() {
-        let name = app
-            .machines
-            .get(app.machine)
-            .map_or("?", |machine| machine.name.as_str());
+        let name = app.origin_name.as_str();
         let w = c.width(sans(13.0, 500), name) + 40.0;
         let picker = Rect::new(x, y + 1.0, w, 28.0);
         c.boxed(picker, 6.0, t.bg, t.line3);
@@ -458,7 +463,7 @@ fn machine_menu(app: &App, c: &mut Frame<'_, '_>, t: &Theme) {
     let x = SIDEBAR + MARGIN + 80.0;
     let y = HEADER + 28.0 + 34.0;
     let count = app.machines.len().min(12);
-    let place = Rect::new(x, y, 380.0, 12.0 + 32.0 * count as f32);
+    let place = Rect::new(x, y, 380.0, 12.0 + 32.0 * (count + 1) as f32);
     c.fill(
         Rect::new(place.x + 2.0, place.y + 3.0, place.w, place.h),
         8.0,
@@ -491,6 +496,20 @@ fn machine_menu(app: &App, c: &mut Frame<'_, '_>, t: &Theme) {
         );
         c.hit(line, Action::Machine(row));
     }
+    let add = Rect::new(
+        place.x + 6.0,
+        place.y + 6.0 + 32.0 * count as f32,
+        place.w - 12.0,
+        32.0,
+    );
+    let _ = c.text(
+        sans(13.0, 500),
+        "Add machine…",
+        (add.x + 10.0, add.y, add.h),
+        t.blue,
+        None,
+    );
+    c.hit(add, Action::FormFocus(crate::app::FormField::Name));
 }
 
 /// A button with an edge.

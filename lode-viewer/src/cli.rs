@@ -38,6 +38,13 @@ usage: lode-viewer [FILE.jsonl ...] [-D DIR ...] [options]
   -D DIR            read lode's store in DIR (default /var/log/journal and /run/log/journal)
   --machines DIR    each directory in DIR is one machine's store, as lode-receive keeps them;
                     without a store or a file, ~/.local/share/ferrix/lode-receive (LODE_RECEIVE_DIR)
+  --pull [USER@]HOST[:PORT] [--key FILE] [--into ROOT] [--seconds N]
+                    follow a machine's lode over ssh into ROOT with no window, as the
+                    Machines page does, for N seconds (default 30), and say what came
+  --pair NAME --server-name HOST --on [USER@]HOST[:PORT] [--key FILE] [--yes]
+                    set a machine up to send its log over TLS to lode-receive here: show
+                    what would be done on it, and with --yes do it
+  --no-remotes      do not follow the machines of ~/.config/ferrix/lode/machines.conf
   --import FILE.jsonl --into DIR
                     write a JSONL export (a box log) into DIR as lode's store, and exit
   --page NAME       open on overview or logs
@@ -68,6 +75,22 @@ pub struct Options {
     pub into: Option<PathBuf>,
     /// `--import`.
     pub import: bool,
+    /// Leave the machines of machines.conf unfollowed.
+    pub no_remotes: bool,
+    /// `--pull`: follow this machine with no window.
+    pub pull: Option<String>,
+    /// How long `--pull` follows, seconds.
+    pub seconds: u64,
+    /// `--key` for `--pull` and `--pair`.
+    pub key: Option<String>,
+    /// `--pair NAME`: set a machine up to forward over TLS, no window.
+    pub pair: Option<String>,
+    /// `--server-name` for `--pair`.
+    pub server: Option<String>,
+    /// `--on [USER@]HOST[:PORT]` for `--pair`.
+    pub on: Option<String>,
+    /// `--yes`: do what `--pair` shows.
+    pub yes: bool,
     /// The page.
     pub page: Option<Page>,
     /// The palette.
@@ -134,6 +157,17 @@ pub fn parse(arguments: &[String]) -> Asked {
                     options.files.push(PathBuf::from(value("a JSONL file")?));
                 }
                 "--into" => options.into = Some(PathBuf::from(value("a directory")?)),
+                "--no-remotes" => options.no_remotes = true,
+                "--pull" => options.pull = Some(value("[USER@]HOST[:PORT]")?),
+                "--key" => options.key = Some(value("a key file")?),
+                "--pair" => options.pair = Some(value("a machine's name")?),
+                "--server-name" => options.server = Some(value("this host's name")?),
+                "--on" => options.on = Some(value("[USER@]HOST[:PORT]")?),
+                "--yes" => options.yes = true,
+                "--seconds" => {
+                    let text = value("seconds")?;
+                    options.seconds = text.parse().map_err(|_| format!("{text}: not seconds"))?;
+                }
                 "--page" => {
                     let name = value("a page")?;
                     options.page = Some(
@@ -327,6 +361,19 @@ pub fn receive_root() -> Option<PathBuf> {
 
 /// The state the options ask for, on a viewer whose records are read.
 fn settle(mut app: App, options: &Options) -> App {
+    if !options.no_remotes
+        && let Some(path) = crate::remote::config_path()
+    {
+        if options.render.is_none() {
+            app.load_remotes(path);
+        } else {
+            // A frame drawn with no window follows nothing.
+            app.remotes = std::fs::read_to_string(&path)
+                .map(|text| crate::remote::parse(&text))
+                .unwrap_or_default();
+            app.links = app.remotes.iter().map(|_| None).collect();
+        }
+    }
     if let Some(home) = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
@@ -392,6 +439,12 @@ pub fn main() -> ExitCode {
             if options.import {
                 return import(&options);
             }
+            if let Some(target) = &options.pull {
+                return pull(target, &options);
+            }
+            if let Some(name) = &options.pair {
+                return pair(name, &options);
+            }
             let app = open(&options);
             let status = match &options.render {
                 Some(out) => crate::window::render(app, out, options.size, options.scale),
@@ -412,6 +465,130 @@ pub fn main() -> ExitCode {
             eprint!("{USAGE}");
             ExitCode::from(2)
         }
+    }
+}
+
+/// `[USER@]HOST[:PORT]` as a machine's settings.
+fn target_remote(
+    target: &str,
+    name: &str,
+    kind: crate::remote::Kind,
+    key: Option<String>,
+) -> crate::remote::Remote {
+    let (user, rest) = target.split_once('@').map_or(("", target), |(u, r)| (u, r));
+    let (host, port) = rest
+        .rsplit_once(':')
+        .map_or((rest, "22"), |(host, port)| (host, port));
+    crate::remote::Remote {
+        name: name.to_owned(),
+        kind,
+        host: host.to_owned(),
+        user: user.to_owned(),
+        port: port.parse().unwrap_or(0),
+        key,
+    }
+}
+
+/// `--pair`: what TLS forwarding needs on a machine, shown; done with
+/// `--yes`.
+fn pair(name: &str, options: &Options) -> ExitCode {
+    let (Some(server), Some(on)) = (&options.server, &options.on) else {
+        say("err: --pair needs --server-name HOST and --on [USER@]HOST[:PORT]");
+        return ExitCode::from(2);
+    };
+    let remote = target_remote(on, name, crate::remote::Kind::Tls, options.key.clone());
+    if let Some(why) = remote.refused() {
+        say(&format!("err: --on {on}: {why}"));
+        return ExitCode::from(2);
+    }
+    let root = options.into.clone().or_else(receive_root);
+    let plan = match crate::tls::pair(name, server, root.as_ref()) {
+        Ok(plan) => plan,
+        Err(why) => {
+            say(&format!("err: {why}"));
+            return ExitCode::FAILURE;
+        }
+    };
+    say(&format!("on {on}, as shown and nothing more:"));
+    for command in crate::tls::remote_commands(&plan) {
+        say(&format!("  {command}"));
+    }
+    if !options.yes {
+        say("nothing was done: --yes does it");
+        return ExitCode::SUCCESS;
+    }
+    let result = crate::tls::apply(&remote, &plan, &|line| say(&line))
+        .and_then(|()| crate::tls::ensure_running(root.as_ref()));
+    match result {
+        Ok(line) => {
+            say(&line);
+            ExitCode::SUCCESS
+        }
+        Err(why) => {
+            say(&format!("err: {why}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `--pull`: one machine followed over ssh, no window.
+fn pull(target: &str, options: &Options) -> ExitCode {
+    let host_name = target
+        .rsplit_once('@')
+        .map_or(target, |(_, rest)| rest)
+        .split(':')
+        .next()
+        .unwrap_or(target)
+        .to_owned();
+    let remote = target_remote(
+        target,
+        &host_name,
+        crate::remote::Kind::Ssh,
+        options.key.clone(),
+    );
+    if let Some(why) = remote.refused() {
+        say(&format!("err: --pull {target}: {why}"));
+        return ExitCode::from(2);
+    }
+    let Some(root) = options.into.clone().or_else(receive_root) else {
+        say("err: --pull needs --into ROOT, or a home directory");
+        return ExitCode::from(2);
+    };
+    let link = crate::remote::Link::start(remote, root);
+    let seconds = if options.seconds == 0 {
+        30
+    } else {
+        options.seconds
+    };
+    let mut said = String::new();
+    for _ in 0..seconds * 2 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let now = link.now();
+        let line = format!(
+            "{}: {} records{}",
+            now.state,
+            now.records,
+            now.error
+                .as_deref()
+                .map_or_else(String::new, |error| format!(", last error: {error}"))
+        );
+        if line != said {
+            say(&format!("pull {target}: {line}"));
+            said = line;
+        }
+    }
+    let now = link.now();
+    link.stop();
+    say(&format!(
+        "pull {target}: {} records kept in {}",
+        now.records,
+        now.dir
+            .map_or_else(|| "nothing yet".to_owned(), |dir| dir.display().to_string())
+    ));
+    if now.records > 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 

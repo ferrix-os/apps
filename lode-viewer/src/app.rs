@@ -19,6 +19,8 @@ pub enum Page {
     Overview,
     /// The records.
     Logs,
+    /// The machines followed, and adding one.
+    Machines,
 }
 
 impl Page {
@@ -28,6 +30,7 @@ impl Page {
         match name {
             "overview" => Some(Page::Overview),
             "logs" => Some(Page::Logs),
+            "machines" => Some(Page::Machines),
             _ => None,
         }
     }
@@ -56,6 +59,20 @@ pub enum Action {
     Theme(Mode),
     /// Open or close the boot menu.
     BootMenu,
+    /// Type into a field of the Add machine form.
+    FormFocus(FormField),
+    /// Choose how the machine's log comes.
+    FormKind(crate::remote::Kind),
+    /// Add the machine the form describes, and follow it.
+    FormAdd,
+    /// Stop following a machine and forget its settings (its store stays).
+    RemoveRemote(usize),
+    /// Show a followed machine's store.
+    OpenRemote(usize),
+    /// Do the TLS set-up shown, on the machine.
+    TlsConfirm,
+    /// Leave it undone.
+    TlsCancel,
     /// Move the window by the pointer: a press on the header.
     WindowMove,
     /// Maximize the window, or give it its own size again.
@@ -126,6 +143,98 @@ pub enum Action {
     Minimap(f32, f32),
 }
 
+/// The Add machine form's fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormField {
+    /// What to call it.
+    Name,
+    /// Its host.
+    Host,
+    /// The user to log in as.
+    User,
+    /// The port.
+    Port,
+    /// The key.
+    Key,
+    /// How the machine reaches this one, for TLS.
+    Server,
+}
+
+impl FormField {
+    /// Every field, in the order Tab goes.
+    pub const ALL: [FormField; 6] = [
+        FormField::Name,
+        FormField::Host,
+        FormField::User,
+        FormField::Port,
+        FormField::Key,
+        FormField::Server,
+    ];
+}
+
+/// The Add machine form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Form {
+    /// The values, in [`FormField::ALL`]'s order.
+    pub values: [String; 6],
+    /// How the log comes.
+    pub kind: crate::remote::Kind,
+    /// The field typed into.
+    pub focus: Option<FormField>,
+    /// Why the last Add was refused.
+    pub error: Option<String>,
+}
+
+impl Default for Form {
+    fn default() -> Self {
+        Form {
+            values: [
+                String::new(),
+                String::new(),
+                "root".to_owned(),
+                "22".to_owned(),
+                String::new(),
+                String::new(),
+            ],
+            kind: crate::remote::Kind::Ssh,
+            focus: None,
+            error: None,
+        }
+    }
+}
+
+impl Form {
+    /// A field's value.
+    #[must_use]
+    pub fn value(&self, field: FormField) -> &str {
+        let index = FormField::ALL
+            .iter()
+            .position(|each| *each == field)
+            .unwrap_or(0);
+        self.values.get(index).map_or("", String::as_str)
+    }
+
+    /// A field's value, to change.
+    fn value_mut(&mut self, field: FormField) -> Option<&mut String> {
+        let index = FormField::ALL.iter().position(|each| *each == field)?;
+        self.values.get_mut(index)
+    }
+
+    /// The settings it describes.
+    #[must_use]
+    pub fn remote(&self) -> crate::remote::Remote {
+        let key = self.value(FormField::Key).trim();
+        crate::remote::Remote {
+            name: self.value(FormField::Name).trim().to_owned(),
+            kind: self.kind,
+            host: self.value(FormField::Host).trim().to_owned(),
+            user: self.value(FormField::User).trim().to_owned(),
+            port: self.value(FormField::Port).trim().parse().unwrap_or(0),
+            key: (!key.is_empty()).then(|| key.to_owned()),
+        }
+    }
+}
+
 /// The state.
 #[derive(Debug)]
 pub struct App {
@@ -192,6 +301,19 @@ pub struct App {
     pub machine_menu: bool,
     /// The receiver's root the machines were found in.
     pub machines_root: Option<std::path::PathBuf>,
+    /// The machines the viewer follows itself, from machines.conf.
+    pub remotes: Vec<crate::remote::Remote>,
+    /// Their links, by the same index; none until started.
+    pub links: Vec<Option<crate::remote::Link>>,
+    /// Where machines.conf is.
+    pub remotes_file: Option<PathBuf>,
+    /// The Add machine form.
+    pub form: Form,
+    /// The TLS set-up waiting for the person's confirm: the machine and
+    /// what pairing said it needs.
+    pub tls_plan: Option<(crate::remote::Remote, crate::tls::Plan)>,
+    /// What the TLS set-up has done, a line a step, shared with its thread.
+    pub tls_progress: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// Whether the boot before is drawn beside this one.
     pub compare: bool,
     /// What the last copy put on the clipboard, for the window to offer.
@@ -241,6 +363,12 @@ impl App {
             machine: 0,
             machine_menu: false,
             machines_root: None,
+            remotes: Vec::new(),
+            links: Vec::new(),
+            remotes_file: None,
+            form: Form::default(),
+            tls_plan: None,
+            tls_progress: std::sync::Arc::default(),
             compare: false,
             clipboard: None,
             toast: None,
@@ -418,6 +546,201 @@ impl App {
         added
     }
 
+    /// The receiver's root, where followed machines' stores go.
+    fn root(&mut self) -> Option<PathBuf> {
+        if self.machines_root.is_none() {
+            self.machines_root = crate::cli::receive_root();
+        }
+        self.machines_root.clone()
+    }
+
+    /// Read machines.conf from `path` and start following each machine
+    /// that comes over ssh.
+    pub fn load_remotes(&mut self, path: PathBuf) {
+        self.remotes = std::fs::read_to_string(&path)
+            .map(|text| crate::remote::parse(&text))
+            .unwrap_or_default();
+        self.remotes_file = Some(path);
+        self.links = self.remotes.iter().map(|_| None).collect();
+        let root = self.root();
+        for (remote, link) in self.remotes.iter().zip(self.links.iter_mut()) {
+            if let (crate::remote::Kind::Ssh, Some(root)) = (remote.kind, &root) {
+                *link = Some(crate::remote::Link::start(remote.clone(), root.clone()));
+            }
+        }
+    }
+
+    /// Keep the machines in their file.
+    fn store_remotes(&mut self) {
+        let Some(path) = self.remotes_file.clone() else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(error) = std::fs::write(&path, crate::remote::write(&self.remotes)) {
+            self.toast = Some(format!("{}: {error}", path.display()));
+        }
+    }
+
+    /// The form's machine added and followed.
+    fn add_remote(&mut self) {
+        let remote = self.form.remote();
+        if remote.kind == crate::remote::Kind::Tls {
+            self.pair_tls(remote);
+            return;
+        }
+        if let Some(why) = remote.refused() {
+            self.form.error = Some(format!("not yet: {why}"));
+            return;
+        }
+        if self.remotes.iter().any(|known| known.name == remote.name) {
+            self.form.error = Some(format!("{} is a machine already", remote.name));
+            return;
+        }
+        let Some(root) = self.root() else {
+            self.form.error = Some("no home directory to keep its log in".to_owned());
+            return;
+        };
+        self.links
+            .push(Some(crate::remote::Link::start(remote.clone(), root)));
+        self.toast = Some(format!("following {} over ssh", remote.name));
+        self.remotes.push(remote);
+        self.store_remotes();
+        self.form = Form::default();
+    }
+
+    /// Pair the form's machine with the receiver here and show what it
+    /// needs done on the machine, for the person to confirm.
+    fn pair_tls(&mut self, remote: crate::remote::Remote) {
+        self.form.error = None;
+        if crate::tls::receiver().is_none() {
+            self.form.error = Some("lode-receive is not installed on this machine".to_owned());
+            return;
+        }
+        let name_ok = !remote.name.is_empty()
+            && remote.name.len() <= 32
+            && remote
+                .name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !name_ok {
+            self.form.error = Some("a name of a-z, 0-9 and dashes, at most 32".to_owned());
+            return;
+        }
+        if let Some(why) = remote.refused() {
+            self.form.error = Some(format!("not yet: {why}"));
+            return;
+        }
+        let server = self.form.value(FormField::Server).trim().to_owned();
+        if server.is_empty() {
+            self.form.error =
+                Some("say how the machine reaches this one (its name or address)".to_owned());
+            return;
+        }
+        let root = self.root();
+        match crate::tls::pair(&remote.name, &server, root.as_ref()) {
+            Ok(plan) => {
+                if let Ok(mut progress) = self.tls_progress.lock() {
+                    progress.clear();
+                }
+                self.tls_plan = Some((remote, plan));
+            }
+            Err(why) => self.form.error = Some(why),
+        }
+    }
+
+    /// The confirmed TLS set-up, done on its own thread: the files and the
+    /// line on the machine, the upload restarted, the receiver here made
+    /// to run, and the machine kept in machines.conf.
+    fn apply_tls(&mut self) {
+        let Some((remote, plan)) = self.tls_plan.take() else {
+            return;
+        };
+        let progress = std::sync::Arc::clone(&self.tls_progress);
+        let root = self.root();
+        let said = move |line: String| {
+            if let Ok(mut progress) = progress.lock() {
+                progress.push(line);
+            }
+        };
+        let thread_remote = remote.clone();
+        let _ = std::thread::Builder::new()
+            .name("tls-setup".to_owned())
+            .spawn(move || {
+                let result = crate::tls::apply(&thread_remote, &plan, &said)
+                    .and_then(|()| crate::tls::ensure_running(root.as_ref()));
+                match result {
+                    Ok(line) => {
+                        said(line);
+                        said(format!("{} sends its log here now", thread_remote.name));
+                    }
+                    Err(why) => said(format!("stopped: {why}")),
+                }
+            });
+        self.remotes.push(remote);
+        self.links.push(None);
+        self.store_remotes();
+        self.form = Form::default();
+    }
+
+    /// Stop following machine `index` and forget it; its store stays.
+    fn remove_remote(&mut self, index: usize) {
+        if index >= self.remotes.len() {
+            return;
+        }
+        let gone = self.remotes.remove(index);
+        if index < self.links.len() {
+            if let Some(Some(link)) = self.links.get(index) {
+                link.stop();
+            }
+            let _ = self.links.remove(index);
+        }
+        self.store_remotes();
+        self.toast = Some(format!(
+            "{} is no longer followed; what came is kept",
+            gone.name
+        ));
+    }
+
+    /// A key typed into the form: answers whether anything changed.
+    pub fn form_key(&mut self, keysym: &str, text: &str, shift: bool) -> bool {
+        let Some(field) = self.form.focus else {
+            return false;
+        };
+        match keysym {
+            "Tab" | "ISO_Left_Tab" => {
+                let at = FormField::ALL
+                    .iter()
+                    .position(|each| *each == field)
+                    .unwrap_or(0);
+                let next = if shift || keysym == "ISO_Left_Tab" {
+                    (at + FormField::ALL.len() - 1) % FormField::ALL.len()
+                } else {
+                    (at + 1) % FormField::ALL.len()
+                };
+                self.form.focus = FormField::ALL.get(next).copied();
+            }
+            "Return" | "KP_Enter" => {
+                self.form.focus = None;
+                self.add_remote();
+            }
+            "Escape" => self.form.focus = None,
+            "BackSpace" => {
+                if let Some(value) = self.form.value_mut(field) {
+                    let _ = value.pop();
+                }
+            }
+            _ if !text.is_empty() => {
+                if let Some(value) = self.form.value_mut(field) {
+                    value.push_str(text);
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Look again for the machines under the receiver's root: one that
     /// began sending since appears, and the one shown stays shown.
     pub fn rescan_machines(&mut self, root: &std::path::Path) -> bool {
@@ -469,6 +792,36 @@ impl App {
             }
             Action::Theme(mode) => self.mode = mode,
             Action::BootMenu => self.boot_menu = !self.boot_menu,
+            Action::FormFocus(field) => {
+                self.page = Page::Machines;
+                self.form.focus = Some(field);
+            }
+            Action::FormKind(kind) => self.form.kind = kind,
+            Action::FormAdd => self.add_remote(),
+            Action::TlsConfirm => self.apply_tls(),
+            Action::TlsCancel => {
+                self.tls_plan = None;
+                self.form.error = Some("nothing was changed on the machine".to_owned());
+            }
+            Action::RemoveRemote(index) => self.remove_remote(index),
+            Action::OpenRemote(index) => {
+                let dir = self
+                    .links
+                    .get(index)
+                    .and_then(|link| link.as_ref())
+                    .and_then(|link| link.now().dir);
+                if let Some(root) = self.machines_root.clone() {
+                    let _ = self.rescan_machines(&root);
+                }
+                match dir.and_then(|dir| self.machines.iter().position(|m| m.dir == dir)) {
+                    Some(at) => {
+                        self.open_machine(at);
+                        self.live = true;
+                        self.page = Page::Overview;
+                    }
+                    None => self.toast = Some("nothing has arrived from it yet".to_owned()),
+                }
+            }
             // The window's own: the window does them.
             Action::WindowMove
             | Action::WindowMaximize

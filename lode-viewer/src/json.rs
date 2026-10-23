@@ -38,6 +38,12 @@ pub fn read(text: &str) -> Read {
     read
 }
 
+/// One line's record, or `None` when the line is not one of lode's.
+#[must_use]
+pub fn record_line(line: &str) -> Option<Record> {
+    object(line.trim()).and_then(|pairs| record(pairs, &mut Vec::new()))
+}
+
 /// The record one object's pairs make, or `None` when it has no sequence
 /// number and so is not one of lode's.
 fn record(pairs: Vec<(String, Vec<u8>)>, hosts: &mut Vec<Rc<str>>) -> Option<Record> {

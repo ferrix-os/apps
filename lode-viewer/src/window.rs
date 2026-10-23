@@ -430,11 +430,21 @@ impl Window {
     /// The timer: follow the store when Live, and take a stale toast down.
     fn tick(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
+        // The links' states change on their own threads.
+        if self.app.page == Page::Machines {
+            self.dirty = true;
+        }
         if self.ticks.is_multiple_of(10)
             && let Some(root) = self.app.machines_root.clone()
             && self.app.rescan_machines(&root)
         {
             say(&format!("{} machines now", self.app.machines.len()));
+            // A viewer with nothing to show shows the machine that came.
+            if self.app.log.entries.is_empty() {
+                let index = self.app.machine;
+                self.app.open_machine(index);
+                self.app.live = true;
+            }
             self.dirty = true;
         }
         if self.app.live {
@@ -529,6 +539,10 @@ impl Window {
                 let keysym = key.keysym.unwrap_or_default();
                 if key.modifiers.control && matches!(keysym, "q" | "w") {
                     self.done = true;
+                    return;
+                }
+                if self.app.form.focus.is_some() {
+                    self.dirty |= self.app.form_key(keysym, &key.text, key.modifiers.shift);
                     return;
                 }
                 if self.app.editing {
@@ -641,6 +655,7 @@ impl Window {
                 let most = (crate::ui::overview_height() - (h as f32 - crate::ui::HEADER)).max(0.0);
                 self.app.overview_scroll = (self.app.overview_scroll + by).clamp(0.0, most);
             }
+            Page::Machines => {}
         }
     }
 

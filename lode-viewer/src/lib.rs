@@ -18,9 +18,11 @@ pub mod json;
 pub mod lines;
 pub mod png;
 pub mod query;
+pub mod remote;
 pub mod stats;
 pub mod store;
 pub mod theme;
+pub mod tls;
 pub mod ui;
 pub mod window;
 
