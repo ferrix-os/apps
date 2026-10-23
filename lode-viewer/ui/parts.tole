@@ -1,0 +1,373 @@
+// The viewer's own small parts, after the design (`Lode App.dc.html`):
+// each is drawn as the design measures it, in the Theme's tokens.
+import Fx
+import Fx.Controls
+
+// A disc: the viewer's status dots, placed by their centre.
+component Dot : Shape {
+    property real cx
+    property real cy
+    property real r: 4
+    property color color
+    ShapePath {
+        fillColor: color
+        strokeColor: "transparent"
+        PathCircle { centerX: cx; centerY: cy; radius: r }
+    }
+}
+
+// A box with an edge: the viewer's `boxed`.
+component Boxed : Rectangle {
+    color: Theme.bg
+    border.width: 1
+    border.color: Theme.line3
+}
+
+// A small button with an edge and a monospaced label: the track's.
+component Btn : Boxed {
+    id: btn
+    property string text
+    signal clicked()
+    radius: 5
+    Text {
+        width: parent.width
+        height: parent.height
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+        text: btn.text
+        font: Theme.mono(12)
+        color: Theme.ink2
+    }
+    MouseArea { anchors.fill: parent; onClicked: btn.clicked() }
+}
+
+// A button of the record pane and the machines page: an edge, a label in
+// the sans face, and the hover's ground.
+component PushButton : Rectangle {
+    id: push
+    property string text
+    property color ink: Theme.ink
+    property real px: 12.5
+    property bool hoverable: true
+    signal clicked()
+    radius: 6
+    color: hoverable && area.containsMouse ? Theme.hover : Theme.bg
+    border.width: 1
+    border.color: hoverable && area.containsMouse ? Theme.ink4 : Theme.line3
+    Text {
+        width: parent.width
+        height: parent.height
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+        text: push.text
+        font: Theme.sans(push.px, 500)
+        color: push.ink
+    }
+    MouseArea { id: area; anchors.fill: parent; hoverEnabled: true; onClicked: push.clicked() }
+}
+
+// The one main action: filled with the ink, its label inverted.
+component MainButton : Rectangle {
+    id: main
+    property string text
+    signal clicked()
+    radius: 6
+    color: Theme.ink
+    Text {
+        width: parent.width
+        height: parent.height
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+        text: main.text
+        font: Theme.sans(13, 500)
+        color: Theme.inv
+    }
+    MouseArea { anchors.fill: parent; onClicked: main.clicked() }
+}
+
+// A level's badge: a letter in a small square, filled for errors and
+// warnings, outlined for the rest.
+component Badge : Rectangle {
+    property int level: 6
+    property bool crash: false
+    width: 16
+    height: 16
+    radius: 3
+    color: level <= 3 ? Theme.red : level == 4 ? Theme.amber : "transparent"
+    border.width: level <= 4 ? 0 : 1
+    border.color: level == 5 ? Theme.accent : Theme.ink4
+    Text {
+        width: 16
+        height: 16
+        horizontalAlignment: Text.AlignHCenter
+        text: crash ? "C" : level <= 3 ? "E" : level == 4 ? "W" : level == 5 ? "N" : level == 6 ? "I" : level == 7 ? "D" : "?"
+        font: Theme.mono(10, 600)
+        color: level <= 3 ? "#ffffff" : level == 4 ? "#1a1a1a" : level == 5 ? Theme.accent : Theme.ink4
+    }
+}
+
+// The small down-pointing triangle of a picker, its tip at (`tipX`,
+// `tipY`).
+component Caret : Shape {
+    property real tipX
+    property real tipY
+    property color ink: Theme.ink
+    ShapePath {
+        fillColor: ink
+        strokeColor: "transparent"
+        startX: tipX - 4; startY: tipY - 5
+        PathLine { x: tipX + 4; y: tipY - 5 }
+        PathLine { x: tipX; y: tipY }
+        closed: true
+    }
+}
+
+// A page's heading: its name, the machine and the boot pickers, and at
+// the right whether it is live. `rightEdge` is where the right-hand side
+// begins, for what a page puts beside it.
+component PageHeading : Item {
+    id: heading
+    property string title
+    property bool hasMachines
+    property string machineName
+    property string bootLabel
+    property string bootRest
+    // 0 live, 1 paused, 2 from a file.
+    property int liveState
+    property real rightEdge: width - liveWord.implicitWidth - 24
+    signal machineMenu()
+    signal bootMenu()
+
+    height: 30
+
+    Text {
+        id: name
+        height: 30
+        text: heading.title
+        font: Theme.sans(18, 600)
+        color: Theme.ink
+    }
+    Boxed {
+        id: machine
+        visible: heading.hasMachines
+        x: name.implicitWidth + 16
+        y: 1
+        width: machineText.implicitWidth + 40
+        height: 28
+        radius: 6
+        Dot { cx: 12; cy: 14; r: 3.5; color: Theme.green }
+        Text {
+            id: machineText
+            x: 20
+            height: 28
+            text: heading.machineName
+            font: Theme.sans(13, 500)
+            color: Theme.ink
+        }
+        Caret { tipX: machine.width - 12; tipY: 17 }
+        MouseArea { anchors.fill: parent; onClicked: heading.machineMenu() }
+    }
+    Boxed {
+        id: boot
+        x: heading.hasMachines ? machine.x + machine.width + 8 : name.implicitWidth + 16
+        y: 1
+        width: bootLabel.implicitWidth + bootRest.implicitWidth + 36
+        height: 28
+        radius: 6
+        Text {
+            id: bootLabel
+            x: 10
+            height: 28
+            text: heading.bootLabel
+            font: Theme.sans(13)
+            color: Theme.ink
+        }
+        Text {
+            id: bootRest
+            x: 10 + bootLabel.implicitWidth
+            height: 28
+            text: heading.bootRest
+            font: Theme.sans(13)
+            color: Theme.ink4
+        }
+        Caret { tipX: boot.width - 14; tipY: 17 }
+        MouseArea { anchors.fill: parent; onClicked: heading.bootMenu() }
+    }
+    Text {
+        id: liveWord
+        x: heading.width - implicitWidth
+        height: 30
+        text: heading.liveState == 0 ? "Live" : heading.liveState == 1 ? "Paused" : "From a file"
+        font: Theme.sans(13, 500)
+        color: heading.liveState == 0 ? Theme.green : Theme.ink4
+    }
+    Dot {
+        cx: heading.width - liveWord.implicitWidth - 10
+        cy: 15
+        r: 4
+        color: heading.liveState == 0 ? Theme.green : Theme.idle
+    }
+}
+
+// A skip mark: a bar and a triangle, pointing right when `forward`, its
+// middle at (`at`, 12) of what holds it.
+component SkipMark : Item {
+    property real at
+    property bool forward
+    property color ink: Theme.ink2
+    Rectangle {
+        x: forward ? at + 6 : at
+        y: 8
+        width: 1.5
+        height: 8
+        color: ink
+    }
+    Shape {
+        ShapePath {
+            fillColor: ink
+            strokeColor: "transparent"
+            startX: forward ? at : at + 7.5
+            startY: 8
+            PathLine { x: forward ? at + 6 : at + 1.5; y: 12 }
+            PathLine { x: forward ? at : at + 7.5; y: 16 }
+            closed: true
+        }
+    }
+}
+
+// The time track: the step buttons, the window's span, the zooms and
+// Live, then the swim lanes, painted in Rust (`lanes`), over which a
+// press or a drag moves the cursor and the wheel zooms.
+component Track : Rectangle {
+    id: track
+    property bool live
+    property string label
+    // Which of the zooms is on: 30 s, 1 min, 5 min, the boot; -1 none.
+    property int zoom: 3
+    property painter lanes
+    // How many lanes are drawn, for the area a press takes.
+    property int laneRows: 5
+    signal prevProblem()
+    signal nextProblem()
+    signal step(int seconds)
+    signal zoomTo(int seconds)
+    signal goLive()
+    // The cursor pressed or dragged to `fraction` of the lanes' width.
+    signal cursorAt(real fraction)
+    signal zoomWheel(real delta)
+
+    height: 148
+    radius: 12
+    color: Theme.bg2
+    border.width: 1
+    border.color: Theme.line
+
+    Boxed {
+        x: 18; y: 14; width: 40; height: 24
+        radius: 5
+        SkipMark { at: 9; forward: false }
+        Dot { cx: 28; cy: 12; r: 3.5; color: Theme.red }
+        MouseArea { anchors.fill: parent; onClicked: track.prevProblem() }
+    }
+    Btn { x: 64; y: 14; width: 46; height: 24; text: "−10s"; onClicked: track.step(-10) }
+    Btn { x: 116; y: 14; width: 46; height: 24; text: "+10s"; onClicked: track.step(10) }
+    Boxed {
+        x: 168; y: 14; width: 40; height: 24
+        radius: 5
+        Dot { cx: 12; cy: 12; r: 3.5; color: Theme.red }
+        SkipMark { at: 22; forward: true }
+        MouseArea { anchors.fill: parent; onClicked: track.nextProblem() }
+    }
+    Text {
+        x: 220; y: 14; height: 24
+        text: track.label
+        font: Theme.mono(12)
+        color: Theme.ink
+    }
+    Rectangle {
+        id: liveButton
+        x: track.width - 18 - 52; y: 14; width: 52; height: 24
+        radius: 5
+        color: track.live ? Theme.green : Theme.idle
+        Dot { cx: 12; cy: 12; r: 3.5; color: Theme.bg }
+        Text { x: 20; height: 24; text: "Live"; font: Theme.sans(12); color: "#ffffff" }
+        MouseArea { anchors.fill: parent; onClicked: track.goLive() }
+    }
+    Boxed {
+        id: zooms
+        x: liveButton.x - 8 - 156; y: 14; width: 156; height: 24
+        radius: 5
+        Repeater {
+            model: ["30s", "1m", "5m", "boot"]
+            Item {
+                x: 1 + 36 * index
+                y: 1
+                width: index == 3 ? 45 : 36
+                height: 22
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 3
+                    color: track.zoom == index ? Theme.ink : "transparent"
+                }
+                Text {
+                    width: parent.width
+                    height: 22
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    text: modelData
+                    font: Theme.mono(12)
+                    color: track.zoom == index ? Theme.inv : Theme.ink2
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: track.zoomTo(index == 0 ? 30 : index == 1 ? 60 : index == 2 ? 300 : 0)
+                }
+            }
+        }
+    }
+    Canvas {
+        width: track.width
+        height: track.height
+        painter: track.lanes
+    }
+    MouseArea {
+        x: 98
+        y: 42
+        width: track.width - 98 - 18
+        height: 17 * track.laneRows + 10
+        onPressed: track.cursorAt(mouseX / width)
+        onPositionChanged: track.cursorAt(mouseX / width)
+        onWheel: track.zoomWheel(delta)
+    }
+}
+
+// A chip of the query: its label, and a cross when it can be taken away.
+component Chip : Rectangle {
+    id: chip
+    property string text
+    property bool removable
+    signal clicked()
+    width: label.implicitWidth + (removable ? 36 : 22)
+    height: 26
+    radius: 13
+    color: Theme.bg
+    border.width: 1
+    border.color: Theme.line3
+    Text {
+        id: label
+        x: 11
+        height: 26
+        text: chip.text
+        font: Theme.sans(12)
+        color: Theme.ink
+    }
+    Text {
+        visible: chip.removable
+        x: chip.width - 17
+        height: 26
+        text: "×"
+        font: Theme.sans(12)
+        color: Theme.ink4
+    }
+    MouseArea { anchors.fill: parent; enabled: chip.removable; onClicked: chip.clicked() }
+}

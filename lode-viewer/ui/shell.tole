@@ -1,0 +1,385 @@
+// The window around the pages: the header with the palette's switch and
+// the window's buttons, the sidebar with the pages, the saved queries and
+// lode's state, the boot and machine menus, and the toast. The pages go
+// in its content, under the header and beside the sidebar.
+import Fx
+import Fx.Controls
+
+struct NavItem {
+    label: string
+    on: bool
+    badge: string
+}
+
+struct SavedItem {
+    name: string
+    on: bool
+}
+
+struct MenuRow {
+    title: string
+    note: string
+    on: bool
+}
+
+export component Shell : Rectangle {
+    id: shell
+    default property alias content: pages
+
+    // The header: where the records are from.
+    property string place
+    property list<NavItem> nav
+    property list<SavedItem> saved
+    // lode's state at the sidebar's foot, the latest problems first.
+    property list<string> notices
+    property bool running
+    property string footLine
+    property string footTier
+    property real used
+    // The menus, when open, and where the boot menu stands.
+    property bool bootMenuOpen
+    property real bootMenuX
+    property list<MenuRow> boots
+    property bool machineMenuOpen
+    property list<MenuRow> machines
+    property string toast
+
+    signal theme(bool dark)
+    signal moveWindow()
+    signal maximizeWindow()
+    signal minimizeWindow()
+    signal closeWindow()
+    signal navigate(int index)
+    signal savedQuery(int index)
+    signal newSaved()
+    signal boot(int row)
+    signal machine(int row)
+    signal addMachine()
+
+    color: Theme.bg
+
+    Item {
+        id: pages
+        x: 220
+        y: 38
+        width: shell.width - 220
+        height: shell.height - 38
+    }
+
+    // The sidebar.
+    Rectangle {
+        id: sidebar
+        y: 38
+        width: 220
+        height: shell.height - 38
+        color: Theme.bg2
+        Rectangle { x: 219; width: 1; height: parent.height; color: Theme.line }
+        Repeater {
+            model: shell.nav
+            Rectangle {
+                x: 14
+                y: 22 + 40 * index
+                width: 192
+                height: 36
+                radius: 7
+                color: modelData.on ? Theme.ink : "transparent"
+                Text {
+                    x: 12
+                    height: 36
+                    text: modelData.label
+                    font: Theme.sans(13.5, modelData.on ? 500 : 400)
+                    color: modelData.on ? Theme.inv : Theme.ink2
+                }
+                Rectangle {
+                    visible: modelData.badge != ""
+                    x: 192 - 12 - width
+                    y: 9
+                    width: max(count.implicitWidth, 8) + 10
+                    height: 18
+                    radius: 9
+                    color: Theme.red
+                    Text {
+                        id: count
+                        width: parent.width
+                        height: 18
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                        text: modelData.badge
+                        font: Theme.mono(11, 600)
+                        color: "#ffffff"
+                    }
+                }
+                MouseArea { anchors.fill: parent; onClicked: shell.navigate(index) }
+            }
+        }
+        Text {
+            x: 26
+            y: 22 + 40 * 4 + 16
+            height: 20
+            text: "SAVED QUERIES"
+            font: Theme.sans(11, 600)
+            color: Theme.ink5
+        }
+        Repeater {
+            model: shell.saved
+            Rectangle {
+                x: 14
+                y: 22 + 40 * 4 + 16 + 28 + 32 * index
+                width: 192
+                height: 30
+                radius: 6
+                color: modelData.on ? Theme.hover : "transparent"
+                Text {
+                    x: 12
+                    width: 168
+                    height: 30
+                    elide: Text.ElideRight
+                    text: "@" + modelData.name
+                    font: Theme.mono(12.5)
+                    color: Theme.ink2
+                }
+                MouseArea { anchors.fill: parent; onClicked: shell.savedQuery(index) }
+            }
+        }
+        Item {
+            x: 14
+            y: 22 + 40 * 4 + 16 + 28 + 32 * shell.saved.length
+            width: 192
+            height: 30
+            Text { x: 12; height: 30; text: "+ new"; font: Theme.mono(12.5); color: Theme.accent }
+            MouseArea { anchors.fill: parent; onClicked: shell.newSaved() }
+        }
+        // lode's state at the foot, the problems above it.
+        Item {
+            id: foot
+            y: sidebar.height - 92
+            width: 220
+            height: 92
+            Repeater {
+                model: shell.notices
+                Text {
+                    x: 26
+                    y: -8 - 34 * (index + 1)
+                    width: 180
+                    height: 16
+                    elide: Text.ElideRight
+                    text: modelData
+                    font: Theme.sans(11)
+                    color: Theme.redInk
+                }
+            }
+            Rectangle { x: 14; width: 192; height: 1; color: Theme.line }
+            Dot { cx: 30; cy: 26; r: 4; color: shell.running ? Theme.green : Theme.idle }
+            Text {
+                x: 40; y: 16; width: 166; height: 20
+                elide: Text.ElideRight
+                text: shell.footLine
+                font: Theme.sans(12)
+                color: Theme.ink3
+            }
+            Rectangle { x: 26; y: 44; width: 168; height: 4; radius: 2; color: Theme.line }
+            Rectangle {
+                x: 26; y: 44; width: max(168 * shell.used, 4); height: 4
+                radius: 2
+                color: Theme.ink3
+            }
+            Text { x: 26; y: 56; height: 20; text: shell.footTier; font: Theme.sans(12); color: Theme.ink4 }
+        }
+    }
+
+    // The header.
+    Rectangle {
+        width: shell.width
+        height: 38
+        color: Theme.bg3
+        // It moves the window where the compositor draws no title bar
+        // (GNOME's mutter); everything on it is pressed before it.
+        MouseArea {
+            anchors.fill: parent
+            onPressed: shell.moveWindow()
+            onDoubleClicked: shell.maximizeWindow()
+        }
+        Rectangle { y: 37; width: shell.width; height: 1; color: Theme.line }
+        Rectangle {
+            x: 14; y: 11; width: 16; height: 16
+            radius: 4
+            color: Theme.ink
+            Text {
+                width: 16; height: 16
+                horizontalAlignment: Text.AlignHCenter
+                text: "L"
+                font: Theme.mono(10, 600)
+                color: Theme.inv
+            }
+        }
+        Text { id: name; x: 40; height: 38; text: "lode"; font: Theme.sans(13, 600); color: Theme.ink }
+        Text {
+            x: 40 + name.implicitWidth + 10
+            width: shell.width - (40 + name.implicitWidth + 10) - 330
+            height: 38
+            elide: Text.ElideRight
+            text: shell.place
+            font: Theme.sans(13)
+            color: Theme.ink4
+        }
+        // Minimize, maximize and close, as GNOME's own windows draw them.
+        Item {
+            x: shell.width - 104; y: 6; width: 32; height: 26
+            Rectangle { x: 11; y: 16; width: 10; height: 1.5; color: Theme.ink3 }
+            MouseArea { anchors.fill: parent; onClicked: shell.minimizeWindow() }
+        }
+        Item {
+            x: shell.width - 70; y: 6; width: 32; height: 26
+            Rectangle {
+                x: 11; y: 8; width: 10; height: 10
+                radius: 1
+                color: "transparent"
+                border.width: 1.3
+                border.color: Theme.ink3
+            }
+            MouseArea { anchors.fill: parent; onClicked: shell.maximizeWindow() }
+        }
+        Item {
+            x: shell.width - 36; y: 6; width: 32; height: 26
+            Shape {
+                ShapePath {
+                    strokeColor: Theme.ink3
+                    strokeWidth: 1.4
+                    capStyle: ShapePath.FlatCap
+                    startX: 11; startY: 8
+                    PathLine { x: 21; y: 18 }
+                }
+                ShapePath {
+                    strokeColor: Theme.ink3
+                    strokeWidth: 1.4
+                    capStyle: ShapePath.FlatCap
+                    startX: 21; startY: 8
+                    PathLine { x: 11; y: 18 }
+                }
+            }
+            MouseArea { anchors.fill: parent; onClicked: shell.closeWindow() }
+        }
+        // Light | Dark.
+        Rectangle {
+            x: shell.width - 240; y: 8; width: 120; height: 22
+            radius: 6
+            color: Theme.bg3
+            border.width: 1
+            border.color: Theme.line3
+            Rectangle {
+                x: 1; y: 1; width: 58; height: 20
+                radius: 5
+                color: Theme.dark ? "transparent" : Theme.ink
+            }
+            Dot { cx: 12; cy: 11; r: 3; color: Theme.dark ? Theme.ink2 : Theme.inv }
+            Text { x: 19; height: 22; text: "Light"; font: Theme.sans(12); color: Theme.dark ? Theme.ink2 : Theme.inv }
+            MouseArea { width: 60; height: 22; onClicked: shell.theme(false) }
+            Rectangle {
+                x: 61; y: 1; width: 58; height: 20
+                radius: 5
+                color: Theme.dark ? Theme.ink : "transparent"
+            }
+            // The moon: a disc with a bite out of it.
+            Dot { cx: 72; cy: 11; r: 3.5; color: Theme.dark ? Theme.inv : Theme.ink2 }
+            Dot { cx: 73.6; cy: 9.8; r: 3; color: Theme.dark ? Theme.ink : Theme.bg3 }
+            Text { x: 79; height: 22; text: "Dark"; font: Theme.sans(12); color: Theme.dark ? Theme.inv : Theme.ink2 }
+            MouseArea { x: 60; width: 60; height: 22; onClicked: shell.theme(true) }
+        }
+    }
+
+    // The boots, to pick one.
+    Item {
+        visible: shell.bootMenuOpen
+        x: shell.bootMenuX
+        y: 100
+        width: 420
+        height: 12 + 32 * shell.boots.length
+        Rectangle { x: 2; y: 3; width: parent.width; height: parent.height; radius: 8; color: Theme.fill }
+        Boxed { width: parent.width; height: parent.height; radius: 8 }
+        Repeater {
+            model: shell.boots
+            Rectangle {
+                x: 6
+                y: 6 + 32 * index
+                width: 408
+                height: 32
+                radius: 5
+                color: modelData.on ? Theme.hover : "transparent"
+                Text { x: 10; height: 32; text: modelData.title; font: Theme.sans(13, 500); color: Theme.ink }
+                Text {
+                    x: 76; width: 322; height: 32
+                    elide: Text.ElideRight
+                    text: modelData.note
+                    font: Theme.mono(12)
+                    color: Theme.ink4
+                }
+                MouseArea { anchors.fill: parent; onClicked: shell.boot(index) }
+            }
+        }
+    }
+
+    // The machines, to pick one, and Add machine.
+    Item {
+        visible: shell.machineMenuOpen
+        x: 336
+        y: 100
+        width: 380
+        height: 12 + 32 * (shell.machines.length + 1)
+        Rectangle { x: 2; y: 3; width: parent.width; height: parent.height; radius: 8; color: Theme.fill }
+        Boxed { width: parent.width; height: parent.height; radius: 8 }
+        Repeater {
+            model: shell.machines
+            Rectangle {
+                x: 6
+                y: 6 + 32 * index
+                width: 368
+                height: 32
+                radius: 5
+                color: modelData.on ? Theme.hover : "transparent"
+                Text {
+                    x: 10; width: 150; height: 32
+                    elide: Text.ElideRight
+                    text: modelData.title
+                    font: Theme.sans(13, 500)
+                    color: Theme.ink
+                }
+                Text {
+                    x: 170; width: 188; height: 32
+                    elide: Text.ElideRight
+                    text: modelData.note
+                    font: Theme.mono(12)
+                    color: Theme.ink4
+                }
+                MouseArea { anchors.fill: parent; onClicked: shell.machine(index) }
+            }
+        }
+        Item {
+            x: 6
+            y: 6 + 32 * shell.machines.length
+            width: 368
+            height: 32
+            Text { x: 10; height: 32; text: "Add machine…"; font: Theme.sans(13, 500); color: Theme.accent }
+            MouseArea { anchors.fill: parent; onClicked: shell.addMachine() }
+        }
+    }
+
+    // A word that goes by itself.
+    Rectangle {
+        visible: shell.toast != ""
+        x: (shell.width - width) / 2
+        y: shell.height - 46
+        width: toastText.implicitWidth + 28
+        height: 30
+        radius: 15
+        color: Theme.ink
+        Text {
+            id: toastText
+            width: parent.width
+            height: 30
+            horizontalAlignment: Text.AlignHCenter
+            text: shell.toast
+            font: Theme.sans(12.5, 500)
+            color: Theme.inv
+        }
+    }
+}

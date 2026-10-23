@@ -1,0 +1,360 @@
+// The Overview: a boot at a glance. The track, the tiles, the activity
+// per bucket of time (the boot before beside it when asked), the rate
+// against the limiter, the busiest sources and the window's lines,
+// warnings and worse first. The charts are Rust painters over the
+// records; the rest is here.
+import Fx
+import Fx.Controls
+
+struct Tile {
+    figure: string
+    word: string
+    foot: string
+    // 0 errors, 1 warnings, 2 lines a second, 3 held.
+    kind: int
+}
+
+struct SourceShare {
+    name: string
+    count: string
+    fraction: real
+    errors: bool
+}
+
+struct WindowLine {
+    level: int
+    crash: bool
+    time: string
+    source: string
+    message: string
+}
+
+// A card: a bordered, rounded box with a title and a note at its right.
+component Card : Rectangle {
+    id: card
+    property string title
+    property string note
+    radius: 12
+    color: Theme.bg
+    border.width: 1
+    border.color: Theme.line
+    Text { x: 24; y: 20; height: 22; text: card.title; font: Theme.sans(13, 600); color: Theme.ink }
+    Text {
+        id: noteText
+        x: card.width - 24 - implicitWidth
+        y: 20
+        height: 22
+        text: card.note
+        font: Theme.sans(11)
+        color: Theme.ink4
+    }
+    property real noteWidth: noteText.implicitWidth
+}
+
+export component OverviewPage : Item {
+    id: page
+    // The heading and the track.
+    property bool hasMachines
+    property string machineName
+    property string bootLabel
+    property string bootRest
+    property int liveState
+    property bool live
+    property string trackLabel
+    property int zoom
+    property painter lanes
+    property int laneRows
+    // Nothing in the boot: only the heading and the track.
+    property bool empty
+    property list<Tile> tiles
+    property painter sparks
+    property string activityNote
+    // -1 no boot before, 0 off, 1 on.
+    property int compare
+    property painter activity
+    property painter rate
+    property list<SourceShare> sources
+    property string windowTitle
+    property list<WindowLine> lines
+    // "Show all 1,204 in Logs →", or empty when nothing is in the window.
+    property string showAll
+    property alias scroll: flick.contentY
+
+    signal machineMenu()
+    signal bootMenu()
+    signal prevProblem()
+    signal nextProblem()
+    signal step(int seconds)
+    signal zoomTo(int seconds)
+    signal goLive()
+    signal cursorAt(real fraction)
+    signal zoomWheel(real delta)
+    signal toggleCompare()
+    signal source(int index)
+    signal line(int index)
+    signal windowInLogs()
+
+    Flickable {
+        id: flick
+        anchors.fill: parent
+        contentHeight: 28 + 54 + 148 + 24 + 132 + 24 + 216 + 24 + 212 + 28 + 28 + 6 * 35 + 60
+
+        Item {
+            id: inner
+            x: 36
+            y: 28
+            width: page.width - 72
+            height: 1200
+
+            PageHeading {
+                width: inner.width
+                title: "Overview"
+                hasMachines: page.hasMachines
+                machineName: page.machineName
+                bootLabel: page.bootLabel
+                bootRest: page.bootRest
+                liveState: page.liveState
+                onMachineMenu: page.machineMenu()
+                onBootMenu: page.bootMenu()
+            }
+            Track {
+                y: 54
+                width: inner.width
+                live: page.live
+                label: page.trackLabel
+                zoom: page.zoom
+                lanes: page.lanes
+                laneRows: page.laneRows
+                onPrevProblem: page.prevProblem()
+                onNextProblem: page.nextProblem()
+                onStep: page.step(seconds)
+                onZoomTo: page.zoomTo(seconds)
+                onGoLive: page.goLive()
+                onCursorAt: page.cursorAt(fraction)
+                onZoomWheel: page.zoomWheel(delta)
+            }
+            Text {
+                visible: page.empty
+                y: 226
+                height: 24
+                text: "No records: nothing was read from the store or the file."
+                font: Theme.sans(14)
+                color: Theme.ink3
+            }
+
+            Item {
+                visible: !page.empty
+                y: 226
+                width: inner.width
+                height: 1000
+
+                // The four tiles.
+                Repeater {
+                    model: page.tiles
+                    Rectangle {
+                        id: tile
+                        x: ((inner.width - 48) / 4 + 16) * index
+                        width: (inner.width - 48) / 4
+                        height: 132
+                        radius: 12
+                        color: Theme.bg
+                        border.width: 1
+                        border.color: Theme.line
+                        Text {
+                            id: figure
+                            x: 20; y: 16; height: 36
+                            text: modelData.figure
+                            font: Theme.sans(28, 600)
+                            color: modelData.kind == 0 ? Theme.redInk : modelData.kind == 1 ? Theme.amberInk : modelData.kind == 2 ? Theme.ink : Theme.ink3
+                        }
+                        Text {
+                            x: 28 + figure.implicitWidth; y: 24; height: 24
+                            text: modelData.word
+                            font: Theme.sans(13)
+                            color: Theme.ink3
+                        }
+                        Text {
+                            x: 20; y: 98; width: tile.width - 40; height: 18
+                            elide: Text.ElideRight
+                            text: modelData.foot
+                            font: Theme.sans(11.5)
+                            color: Theme.ink4
+                        }
+                    }
+                }
+                // Their sparklines, one painter over the row.
+                Canvas { width: inner.width; height: 132; painter: page.sparks }
+
+                // Activity.
+                Card {
+                    id: activity
+                    y: 156
+                    width: inner.width
+                    height: 216
+                    title: "Activity"
+                    note: page.activityNote
+                    Rectangle {
+                        id: compare
+                        x: activity.width - 24 - activity.noteWidth - 16 - width
+                        y: 18
+                        width: compareLabel.implicitWidth + 20
+                        height: 24
+                        radius: 5
+                        color: page.compare == 1 ? Theme.ink : page.compare == 0 ? Theme.bg : "transparent"
+                        border.width: page.compare == 1 ? 0 : 1
+                        border.color: Theme.line3
+                        border.dash: page.compare < 0 ? 3 : 0
+                        Text {
+                            id: compareLabel
+                            visible: false
+                            text: "Compare with boot −1"
+                            font: Theme.sans(11.5, 500)
+                        }
+                        Text {
+                            width: parent.width
+                            height: 24
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
+                            text: page.compare < 0 ? "No boot −1 kept" : "Compare with boot −1"
+                            font: Theme.sans(11.5, 500)
+                            color: page.compare == 1 ? Theme.inv : page.compare == 0 ? Theme.ink2 : Theme.ink5
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: page.compare >= 0
+                            onClicked: page.toggleCompare()
+                        }
+                    }
+                    Canvas { width: activity.width; height: activity.height; painter: page.activity }
+                }
+
+                // The log rate, and the busiest sources beside it.
+                Card {
+                    id: rate
+                    y: 396
+                    width: floor((inner.width - 16) * 0.6)
+                    height: 212
+                    title: "Log rate"
+                    note: "lines/s · dashed = limiter (chatter, per source)"
+                    Canvas { width: rate.width; height: rate.height; painter: page.rate }
+                }
+                Card {
+                    id: sources
+                    x: rate.width + 16
+                    y: 396
+                    width: inner.width - rate.width - 16
+                    height: 212
+                    title: "Top sources"
+                    note: "in the window · red = has errors"
+                    Repeater {
+                        model: page.sources
+                        Item {
+                            x: 24
+                            y: 56 + 29 * index
+                            width: sources.width - 48
+                            height: 22
+                            Text {
+                                width: 88; height: 22
+                                elide: Text.ElideRight
+                                text: modelData.name
+                                font: Theme.mono(12.5)
+                                color: Theme.ink
+                            }
+                            Text {
+                                x: parent.width - implicitWidth
+                                height: 22
+                                text: modelData.count
+                                font: Theme.mono(12)
+                                color: Theme.ink4
+                            }
+                            Rectangle {
+                                id: bar
+                                x: 96; y: 8
+                                width: parent.width - 96 - 56
+                                height: 6
+                                radius: 3
+                                color: Theme.line2
+                            }
+                            Rectangle {
+                                x: 96; y: 8
+                                width: max(bar.width * modelData.fraction, 6)
+                                height: 6
+                                radius: 3
+                                color: modelData.errors ? Theme.red : Theme.bar
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: page.source(index) }
+                        }
+                    }
+                }
+
+                // The window's lines, warnings and worse first.
+                Item {
+                    y: 636
+                    width: inner.width
+                    height: 300
+                    Text {
+                        height: 20
+                        text: page.windowTitle
+                        font: Theme.sans(13, 600)
+                        color: Theme.ink2
+                    }
+                    Repeater {
+                        model: page.lines
+                        Rectangle {
+                            id: row
+                            y: 28 + 35 * index
+                            width: inner.width
+                            height: 30
+                            radius: 4
+                            color: modelData.level <= 3 ? Theme.redBg : modelData.level == 4 ? Theme.amberBg : Theme.bg
+                            Badge { x: 10; y: 7; level: modelData.level; crash: modelData.crash }
+                            Text {
+                                x: 40; height: 30
+                                text: modelData.time
+                                font: Theme.mono(12.5)
+                                color: Theme.ink4
+                            }
+                            Text {
+                                x: 148; width: 96; height: 30
+                                elide: Text.ElideRight
+                                text: modelData.source
+                                font: Theme.mono(12.5)
+                                color: Theme.ink
+                            }
+                            Text {
+                                x: 256; width: row.width - 270; height: 30
+                                elide: Text.ElideRight
+                                text: modelData.message
+                                font: Theme.mono(12.5)
+                                color: Theme.ink
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: page.line(index) }
+                        }
+                    }
+                    Text {
+                        visible: page.showAll == ""
+                        y: 28 + 35 * page.lines.length
+                        height: 24
+                        text: "Nothing in the window."
+                        font: Theme.sans(13)
+                        color: Theme.ink4
+                    }
+                    Item {
+                        visible: page.showAll != ""
+                        y: 28 + 35 * page.lines.length
+                        width: showAllText.implicitWidth + 16
+                        height: 26
+                        Text {
+                            id: showAllText
+                            x: 8; y: 2; height: 22
+                            text: page.showAll
+                            font: Theme.sans(13)
+                            color: Theme.accent
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: page.windowInLogs() }
+                    }
+                }
+            }
+        }
+    }
+}

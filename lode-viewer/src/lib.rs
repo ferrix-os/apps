@@ -13,12 +13,9 @@
 pub mod app;
 pub mod cli;
 pub mod data;
-pub mod draw;
 pub mod form;
 pub mod json;
 pub mod lines;
-pub mod picker;
-pub mod png;
 pub mod query;
 pub mod remote;
 pub mod selection;

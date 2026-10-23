@@ -69,8 +69,8 @@ pub enum Action {
     FormKeyChoice(KeyChoice),
     /// Open the file dialog for the key.
     FormChooseKey,
-    /// Take this key of `~/.ssh`, listed where no file dialog is.
-    FormPickKey(usize),
+    /// A field of the form typed into: its text now.
+    FormText(FormField, String),
     /// Paste the clipboard into the key area.
     FormPaste,
     /// Take this of the ways the machine may reach this one.
@@ -113,9 +113,9 @@ pub enum Action {
     NextProblem,
     /// A zoom, in seconds; 0 the whole boot.
     Zoom(u64),
-    /// The track: the cursor goes where it is pressed, its left edge and
-    /// width given.
-    Track(f32, f32),
+    /// The track: the cursor goes where it is pressed, a fraction of the
+    /// lanes' width.
+    Track(f32),
     /// A saved query, by index.
     Saved(usize),
     /// Keep the query typed as a new saved one.
@@ -124,6 +124,12 @@ pub enum Action {
     Save,
     /// Type into the query.
     EditQuery,
+    /// The query typed into: its text now.
+    QueryText(String),
+    /// Return in the query: take it.
+    QueryAccept,
+    /// Escape in the query: leave it as it was.
+    QueryCancel,
     /// Take a chip away.
     RemoveChip(usize),
     /// Add a chip.
@@ -154,9 +160,9 @@ pub enum Action {
     WindowInLogs,
     /// Show the boot before beside this one.
     Compare,
-    /// The table's overview strip: scroll to where it is pressed, its top
-    /// and height given.
-    Minimap(f32, f32),
+    /// The table's overview strip pressed: scroll there, a fraction of
+    /// its height.
+    MinimapAt(f32),
 }
 
 pub use crate::form::{Form, FormField, KeyChoice};
@@ -250,28 +256,18 @@ pub struct App {
     pub receiving: std::sync::Arc<std::sync::Mutex<Option<crate::tls::Check>>>,
     /// Whether that thread runs.
     checking: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// What the pointer is over, for the hover state.
-    pub hover: Option<Action>,
-    /// The file dialog open, its answer to come.
-    pub picking: Option<std::sync::mpsc::Receiver<crate::picker::Picked>>,
-    /// Where no file dialog answered: `~/.ssh`'s private keys to pick from.
-    pub key_files: Option<Vec<PathBuf>>,
-    /// Why there is no file dialog.
-    pub picker_note: Option<String>,
     /// Wakes the window when the file dialog answered.
     pub waker: Option<compositor_toolkit::Waker>,
     /// The ways a machine might reach this one, for TLS's server.
     pub reach: Vec<String>,
     /// A paste the window should ask the compositor for.
     pub want_paste: Option<crate::selection::Which>,
-    /// Text a field's Ctrl+C or Ctrl+X put on the clipboard: never said.
-    pub field_copy: Option<String>,
-    /// Whether the query's whole text is selected.
-    pub draft_all: bool,
     /// The Machines page's scroll.
     pub machines_scroll: f32,
-    /// The Machines page's height as last drawn.
-    pub machines_height: std::cell::Cell<f32>,
+    /// How tall the table's view is, for the strip's press and the keys.
+    pub table_view: f32,
+    /// How far each page can scroll: the Overview, the table, Machines.
+    pub scroll_most: [f32; 3],
     /// Whether the boot before is drawn beside this one.
     pub compare: bool,
     /// What the last copy put on the clipboard, for the window to offer.
@@ -331,17 +327,12 @@ impl App {
             selected_remote: None,
             receiving: std::sync::Arc::default(),
             checking: std::sync::Arc::default(),
-            hover: None,
-            picking: None,
-            key_files: None,
-            picker_note: None,
             waker: None,
             reach: Vec::new(),
             want_paste: None,
-            field_copy: None,
-            draft_all: false,
             machines_scroll: 0.0,
-            machines_height: std::cell::Cell::new(0.0),
+            table_view: 0.0,
+            scroll_most: [0.0; 3],
             compare: false,
             clipboard: None,
             toast: None,
@@ -1009,146 +1000,6 @@ impl App {
         ));
     }
 
-    /// A key typed into the form, with Shift, Ctrl and Alt as held:
-    /// answers whether anything changed.
-    pub fn form_key(
-        &mut self,
-        keysym: &str,
-        text: &str,
-        (shift, control, alt): (bool, bool, bool),
-    ) -> bool {
-        let Some(field) = self.form.focus else {
-            return false;
-        };
-        match keysym {
-            "Tab" | "ISO_Left_Tab" => {
-                let shown = self.form.shown();
-                let at = shown.iter().position(|each| *each == field).unwrap_or(0);
-                let next = if shift || keysym == "ISO_Left_Tab" {
-                    (at + shown.len() - 1) % shown.len()
-                } else {
-                    (at + 1) % shown.len()
-                };
-                self.form.focus = shown.get(next).copied();
-                self.form.all = false;
-            }
-            // A key's lines are typed with Return; Ctrl+Return adds.
-            "Return" | "KP_Enter" if field == FormField::Paste && !control => {
-                if let Some(value) = self.form.value_mut(field) {
-                    value.push('\n');
-                }
-                self.form.changed(field);
-            }
-            "Return" | "KP_Enter" => {
-                self.form.focus = None;
-                self.add_remote();
-            }
-            "Escape" => self.form.focus = None,
-            _ => {
-                let mut all = self.form.all;
-                let Some(value) = self.form.value_mut(field) else {
-                    return false;
-                };
-                let edit = crate::form::edit_line(value, &mut all, keysym, text, (control, alt));
-                self.form.all = all;
-                match edit {
-                    crate::form::Edit::Changed => self.form.changed(field),
-                    crate::form::Edit::Copy(copied) => {
-                        self.form.changed(field);
-                        // A private key is never put on the clipboard.
-                        if field != FormField::Paste {
-                            self.field_copy = Some(copied);
-                        }
-                    }
-                    crate::form::Edit::Unhandled => return false,
-                }
-            }
-        }
-        true
-    }
-
-    /// Text pasted: into the form's field or the query, whichever is
-    /// typed into. Answers whether it went anywhere.
-    pub fn paste(&mut self, text: &str) -> bool {
-        if self.form.focus.is_some() {
-            return self.form.paste(text);
-        }
-        if self.editing {
-            if std::mem::take(&mut self.draft_all) {
-                self.draft.clear();
-            }
-            let line = text
-                .lines()
-                .find(|line| !line.trim().is_empty())
-                .unwrap_or("");
-            self.draft.push_str(line.trim());
-            self.query.set_text(&self.draft.clone());
-            return true;
-        }
-        false
-    }
-
-    /// Open the desktop's file dialog for the key, on a thread of its own.
-    fn choose_key(&mut self) {
-        if self.picking.is_some() {
-            return;
-        }
-        let (send, answer) = std::sync::mpsc::channel();
-        let waker = self.waker.clone();
-        let folder = crate::picker::ssh_dir().filter(|dir| dir.is_dir());
-        let _ = std::thread::Builder::new()
-            .name("file-dialog".to_owned())
-            .spawn(move || {
-                let picked =
-                    crate::picker::choose("Choose the machine's private key", folder.as_deref());
-                let _ = send.send(picked);
-                if let Some(waker) = waker {
-                    waker.wake();
-                }
-            });
-        self.picking = Some(answer);
-    }
-
-    /// Take the file dialog's answer if it came: answers whether it did.
-    pub fn poll_picker(&mut self) -> bool {
-        let Some(answer) = &self.picking else {
-            return false;
-        };
-        let picked = match answer.try_recv() {
-            Ok(picked) => picked,
-            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                crate::picker::Picked::NoPortal("the file dialog went away".to_owned())
-            }
-        };
-        self.picking = None;
-        self.picked(picked);
-        true
-    }
-
-    /// What the file dialog answered.
-    pub fn picked(&mut self, picked: crate::picker::Picked) {
-        match picked {
-            crate::picker::Picked::File(path) => {
-                self.form.set(FormField::Key, &home_short(&path));
-                self.key_files = None;
-                self.picker_note = None;
-            }
-            crate::picker::Picked::Cancelled => {}
-            crate::picker::Picked::NoPortal(why) => {
-                self.key_files = Some(
-                    crate::picker::ssh_dir()
-                        .map(|dir| crate::picker::private_keys(&dir))
-                        .unwrap_or_default(),
-                );
-                self.picker_note = Some(format!(
-                    "No file dialog here ({why}). Pick a key of ~/.ssh, or type its path."
-                ));
-                self.form.focus = Some(FormField::Key);
-            }
-        }
-    }
-
     /// Look again for the machines under the receiver's root: one that
     /// began sending since appears, and the one shown stays shown.
     pub fn rescan_machines(&mut self, root: &std::path::Path) -> bool {
@@ -1179,8 +1030,12 @@ impl App {
     }
 
     /// Do `action`. `x` is where the pointer pressed, across.
-    pub fn act(&mut self, action: &Action, x: f32) {
-        if !matches!(action, Action::EditQuery) && self.editing {
+    pub fn act(&mut self, action: &Action) {
+        if !matches!(
+            action,
+            Action::EditQuery | Action::QueryText(_) | Action::QueryAccept | Action::QueryCancel
+        ) && self.editing
+        {
             self.commit_draft();
         }
         if !matches!(action, Action::BootMenu | Action::Boot(_)) {
@@ -1243,21 +1098,10 @@ impl App {
                     KeyChoice::Paste => Some(FormField::Paste),
                 };
             }
-            Action::FormChooseKey => {
-                self.form.key = KeyChoice::File;
-                self.choose_key();
-            }
-            Action::FormPickKey(index) => {
-                if let Some(path) = self
-                    .key_files
-                    .as_ref()
-                    .and_then(|files| files.get(index))
-                    .cloned()
-                {
-                    self.form.set(FormField::Key, &home_short(&path));
-                    self.key_files = None;
-                    self.picker_note = None;
-                }
+            Action::FormChooseKey => self.form.key = KeyChoice::File,
+            Action::FormText(field, text) => {
+                self.form.focus = Some(field);
+                self.form.set(field, &text);
             }
             Action::FormPaste => {
                 self.form.key = KeyChoice::Paste;
@@ -1351,9 +1195,9 @@ impl App {
                 self.span = seconds * 1_000_000;
                 self.refresh();
             }
-            Action::Track(left, width) => {
+            Action::Track(fraction) => {
                 let (start, span) = self.extent();
-                let fraction = ((x - left) / width.max(1.0)).clamp(0.0, 1.0);
+                let fraction = fraction.clamp(0.0, 1.0);
                 self.set_cursor(start + (f64::from(fraction) * span as f64) as u64);
             }
             Action::Saved(index) => {
@@ -1396,6 +1240,19 @@ impl App {
                     self.editing = true;
                     self.draft = self.query.text.clone();
                 }
+            }
+            Action::QueryText(text) => {
+                self.editing = true;
+                self.draft = text;
+                self.query.set_text(&self.draft.clone());
+            }
+            Action::QueryAccept => {
+                self.commit_draft();
+                self.scroll = 0.0;
+            }
+            Action::QueryCancel => {
+                self.editing = false;
+                self.draft = self.query.text.clone();
             }
             Action::RemoveChip(index) => {
                 if index < self.query.chips.len() {
@@ -1463,17 +1320,12 @@ impl App {
                 self.scroll = 0.0;
             }
             Action::Compare => self.compare = !self.compare,
-            Action::Minimap(top, height) => {
-                let _ = (top, height);
+            Action::MinimapAt(fraction) => {
+                let view = self.table_view;
+                self.scroll = (fraction.clamp(0.0, 1.0) * self.table_height - view / 2.0)
+                    .clamp(0.0, (self.table_height - view).max(0.0));
             }
         }
-    }
-
-    /// The minimap pressed at `y`: scroll there.
-    pub fn minimap(&mut self, top: f32, height: f32, y: f32, view: f32) {
-        let fraction = ((y - top) / height.max(1.0)).clamp(0.0, 1.0);
-        self.scroll = (fraction * self.table_height - view / 2.0)
-            .clamp(0.0, (self.table_height - view).max(0.0));
     }
 
     /// Put a chip on, or take it off when it is on.
@@ -1510,34 +1362,53 @@ impl App {
         }
     }
 
-    /// A key, while the query is typed into, with Ctrl and Alt as held:
-    /// answers whether anything changed.
-    pub fn type_key(&mut self, keysym: &str, text: &str, (control, alt): (bool, bool)) -> bool {
-        match keysym {
-            "Return" | "KP_Enter" => {
-                self.draft_all = false;
-                self.commit_draft();
-                self.scroll = 0.0;
-            }
-            "Escape" => {
-                self.draft_all = false;
-                self.editing = false;
-                self.draft = self.query.text.clone();
-            }
-            _ => {
-                let mut all = self.draft_all;
-                let edit =
-                    crate::form::edit_line(&mut self.draft, &mut all, keysym, text, (control, alt));
-                self.draft_all = all;
-                match edit {
-                    crate::form::Edit::Changed => {}
-                    crate::form::Edit::Copy(copied) => self.field_copy = Some(copied),
-                    crate::form::Edit::Unhandled => return false,
-                }
-                self.query.set_text(&self.draft.clone());
+    /// Select the record `by` records on from the selected one, and keep
+    /// it in view.
+    pub fn move_selection(&mut self, by: isize) {
+        let records: Vec<usize> = self
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                Line::Record(index) => Some(*index),
+                _ => None,
+            })
+            .collect();
+        if records.is_empty() {
+            return;
+        }
+        let at = self
+            .selected
+            .and_then(|selected| records.iter().position(|&index| index == selected))
+            .map_or(0, |at| at.saturating_add_signed(by).min(records.len() - 1));
+        let Some(&chosen) = records.get(at) else {
+            return;
+        };
+        self.page = Page::Logs;
+        self.selected = Some(chosen);
+        if let Some(top) = self
+            .lines
+            .iter()
+            .zip(&self.tops)
+            .find(|(line, _)| **line == Line::Record(chosen))
+            .map(|(_, top)| *top)
+        {
+            let view = self.table_view;
+            if top < self.scroll {
+                self.scroll = top;
+            } else if top + 28.0 > self.scroll + view {
+                self.scroll = top + 28.0 - view;
             }
         }
-        true
+    }
+
+    /// Scroll the page shown by `by` pixels.
+    pub fn scroll_by(&mut self, by: f32) {
+        let (scroll, most) = match self.page {
+            Page::Overview => (&mut self.overview_scroll, self.scroll_most[0]),
+            Page::Logs => (&mut self.scroll, self.scroll_most[1]),
+            Page::Machines => (&mut self.machines_scroll, self.scroll_most[2]),
+        };
+        *scroll = (*scroll + by).clamp(0.0, most);
     }
 
     /// Whether the query differs from the saved one in use.
@@ -1725,6 +1596,24 @@ pub fn home_short(path: &std::path::Path) -> String {
     path.display().to_string()
 }
 
+impl App {
+    /// The UTC offset times are shown at: the boot's own, as lode stored
+    /// it.
+    #[must_use]
+    pub fn zone(&self) -> i32 {
+        self.log
+            .of_boot(self.boot)
+            .first()
+            .map_or(0, |entry| entry.record.utc_offset_s)
+    }
+
+    /// The boot's offset as the picker says it.
+    #[must_use]
+    pub fn offset_of_boot_label(&self) -> i64 {
+        self.log.offset_of(self.boot)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Action, App, Origin, Page, clock};
@@ -1764,43 +1653,45 @@ mod tests {
             (1_000_000_000 + 139_000_000, 1_000_000_000 + 199_000_000)
         );
         assert_eq!(app.found.len(), 61);
-        app.act(&Action::Step(-10), 0.0);
+        app.act(&Action::Step(-10));
         assert_eq!(app.window().1, 1_189_000_000);
-        app.act(&Action::Zoom(0), 0.0);
+        app.act(&Action::Zoom(0));
         assert!(app.whole_boot());
         assert_eq!(app.found.len(), 200);
-        app.act(&Action::Zoom(30), 0.0);
-        app.act(&Action::PrevProblem, 0.0);
+        app.act(&Action::Zoom(30));
+        app.act(&Action::PrevProblem);
         assert_eq!(app.cursor, 1_157_000_000);
-        app.act(&Action::PrevProblem, 0.0);
+        app.act(&Action::PrevProblem);
         assert_eq!(app.cursor, 1_107_000_000);
-        app.act(&Action::NextProblem, 0.0);
+        app.act(&Action::NextProblem);
         assert_eq!(app.cursor, 1_157_000_000);
-        app.act(&Action::Track(100.0, 200.0), 200.0);
+        app.act(&Action::Track(0.5));
         assert_eq!(app.cursor, 1_099_500_000);
     }
 
     #[test]
     fn typing_a_query_and_the_chips_narrow_the_table() {
         let mut app = app();
-        app.act(&Action::Zoom(0), 0.0);
-        app.act(&Action::EditQuery, 0.0);
+        app.act(&Action::Zoom(0));
+        app.act(&Action::EditQuery);
+        let mut typed = String::new();
         for character in "id = even".chars() {
-            let _ = app.type_key("x", &character.to_string(), (false, false));
+            typed.push(character);
+            app.act(&Action::QueryText(typed.clone()));
         }
-        let _ = app.type_key("Return", "", (false, false));
+        app.act(&Action::QueryAccept);
         assert_eq!(app.found.len(), 100);
-        app.act(&Action::Level(6), 0.0);
+        app.act(&Action::Level(6));
         assert_eq!(app.found.len(), 0);
-        app.act(&Action::Level(6), 0.0);
+        app.act(&Action::Level(6));
         let odd = app.log.sources.find("odd").expect("a source");
-        app.act(&Action::Source(odd), 0.0);
+        app.act(&Action::Source(odd));
         assert_eq!(app.found.len(), 0);
-        app.act(&Action::RemoveChip(0), 0.0);
-        app.act(&Action::Saved(0), 0.0);
+        app.act(&Action::RemoveChip(0));
+        app.act(&Action::Saved(0));
         assert_eq!(app.page, Page::Logs);
         assert_eq!(app.found.len(), 4);
-        app.act(&Action::CopyCursor(app.found[0]), 0.0);
+        app.act(&Action::CopyCursor(app.found[0]));
         assert!(
             app.clipboard
                 .as_deref()
@@ -1812,7 +1703,7 @@ mod tests {
     fn add_names_the_first_field_wrong_and_goes_to_it() {
         use super::FormField;
         let mut app = app();
-        app.act(&Action::FormAdd, 0.0);
+        app.act(&Action::FormAdd);
         assert_eq!(app.form.focus, Some(FormField::Name));
         assert!(
             app.form
@@ -1821,41 +1712,13 @@ mod tests {
                 .is_some_and(|e| e.starts_with("Name:"))
         );
         app.form.set(FormField::Host, "box.lan");
-        app.act(&Action::FormKeyChoice(super::KeyChoice::Paste), 0.0);
+        app.act(&Action::FormKeyChoice(super::KeyChoice::Paste));
         assert_eq!(app.form.focus, Some(FormField::Paste));
-        let _ = app.form_key("x", "x", (false, false, false));
-        let _ = app.form_key("Return", "", (false, false, false));
+        app.act(&Action::FormText(FormField::Paste, "x\n".to_owned()));
         assert_eq!(app.form.value(FormField::Paste), "x\n");
-        app.act(&Action::FormAdd, 0.0);
+        app.act(&Action::FormAdd);
         assert_eq!(app.form.focus, Some(FormField::Paste));
         assert!(app.remotes.is_empty());
-    }
-
-    #[test]
-    fn ctrl_v_is_a_paste_never_the_letter_and_tab_skips_hidden_fields() {
-        use super::FormField;
-        let mut app = app();
-        app.act(&Action::FormFocus(FormField::Port), 0.0);
-        assert!(!app.form_key("v", "v", (false, true, false)));
-        assert_eq!(app.form.value(FormField::Port), "22");
-        let _ = app.form_key("Tab", "", (false, false, false));
-        assert_eq!(
-            app.form.focus,
-            Some(FormField::Name),
-            "no Key or Server field is shown"
-        );
-        assert!(app.paste("n150\n"));
-        assert_eq!(app.form.value(FormField::Name), "n150");
-        let _ = app.form_key("a", "", (false, true, false));
-        let _ = app.form_key("c", "", (false, true, false));
-        assert_eq!(app.field_copy.as_deref(), Some("n150"));
-        // The query takes a paste too.
-        app.form.focus = None;
-        app.act(&Action::EditQuery, 0.0);
-        app.draft.clear();
-        assert!(app.paste("id = even"));
-        let _ = app.type_key("Return", "", (false, false));
-        assert_eq!(app.query.text, "id = even");
     }
 
     /// Run by hand against a Ferrix guest with sshd (`run-compositor
@@ -1876,13 +1739,12 @@ mod tests {
         app.machines_root = Some(dir.join("root"));
         app.remotes_file = Some(dir.join("machines.conf"));
         // Live over SSH, the key pasted.
-        app.act(&Action::FormFocus(FormField::Host), 0.0);
-        assert!(app.paste("127.0.0.1"));
+        app.act(&Action::FormText(FormField::Host, "127.0.0.1".to_owned()));
         app.form.set(FormField::Name, "guest");
         app.form.set(FormField::Port, &var("LODE_E2E_PORT"));
-        app.act(&Action::FormKeyChoice(KeyChoice::Paste), 0.0);
-        assert!(app.paste(&key));
-        app.act(&Action::FormAdd, 0.0);
+        app.act(&Action::FormKeyChoice(KeyChoice::Paste));
+        app.act(&Action::FormText(FormField::Paste, key.clone()));
+        app.act(&Action::FormAdd);
         assert_eq!(app.form.error, None);
         assert_eq!(app.remotes.len(), 1);
         let kept = app.remotes[0].key.clone().expect("a kept key");
@@ -1903,7 +1765,7 @@ mod tests {
         }
         assert!(records > 0, "no records arrived");
         // Forwarded over TLS, the same key as a file.
-        app.act(&Action::FormKind(Kind::Tls), 0.0);
+        app.act(&Action::FormKind(Kind::Tls));
         assert_eq!(app.form.error, None, "TLS is offered");
         assert!(
             !app.form.value(FormField::Server).is_empty(),
@@ -1913,15 +1775,15 @@ mod tests {
         app.form.set(FormField::Host, "127.0.0.1");
         app.form.set(FormField::Name, "guest-tls");
         app.form.set(FormField::Port, &var("LODE_E2E_PORT"));
-        app.act(&Action::FormKeyChoice(KeyChoice::File), 0.0);
+        app.act(&Action::FormKeyChoice(KeyChoice::File));
         app.form.set(FormField::Key, &kept);
-        app.act(&Action::FormAdd, 0.0);
+        app.act(&Action::FormAdd);
         assert_eq!(app.form.error, None);
         let (_, plan) = app.tls_plan.clone().expect("a plan to confirm");
         for command in crate::tls::remote_commands(&plan) {
             println!("plan: {command}");
         }
-        app.act(&Action::TlsConfirm, 0.0);
+        app.act(&Action::TlsConfirm);
         let started = std::time::Instant::now();
         loop {
             let lines = app
@@ -2037,7 +1899,7 @@ mod tests {
         );
         assert!(line.up && line.error.is_none());
         // Selected: every setting in the form, the name fixed.
-        app.act(&Action::SelectRemote(0), 0.0);
+        app.act(&Action::SelectRemote(0));
         assert_eq!(app.form.editing.as_deref(), Some("n150"));
         assert_eq!(app.form.kind, Kind::Tls);
         assert_eq!(app.form.value(FormField::Host), "192.0.2.10");
@@ -2045,7 +1907,7 @@ mod tests {
         assert!(!app.form.shown().contains(&FormField::Name));
         // Changed and saved: kept, no new pairing for an unchanged server.
         app.form.set(FormField::User, "admin");
-        app.act(&Action::FormAdd, 0.0);
+        app.act(&Action::FormAdd);
         assert_eq!(app.form.error, None);
         assert!(app.tls_plan.is_none());
         let kept = std::fs::read_to_string(&conf).expect("kept");
@@ -2053,7 +1915,7 @@ mod tests {
         assert!(kept.contains("pairing = paired\n"), "{kept}");
         assert_eq!(app.form.value(FormField::User), "admin");
         // Open shows its store, followed live.
-        app.act(&Action::OpenRemote(0), 0.0);
+        app.act(&Action::OpenRemote(0));
         assert_eq!(app.origin_name, "n150 · ferrix");
         assert_eq!(app.log.entries.len(), 3);
         assert!(app.live);
@@ -2102,7 +1964,7 @@ mod tests {
         assert_eq!(kept[0].pairing, Pairing::Paired);
         assert_eq!(app.remote_line(0).text, "paired · no records yet");
         // Another machine: an empty form again.
-        app.act(&Action::FormNew, 0.0);
+        app.act(&Action::FormNew);
         assert_eq!(app.form.editing, None);
         assert_eq!(app.selected_remote, None);
         checked(&app);

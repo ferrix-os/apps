@@ -409,7 +409,7 @@ fn settle(mut app: App, options: &Options) -> App {
         app.go_to_boot(index);
     }
     if let Some(zoom) = options.zoom {
-        app.act(&Action::Zoom(zoom), 0.0);
+        app.act(&Action::Zoom(zoom));
     }
     if let Some(at) = options.at
         && let Some(boot) = app.boot()
@@ -440,14 +440,14 @@ fn settle(mut app: App, options: &Options) -> App {
             Some("tls") => crate::remote::Kind::Tls,
             _ => crate::remote::Kind::Ssh,
         };
-        app.act(&Action::FormKind(kind), 0.0);
+        app.act(&Action::FormKind(kind));
         let key = match words.next() {
             Some("file") => Some(crate::app::KeyChoice::File),
             Some("paste") => Some(crate::app::KeyChoice::Paste),
             _ => None,
         };
         if let Some(key) = key {
-            app.act(&Action::FormKeyChoice(key), 0.0);
+            app.act(&Action::FormKeyChoice(key));
         }
         app.page = Page::Machines;
     }
@@ -487,7 +487,7 @@ pub fn main() -> ExitCode {
             }
             let app = open(&options);
             let status = match &options.render {
-                Some(out) => crate::window::render(app, out, options.size, options.scale),
+                Some(out) => crate::ui::render(app, out, options.size, options.scale),
                 None => crate::window::run(app),
             };
             ExitCode::from(u8::try_from(status).unwrap_or(1))
@@ -720,7 +720,7 @@ fn bench(options: &Options, count: usize) -> ExitCode {
         "bench".to_owned(),
     );
     let started = Instant::now();
-    app.act(&Action::Zoom(0), 0.0);
+    app.act(&Action::Zoom(0));
     let queried = started.elapsed();
     let started = Instant::now();
     app.query.set_text("priority <= warning or id = \"hypr*\"");
@@ -730,7 +730,9 @@ fn bench(options: &Options, count: usize) -> ExitCode {
     app.refresh();
     app.page = Page::Logs;
     app.scroll = app.table_height / 2.0;
-    let frames = crate::window::bench_frames(&mut app, options.size);
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(app));
+    let frames = crate::ui::bench_frames(&shared, options.size);
+    let app = shared.borrow();
     say(&format!(
         "{} records: log {:.0} ms, whole boot query and lines {:.0} ms ({} lines), filtered query {:.0} ms, \
          frames: {}",

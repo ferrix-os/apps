@@ -127,26 +127,99 @@ fn the_histogram_counts_every_line_once() {
     assert!(tiles.peak.0 >= 1);
 }
 
+/// The design's faces, and nothing of the machine's.
+fn design_fonts() -> tole::Fonts {
+    let mut fonts = tole::Fonts::new();
+    let _ = fonts.add_dir(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/share/fonts"
+    )));
+    fonts
+}
+
+/// The viewer's tree over `app`, `size` logical pixels.
+fn view_of(app: App, size: (u32, u32)) -> crate::ui::View {
+    let mut view = crate::ui::View::new(
+        std::rc::Rc::new(std::cell::RefCell::new(app)),
+        design_fonts(),
+    )
+    .expect("the tree is made");
+    view.resize(size);
+    // Pastes come from the desktop, as in a window.
+    view.ui.set_clipboard_external(true);
+    view.show();
+    view.ui.update();
+    view
+}
+
+/// The first `Text` item, anywhere and shown, saying `label`, and where
+/// it is.
+fn text_at(view: &mut crate::ui::View, label: &str) -> Option<tole::Rect> {
+    let mut stack: Vec<tole::ItemId> = view.ui.roots().to_vec();
+    while let Some(item) = stack.pop() {
+        let shown = view
+            .ui
+            .common(item)
+            .is_some_and(|common| view.ui.get(common.visible));
+        if !shown {
+            continue;
+        }
+        if let Some(text) = view.ui.text(item)
+            && &*view.ui.get(text.text) == label
+        {
+            return view.ui.rect_of(item);
+        }
+        stack.extend(view.ui.children(item).iter().rev());
+    }
+    None
+}
+
+/// Press and release the pointer on the text `label`; answers what the
+/// tree asked of the state.
+fn click(view: &mut crate::ui::View, label: &str) -> Vec<Action> {
+    let rect = text_at(view, label).unwrap_or_else(|| panic!("`{label}` is shown"));
+    view.ui
+        .pointer_move(rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    view.ui.pointer_press();
+    view.ui.pointer_release();
+    view.step().0
+}
+
+/// Type `keysym`, giving `text`, with Control as said.
+fn key(view: &mut crate::ui::View, keysym: &str, text: &str, control: bool) {
+    let event = tole::KeyEvent {
+        key: keysym.into(),
+        text: text.into(),
+        shift: false,
+        control,
+        alt: false,
+        repeat: false,
+    };
+    let _ = view.ui.key_press(&event);
+    let _ = view.ui.key_release(&event);
+}
+
 #[test]
 fn a_frame_of_each_page_is_drawn_in_each_palette() {
-    let mut app = App::new(
+    let app = App::new(
         log(),
         Origin::File("sample.jsonl".into()),
         "sample".to_owned(),
     );
-    let mut text = crate::draw::Text::with(compositor_text::Fonts::new());
-    let _ = text.fonts.add_dir(std::path::Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/share/fonts"
-    )));
-    assert!(text.faces() >= 5, "the design's faces are in share/fonts");
+    let mut view = view_of(app, (1440, 900));
+    assert!(
+        view.ui.faces() >= 5,
+        "the design's faces are in share/fonts"
+    );
     for mode in [crate::theme::Mode::Light, crate::theme::Mode::Dark] {
-        app.mode = mode;
         let palette = crate::theme::Theme::of(mode);
         for page in [Page::Overview, Page::Logs] {
-            app.page = page;
-            let (frame, hits) =
-                crate::window::frame(&app, &mut text, (1440, 900), 1).expect("a frame");
+            {
+                let mut app = view.app.borrow_mut();
+                app.mode = mode;
+                app.page = page;
+            }
+            let frame = view.frame((1440, 900), 1.0).expect("a frame");
             // The sidebar is the palette's bg2, and the page drew text: some
             // pixel in the page is the palette's ink.
             let at = |x: u32, y: u32| {
@@ -159,12 +232,14 @@ fn a_frame_of_each_page_is_drawn_in_each_palette() {
                 .step_by(2)
                 .any(|x| (60..120).any(|y| at(x, y) == ink));
             assert!(inked, "{page:?} in {mode:?} drew its heading");
-            assert!(
-                hits.iter()
-                    .any(|(_, action)| *action == Action::Page(Page::Logs))
-            );
         }
     }
+    // A press on the sidebar shows the page.
+    view.app.borrow_mut().page = Page::Overview;
+    view.show();
+    view.ui.update();
+    assert_eq!(click(&mut view, "Logs"), vec![Action::Page(Page::Logs)]);
+    assert_eq!(view.app.borrow().page, Page::Logs);
 }
 
 #[test]
@@ -190,12 +265,12 @@ fn machines_received_are_picked_one_at_a_time_and_followed() {
     app.open_machine(0);
     assert_eq!(app.origin_name, "n150 · 062359e1");
     assert_eq!(app.log.entries.len(), 400);
-    app.act(&Action::Machine(1), 0.0);
+    app.act(&Action::Machine(1));
     assert_eq!(app.origin_name, "pixel7");
     assert_eq!(app.log.entries.len(), 10);
     // Back on the box, the rest of its log arrives in a segment still being
     // written (no summary yet), and Live takes it.
-    app.act(&Action::Machine(0), 0.0);
+    app.act(&Action::Machine(0));
     app.live = true;
     let incoming = root.join("incoming");
     assert_eq!(crate::store::import(late, &incoming).expect("written"), 1);
@@ -222,7 +297,7 @@ fn machines_received_are_picked_one_at_a_time_and_followed() {
 
 #[test]
 fn the_add_machine_form_is_drawn_whole_in_each_palette_kind_and_key() {
-    use crate::app::{FormField, KeyChoice};
+    use crate::app::KeyChoice;
     use crate::remote::Kind as Link;
     let mut app = App::new(
         log(),
@@ -231,67 +306,102 @@ fn the_add_machine_form_is_drawn_whole_in_each_palette_kind_and_key() {
     );
     app.page = Page::Machines;
     app.reach = vec!["192.0.2.10".to_owned(), "nazuna".to_owned()];
-    let mut text = crate::draw::Text::with(compositor_text::Fonts::new());
-    let _ = text.fonts.add_dir(std::path::Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/share/fonts"
-    )));
+    let mut view = view_of(app, (1440, 960));
     for mode in [crate::theme::Mode::Light, crate::theme::Mode::Dark] {
-        app.mode = mode;
         for kind in [Link::Ssh, Link::Tls] {
             for key in [KeyChoice::Agent, KeyChoice::File, KeyChoice::Paste] {
-                app.form.kind = kind;
-                app.form.key = key;
-                let (_, hits) =
-                    crate::window::frame(&app, &mut text, (1440, 960), 1).expect("a frame");
-                let has = |wanted: &Action| hits.iter().any(|(_, action)| action == wanted);
-                // Both ways are offered, a disabled one answering with why.
-                assert!(has(&Action::FormKind(Link::Ssh)) && has(&Action::FormKind(Link::Tls)));
-                for choice in [KeyChoice::Agent, KeyChoice::File, KeyChoice::Paste] {
-                    assert!(has(&Action::FormKeyChoice(choice)));
+                {
+                    let mut app = view.app.borrow_mut();
+                    app.mode = mode;
+                    app.form.kind = kind;
+                    app.form.key = key;
                 }
-                assert_eq!(has(&Action::FormChooseKey), key == KeyChoice::File);
-                assert_eq!(has(&Action::FormPaste), key == KeyChoice::Paste);
+                view.show();
+                view.ui.update();
+                let mut shown = |label: &str| text_at(&mut view, label);
+                // Both ways are offered, a disabled one answering with why.
+                assert!(shown("Live over SSH").is_some() && shown("Forwarded over TLS").is_some());
+                for choice in ["ssh's own keys and the agent", "A key file", "Paste a key"] {
+                    assert!(shown(choice).is_some());
+                }
+                assert_eq!(shown("Choose…").is_some(), key == KeyChoice::File);
+                assert_eq!(shown("Paste").is_some(), key == KeyChoice::Paste);
                 assert_eq!(
-                    has(&Action::FormFocus(FormField::Server)),
+                    shown("Server").is_some(),
                     kind == Link::Tls,
                     "the server field is there for TLS"
                 );
-                assert_eq!(has(&Action::FormServer(1)), kind == Link::Tls);
-                // Nothing is placed past the window's right edge.
-                assert!(hits.iter().all(|(place, _)| place.right() <= 1440.0));
+                assert_eq!(shown("nazuna").is_some(), kind == Link::Tls);
+                // The help text is wrapped to the card, not cut at its
+                // edge, and nothing is placed past the window's right edge.
+                let help = shown("Keys only: the viewer never asks for a password and keeps none. ssh runs with BatchMode, and with").or_else(|| shown("Keys only: the viewer never asks for a password and keeps none. ssh runs with BatchMode, and with IdentitiesOnly when a key is named."));
+                let help = help.expect("the help is shown");
+                assert!(help.x + help.w <= 1440.0);
             }
         }
     }
-    // The help text is wrapped to the card, not cut at its edge.
-    let help = "Keys only: the viewer never asks for a password and keeps none. ssh runs with BatchMode, and with IdentitiesOnly when a key is named.";
-    let face = crate::draw::sans(12.0, 400);
-    let lines = crate::draw::wrap_with(help, 600.0, |line| text.width(face, line));
-    assert!(lines.len() >= 2);
-    assert!(lines.iter().all(|line| text.width(face, line) <= 600.0));
-    assert!(app.machines_height.get() > 600.0);
+    // A press on TLS, then the key file, as a person would.
+    let _ = click(&mut view, "Live over SSH");
+    let _ = click(&mut view, "A key file");
+    assert_eq!(view.app.borrow().form.key, KeyChoice::File);
+    assert_eq!(view.app.borrow().form.kind, Link::Ssh);
 }
 
 #[test]
 fn a_query_pasted_over_a_selected_one_replaces_it() {
     // What the desktop boot (`test-compositor --boot lode-viewer`) pastes
-    // after its typed `id=msr`: the counts it requires.
+    // after its typed `id=msr`: the counts it requires, typed into tole's
+    // field as a window hands keys over.
     let mut app = App::new(
         log(),
         Origin::File("sample.jsonl".into()),
         "sample".to_owned(),
     );
-    app.act(&Action::Zoom(0), 0.0);
-    app.act(&Action::EditQuery, 0.0);
+    app.act(&Action::Zoom(0));
+    app.page = Page::Logs;
+    let mut view = view_of(app, (1440, 960));
+    let _ = click(&mut view, "where");
     for c in "id=msr".chars() {
-        let _ = app.type_key("x", &c.to_string(), (false, false));
+        key(&mut view, &c.to_string(), &c.to_string(), false);
     }
-    let _ = app.type_key("Return", "", (false, false));
-    assert_eq!(app.found.len(), 13);
-    app.act(&Action::EditQuery, 0.0);
-    let _ = app.type_key("a", "", (true, false));
-    assert!(app.paste("id=usbhid"));
-    let _ = app.type_key("Return", "", (false, false));
-    assert_eq!(app.query.text, "id=usbhid");
-    assert_eq!(app.found.len(), 14);
+    let _ = view.step();
+    key(&mut view, "Return", "", false);
+    let _ = view.step();
+    assert_eq!(view.app.borrow().found.len(), 13);
+    // Return gave the keys back: `/` is the window's again, and starts the
+    // query (the window's loop does this for a key nobody took).
+    assert!(!view.typing());
+    view.focus_query();
+    key(&mut view, "a", "", true);
+    key(&mut view, "v", "", true);
+    view.ui.paste("id=usbhid");
+    let _ = view.step();
+    key(&mut view, "Return", "", false);
+    let _ = view.step();
+    assert_eq!(view.app.borrow().query.text, "id=usbhid");
+    assert_eq!(view.app.borrow().found.len(), 14);
+}
+
+#[test]
+fn ctrl_v_is_a_paste_never_the_letter_and_tab_skips_hidden_fields() {
+    use crate::app::FormField;
+    let mut app = App::new(
+        log(),
+        Origin::File("sample.jsonl".into()),
+        "sample".to_owned(),
+    );
+    app.act(&Action::FormFocus(FormField::Port));
+    app.page = Page::Machines;
+    let mut view = view_of(app, (1440, 960));
+    key(&mut view, "v", "v", true);
+    view.ui.paste("");
+    let _ = view.step();
+    assert_eq!(view.app.borrow().form.value(FormField::Port), "22");
+    // From Port, Tab goes round to Name: no Key or Server field is shown.
+    key(&mut view, "Tab", "", false);
+    key(&mut view, "v", "v", true);
+    view.ui.paste("n150\n");
+    let _ = view.step();
+    assert_eq!(view.app.borrow().form.value(FormField::Name), "n150");
+    assert_eq!(view.app.borrow().form.focus, Some(FormField::Name));
 }

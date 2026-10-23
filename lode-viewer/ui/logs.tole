@@ -1,0 +1,725 @@
+// Logs: the query, its chips and count, the facets, the table with its
+// held, folded and marked lines and display-rule notes, the strip that
+// shows where the problems are, and a record's every field. The lines
+// are a Rust model over the log, made only for the rows in view.
+import Fx
+import Fx.Controls
+
+enum LineKind { Record, Note, Held, Detail, Fold, Mark, End }
+
+struct LogLine {
+    kind: LineKind
+    // The record it is about, for a press; -1 for the end.
+    record: int
+    level: int
+    crash: bool
+    time: string
+    source: string
+    // The message, or what a held, fold, note, detail or mark line says.
+    text: string
+    // A folded record's message is quieter.
+    quiet: bool
+    // "Expand" or "Fold".
+    action: string
+}
+
+struct Facet {
+    name: string
+    count: string
+    on: bool
+    level: int
+}
+
+struct ChipItem {
+    label: string
+}
+
+struct FieldRow {
+    name: string
+    value: string
+}
+
+// One list of the facets: its title, its rows, and how many more.
+component FacetList : Column {
+    id: list
+    property string title
+    property list<Facet> facets
+    property int more
+    signal picked(int index)
+    width: 180
+    Text { height: 20; text: list.title; font: Theme.sans(13, 600); color: Theme.ink }
+    Item { width: 1; height: 4 }
+    Text {
+        visible: list.facets.length == 0
+        height: 22
+        text: "none"
+        font: Theme.sans(13)
+        color: Theme.ink5
+    }
+    Repeater {
+        model: list.facets
+        Item {
+            width: 180
+            height: 22
+            Text {
+                id: facetName
+                width: 130
+                height: 22
+                elide: Text.ElideRight
+                text: modelData.name
+                font: Theme.sans(13, modelData.on ? 600 : 400)
+                color: modelData.on ? Theme.accent : Theme.ink
+            }
+            Text {
+                x: min(facetName.implicitWidth, 130) + 5
+                height: 22
+                text: modelData.count
+                font: Theme.sans(13)
+                color: Theme.ink4
+            }
+            MouseArea { anchors.fill: parent; onClicked: list.picked(index) }
+        }
+    }
+    Text {
+        visible: list.more > 0
+        height: 22
+        text: "+ ${list.more} more"
+        font: Theme.sans(13)
+        color: Theme.accent
+    }
+    Item { width: 1; height: 16 }
+}
+
+export component LogsPage : Item {
+    id: page
+    // The heading and the track.
+    property bool hasMachines
+    property string machineName
+    property string bootLabel
+    property string bootRest
+    property int liveState
+    property bool live
+    property string trackLabel
+    property int zoom
+    property painter lanes
+    property int laneRows
+    // Save: the saved query in use was changed.
+    property bool edited
+    // The query, as shown, and its saved name.
+    property alias query: queryInput.text
+    property string savedLabel
+    property string queryError
+    property bool editing
+    // The chips.
+    property string bootChip
+    property string windowChip
+    property list<ChipItem> chips
+    property string suggestion
+    property string count
+    // The facets.
+    property list<Facet> levels
+    property list<Facet> sources
+    property int moreSources
+    property list<Facet> transports
+    property list<Facet> sessions
+    // The table.
+    property model<LogLine> lines
+    property int selected: -1
+    property alias scroll: table.contentY
+    property real tableHeight
+    property painter minimap
+    // The record's pane.
+    property bool paneOpen
+    property int paneLevel
+    property bool paneCrash
+    property string paneTitle
+    property list<string> paneMessage
+    property list<string> paneNote
+    property list<FieldRow> paneFields
+    property bool paneMore
+
+    signal machineMenu()
+    signal bootMenu()
+    signal prevProblem()
+    signal nextProblem()
+    signal step(int seconds)
+    signal zoomTo(int seconds)
+    signal goLive()
+    signal cursorAt(real fraction)
+    signal zoomWheel(real delta)
+    signal save()
+    signal editQuery()
+    signal queryEdited(string text)
+    signal queryAccepted()
+    signal queryCancelled()
+    signal removeChip(int index)
+    signal addSuggestion()
+    signal level(int level)
+    signal source(int index)
+    signal transport(int index)
+    signal session(int index)
+    signal select(int record)
+    signal expand(int record)
+    signal minimapAt(real fraction)
+    signal closePane()
+    signal around()
+    signal onlySource()
+    signal copyJson()
+    signal copyCursor()
+
+    function levelInk(level: int): color {
+        return level <= 3 ? Theme.redInk : level == 4 ? Theme.amberInk : level == 5 ? Theme.accent : level == 8 ? Theme.ink4 : Theme.ink2
+    }
+
+    Item {
+        id: inner
+        x: 36
+        y: 28
+        width: page.width - 72 - (page.paneOpen ? 392 : 0)
+        height: page.height - 28
+
+        PageHeading {
+            id: heading
+            width: inner.width
+            title: "Logs"
+            hasMachines: page.hasMachines
+            machineName: page.machineName
+            bootLabel: page.bootLabel
+            bootRest: page.bootRest
+            liveState: page.liveState
+            onMachineMenu: page.machineMenu()
+            onBootMenu: page.bootMenu()
+        }
+        Rectangle {
+            x: heading.rightEdge - 70
+            width: 62
+            height: 30
+            radius: 6
+            color: page.edited ? Theme.ink : Theme.bg2
+            border.width: page.edited ? 0 : 1
+            border.color: Theme.line
+            Text {
+                width: parent.width
+                height: 30
+                horizontalAlignment: Text.AlignHCenter
+                text: "Save"
+                font: Theme.sans(13, 500)
+                color: page.edited ? Theme.inv : Theme.ink5
+            }
+            MouseArea { anchors.fill: parent; enabled: page.edited; onClicked: page.save() }
+        }
+        Track {
+            y: 54
+            width: inner.width
+            live: page.live
+            label: page.trackLabel
+            zoom: page.zoom
+            lanes: page.lanes
+            laneRows: page.laneRows
+            onPrevProblem: page.prevProblem()
+            onNextProblem: page.nextProblem()
+            onStep: page.step(seconds)
+            onZoomTo: page.zoomTo(seconds)
+            onGoLive: page.goLive()
+            onCursorAt: page.cursorAt(fraction)
+            onZoomWheel: page.zoomWheel(delta)
+        }
+
+        // The query: `where`, the expression, and the saved query it came
+        // from.
+        Rectangle {
+            id: queryBox
+            y: 222
+            width: inner.width
+            height: 42
+            radius: 6
+            color: Theme.bg
+            border.width: 1
+            border.color: page.queryError != "" ? Theme.red : page.editing ? Theme.accent : Theme.ink
+            Text { id: whereWord; x: 12; height: 42; text: "where"; font: Theme.mono(13); color: Theme.ink4 }
+            Text {
+                id: savedText
+                x: queryBox.width - 14 - implicitWidth
+                height: 42
+                text: page.savedLabel
+                font: Theme.sans(12)
+                color: Theme.ink4
+            }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.IBeamCursor
+                onPressed: { page.editQuery(); queryInput.forceActiveFocus() }
+            }
+            Text {
+                visible: queryInput.text == "" && !page.editing
+                x: queryInput.x
+                width: queryInput.width
+                height: 42
+                elide: Text.ElideRight
+                text: "lode's filter language: priority <= warning or id = \"hyprix*\""
+                font: Theme.mono(13)
+                color: Theme.ink5
+            }
+            TextInput {
+                id: queryInput
+                x: 21 + whereWord.implicitWidth
+                width: queryBox.width - x - savedText.implicitWidth - 30
+                height: 42
+                font: Theme.mono(13)
+                color: Theme.ink
+                cursorColor: Theme.ink
+                selectionColor: alpha(Theme.accent, 0.3)
+                onTextEdited: page.queryEdited(text)
+                onAccepted: page.queryAccepted()
+                Keys.onEscapePressed: page.queryCancelled()
+            }
+        }
+        Text {
+            visible: page.queryError != ""
+            x: 12
+            y: 265
+            width: inner.width - 24
+            height: 14
+            elide: Text.ElideRight
+            text: "does not parse: " + page.queryError
+            font: Theme.sans(11.5)
+            color: Theme.redInk
+        }
+
+        // The chips, one suggested, and the count.
+        Row {
+            y: 278
+            spacing: 8
+            Chip { text: page.bootChip }
+            Chip {
+                visible: page.windowChip != ""
+                text: page.windowChip
+                removable: true
+                onClicked: page.zoomTo(0)
+            }
+            Repeater {
+                model: page.chips
+                Chip {
+                    text: modelData.label
+                    removable: true
+                    onClicked: page.removeChip(index)
+                }
+            }
+            Rectangle {
+                visible: page.suggestion != ""
+                width: suggestionText.implicitWidth + 22
+                height: 26
+                radius: 13
+                color: "transparent"
+                border.width: 1
+                border.color: Theme.line3
+                border.dash: 3
+                Text {
+                    id: suggestionText
+                    x: 11
+                    height: 26
+                    text: page.suggestion
+                    font: Theme.sans(12)
+                    color: Theme.ink4
+                }
+                MouseArea { anchors.fill: parent; onClicked: page.addSuggestion() }
+            }
+        }
+        Text {
+            x: inner.width - implicitWidth
+            y: 278
+            height: 26
+            text: page.count
+            font: Theme.sans(12)
+            color: Theme.ink4
+        }
+
+        // The facets.
+        Column {
+            y: 320
+            Item { width: 1; height: 4 }
+            Text { height: 20; text: "Priority"; font: Theme.sans(13, 600); color: Theme.ink }
+            Item { width: 1; height: 4 }
+            Repeater {
+                model: page.levels
+                Item {
+                    width: 180
+                    height: 22
+                    Rectangle {
+                        y: 4
+                        width: 13
+                        height: 13
+                        radius: 3
+                        color: modelData.on ? Theme.ink3 : "transparent"
+                        border.width: modelData.on ? 0 : 1
+                        border.color: Theme.ink4
+                        Shape {
+                            visible: modelData.on
+                            ShapePath {
+                                strokeColor: Theme.bg
+                                strokeWidth: 1.6
+                                capStyle: ShapePath.FlatCap
+                                startX: 3; startY: 6.5
+                                PathLine { x: 5.5; y: 9 }
+                                PathLine { x: 10; y: 3.5 }
+                            }
+                        }
+                    }
+                    Text {
+                        id: levelName
+                        x: 20
+                        height: 22
+                        text: modelData.name
+                        font: Theme.sans(13)
+                        color: page.levelInk(modelData.level)
+                    }
+                    Text {
+                        x: 26 + levelName.implicitWidth
+                        height: 22
+                        text: modelData.count
+                        font: Theme.sans(13)
+                        color: Theme.ink4
+                    }
+                    MouseArea { anchors.fill: parent; onClicked: page.level(modelData.level) }
+                }
+            }
+            Item { width: 1; height: 16 }
+            FacetList {
+                title: "Source"
+                facets: page.sources
+                more: page.moreSources
+                onPicked: page.source(index)
+            }
+            FacetList {
+                title: "Transport"
+                facets: page.transports
+                onPicked: page.transport(index)
+            }
+            FacetList {
+                title: "Session"
+                facets: page.sessions
+                onPicked: page.session(index)
+            }
+        }
+
+        // The table.
+        Rectangle {
+            id: frame
+            x: 196
+            y: 320
+            width: max(inner.width - 216, 100)
+            height: inner.height - 320 - 24
+            radius: 8
+            color: Theme.bg
+            border.width: 1
+            border.color: Theme.line
+            Text { x: 42; height: 30; text: "TIME"; font: Theme.sans(11, 600); color: Theme.ink4 }
+            Text { x: 146; height: 30; text: "SOURCE"; font: Theme.sans(11, 600); color: Theme.ink4 }
+            Text { x: 246; height: 30; text: "MESSAGE"; font: Theme.sans(11, 600); color: Theme.ink4 }
+            Rectangle { x: 1; y: 30; width: frame.width - 2; height: 1; color: Theme.line }
+            ListView {
+                id: table
+                x: 1
+                y: 31
+                width: frame.width - 2
+                height: frame.height - 32
+                clip: true
+                model: page.lines
+                delegate: DelegateChooser {
+                    role: "kind"
+                    DelegateChoice {
+                        roleValue: LineKind.Record
+                        Rectangle {
+                            width: table.width
+                            height: 28
+                            color: modelData.level <= 3 ? Theme.redBg : modelData.level == 4 ? Theme.amberBg : "transparent"
+                            Rectangle {
+                                visible: modelData.record == page.selected
+                                x: 1; y: 1
+                                width: parent.width - 2
+                                height: 26
+                                radius: 2
+                                color: "transparent"
+                                border.width: 1.5
+                                border.color: Theme.ink
+                            }
+                            Badge { x: 12; y: 6; level: modelData.level; crash: modelData.crash }
+                            Text { x: 42; height: 28; text: modelData.time; font: Theme.mono(12.5); color: Theme.ink4 }
+                            Text {
+                                x: 146; width: 92; height: 28
+                                elide: Text.ElideRight
+                                text: modelData.source
+                                font: Theme.mono(12.5)
+                                color: Theme.ink
+                            }
+                            Text {
+                                x: 246; width: parent.width - 256; height: 28
+                                elide: Text.ElideRight
+                                text: modelData.text
+                                font: Theme.mono(12.5)
+                                color: modelData.quiet ? Theme.ink3 : Theme.ink
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: page.select(modelData.record) }
+                        }
+                    }
+                    DelegateChoice {
+                        roleValue: LineKind.Note
+                        Rectangle {
+                            width: table.width
+                            height: 20
+                            color: modelData.level <= 3 ? Theme.redBg : modelData.level == 4 ? Theme.amberBg : "transparent"
+                            Text {
+                                x: 38; width: parent.width - 48; height: 16
+                                elide: Text.ElideRight
+                                text: modelData.text
+                                font: Theme.sans(11.5)
+                                color: Theme.ink3
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: page.select(modelData.record) }
+                        }
+                    }
+                    DelegateChoice {
+                        roleValue: LineKind.Held
+                        Item {
+                            width: table.width
+                            height: 30
+                            Rectangle {
+                                id: held
+                                x: 2; y: 2
+                                width: parent.width - 4
+                                height: 26
+                                radius: 4
+                                color: Theme.amberBg
+                                border.width: 1
+                                border.color: Theme.amberEdge
+                                border.dash: 3
+                                Text {
+                                    x: 10; width: held.width - 90; height: 26
+                                    elide: Text.ElideRight
+                                    text: modelData.text
+                                    font: Theme.mono(12)
+                                    color: Theme.ink2
+                                }
+                                Text {
+                                    x: held.width - 10 - implicitWidth
+                                    height: 26
+                                    text: modelData.action
+                                    font: Theme.sans(12)
+                                    color: Theme.accent
+                                }
+                                MouseArea { anchors.fill: parent; onClicked: page.expand(modelData.record) }
+                            }
+                        }
+                    }
+                    DelegateChoice {
+                        roleValue: LineKind.Detail
+                        Item {
+                            width: table.width
+                            height: 22
+                            Rectangle { x: 2; width: parent.width - 4; height: 22; color: Theme.amberBg }
+                            Text {
+                                x: 30; width: parent.width - 40; height: 22
+                                elide: Text.ElideRight
+                                text: modelData.text
+                                font: Theme.mono(11.5)
+                                color: Theme.ink3
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: page.select(modelData.record) }
+                        }
+                    }
+                    DelegateChoice {
+                        roleValue: LineKind.Fold
+                        Item {
+                            width: table.width
+                            height: 28
+                            Text {
+                                x: 42; width: parent.width - 120; height: 28
+                                elide: Text.ElideRight
+                                text: modelData.text
+                                font: Theme.mono(12)
+                                color: Theme.ink3
+                            }
+                            Text {
+                                x: parent.width - 12 - implicitWidth
+                                height: 28
+                                text: modelData.action
+                                font: Theme.sans(12)
+                                color: Theme.accent
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: page.expand(modelData.record) }
+                        }
+                    }
+                    DelegateChoice {
+                        roleValue: LineKind.Mark
+                        Item {
+                            width: table.width
+                            height: 40
+                            Rectangle {
+                                x: 2; y: 4
+                                width: parent.width - 4
+                                height: 32
+                                radius: 4
+                                color: "transparent"
+                                border.width: 1
+                                border.color: Theme.ink
+                                Text {
+                                    x: 10; width: parent.width - 20; height: 32
+                                    elide: Text.ElideRight
+                                    text: modelData.text
+                                    font: Theme.mono(12)
+                                    color: Theme.ink
+                                }
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: page.select(modelData.record) }
+                        }
+                    }
+                    DelegateChoice {
+                        roleValue: LineKind.End
+                        Item {
+                            width: table.width
+                            height: 30
+                            Text {
+                                x: 10; y: 6; height: 20
+                                text: modelData.text
+                                font: Theme.mono(11.5)
+                                color: Theme.ink4
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The strip beside the table: where the problems are, and the
+        // part in view.
+        Item {
+            id: strip
+            x: frame.x + frame.width + 8
+            y: 320
+            width: 12
+            height: frame.height
+            Canvas { width: 12; height: strip.height; painter: page.minimap }
+            Rectangle {
+                visible: page.tableHeight > table.height + 2
+                x: -1
+                y: strip.height * table.contentY / max(page.tableHeight, 1)
+                width: 14
+                height: max(strip.height * (table.height + 2) / max(page.tableHeight, 1), 12)
+                radius: 3
+                color: "transparent"
+                border.width: 1.5
+                border.color: Theme.ink
+            }
+            MouseArea {
+                anchors.fill: parent
+                onPressed: page.minimapAt(mouseY / strip.height)
+                onPositionChanged: page.minimapAt(mouseY / strip.height)
+            }
+        }
+    }
+
+    // The record's pane: its level and message, then every field.
+    Rectangle {
+        id: pane
+        visible: page.paneOpen
+        x: page.width - 392
+        width: 392
+        height: page.height
+        color: Theme.bg
+        Rectangle { width: 1; height: pane.height; color: Theme.line }
+        Badge { x: 26; y: 31; level: page.paneLevel; crash: page.paneCrash }
+        Text { x: 52; y: 28; height: 22; text: page.paneTitle; font: Theme.sans(15, 600); color: Theme.ink }
+        Item {
+            x: 392 - 46; y: 24; width: 30; height: 30
+            Text { x: 9; height: 30; text: "×"; font: Theme.sans(18); color: Theme.ink3 }
+            MouseArea { anchors.fill: parent; onClicked: page.closePane() }
+        }
+        Column {
+            x: 26
+            y: 66
+            Rectangle {
+                width: 340
+                height: 14 + 20 * page.paneMessage.length
+                radius: 6
+                color: Theme.bg3
+                Column {
+                    x: 12; y: 7
+                    Repeater {
+                        model: page.paneMessage
+                        Text { height: 20; text: modelData; font: Theme.mono(13); color: Theme.ink }
+                    }
+                }
+            }
+            Item { width: 1; height: 14 }
+            Rectangle {
+                visible: page.paneNote.length > 0
+                width: 340
+                height: 10 + 18 * page.paneNote.length
+                radius: 5
+                color: Theme.amberBg
+                border.width: 1
+                border.color: Theme.amberLine
+                Column {
+                    x: 10; y: 5
+                    Repeater {
+                        model: page.paneNote
+                        Text { height: 18; text: modelData; font: Theme.sans(12); color: Theme.amberInk }
+                    }
+                }
+            }
+            Item { visible: page.paneNote.length > 0; width: 1; height: 12 }
+            Repeater {
+                model: page.paneFields
+                Item {
+                    width: 340
+                    height: 20
+                    Text {
+                        width: 124; height: 20
+                        elide: Text.ElideRight
+                        text: modelData.name
+                        font: Theme.mono(12)
+                        color: Theme.ink4
+                    }
+                    Text {
+                        x: 130; width: 210; height: 20
+                        elide: Text.ElideRight
+                        text: modelData.value
+                        font: Theme.mono(12)
+                        color: Theme.ink
+                    }
+                }
+            }
+            Text {
+                visible: page.paneMore
+                height: 20
+                text: "… more fields: Copy as JSON"
+                font: Theme.sans(12)
+                color: Theme.ink4
+            }
+        }
+        PushButton {
+            x: 26; y: pane.height - 104; width: 165; height: 36
+            hoverable: false
+            text: "±30 s around"
+            onClicked: page.around()
+        }
+        PushButton {
+            x: 201; y: pane.height - 104; width: 165; height: 36
+            hoverable: false
+            text: "Filter: this source"
+            onClicked: page.onlySource()
+        }
+        PushButton {
+            x: 26; y: pane.height - 58; width: 165; height: 36
+            hoverable: false
+            text: "Copy as JSON"
+            onClicked: page.copyJson()
+        }
+        PushButton {
+            x: 201; y: pane.height - 58; width: 165; height: 36
+            hoverable: false
+            text: "Copy cursor"
+            onClicked: page.copyCursor()
+        }
+    }
+}

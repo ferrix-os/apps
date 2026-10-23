@@ -1,31 +1,30 @@
-//! The window: the [`App`] and the painter joined to a Wayland toplevel
-//! through the desktop's own client runtime (`compositor-toolkit`), drawn
-//! on the CPU into shared memory -- no GPU is asked for -- and the same
-//! frame drawn into a PNG for `--render`.
+//! The window: the tree of [`crate::ui`] in a Wayland toplevel through
+//! tole's window (Ferrix's own client runtime, `compositor-toolkit`),
+//! drawn on the CPU, only what changed. The loop follows the store when
+//! Live, keeps the selections (the clipboard and the primary selection,
+//! which GNOME offers through `wl_data_device`), and does what the tree's
+//! presses and the keys nobody typed into ask of the [`App`].
 //!
 //! What happens is said on standard output, a line each, which is how a
 //! boot that starts the viewer knows it is up.
 
-use std::path::Path;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use compositor_text::tiny_skia::Pixmap;
-use compositor_toolkit::{
-    Client, CursorShape, Event, KeyboardEvent, PointerEvent, SurfaceId, ToplevelOptions,
-    WindowState,
-};
+use compositor_toolkit::{Event, KeyboardEvent, PointerEvent};
+use tole::Element as _;
+use tole::window::{Window, WindowOptions};
 
 use crate::app::{Action, App, Page};
 use crate::cli::say;
-use crate::draw::{Canvas, Rect, Text};
+use crate::selection::{Selections, Which};
+use crate::ui::{View, fonts};
 
 /// The window's `app_id`: its `.desktop` file's `StartupWMClass`.
 pub const APP_ID: &str = "rocks.magical.lode-viewer";
 
-/// The left button's evdev code.
-const BUTTON_LEFT: u32 = 0x110;
-
-/// The middle button's: it pastes the primary selection.
+/// The middle button's evdev code: it pastes the primary selection.
 const BUTTON_MIDDLE: u32 = 0x112;
 
 /// How often Live reads the store: `lode -f`'s quarter second is for a
@@ -34,187 +33,6 @@ const FOLLOW_EVERY: Duration = Duration::from_millis(1000);
 
 /// How long a toast stays.
 const TOAST_FOR: Duration = Duration::from_secs(3);
-
-/// Draw one frame of `app` into a new pixmap of `size` logical pixels at
-/// `scale`; answers it and the regions it left.
-pub fn frame(
-    app: &App,
-    text: &mut Text,
-    size: (u32, u32),
-    scale: u32,
-) -> Option<(Pixmap, Vec<(Rect, Action)>)> {
-    let mut pixmap = Pixmap::new(size.0 * scale, size.1 * scale)?;
-    let hits = {
-        let mut target = pixmap.as_mut();
-        let mut canvas = Canvas::new(&mut target, text, scale as f32);
-        crate::ui::paint(app, &mut canvas);
-        canvas.hits
-    };
-    Some((pixmap, hits))
-}
-
-/// `--render`: one frame into a PNG. Answers the exit status.
-#[must_use]
-pub fn render(app: App, out: &Path, size: (u32, u32), scale: u32) -> i32 {
-    let mut text = Text::load();
-    if text.faces() == 0 {
-        say("err: no font was found (LODE_VIEWER_FONTS, /usr/share/fonts)");
-    }
-    let started = Instant::now();
-    let Some((pixmap, _)) = frame(&app, &mut text, size, scale) else {
-        say("err: a frame of that size cannot be made");
-        return 1;
-    };
-    let drawn = started.elapsed();
-    let png = crate::png::encode(pixmap.width(), pixmap.height(), pixmap.data());
-    match std::fs::write(out, png) {
-        Ok(()) => {
-            say(&format!(
-                "drew {}x{} at scale {scale} in {:.1} ms into {}",
-                size.0,
-                size.1,
-                drawn.as_secs_f64() * 1e3,
-                out.display()
-            ));
-            0
-        }
-        Err(error) => {
-            say(&format!("err: {}: {error}", out.display()));
-            1
-        }
-    }
-}
-
-/// `--bench`'s frames: each page drawn five times, the first with no
-/// cache; answers the times in words.
-#[must_use]
-pub fn bench_frames(app: &mut App, size: (u32, u32)) -> String {
-    let mut text = Text::load();
-    let mut out = Vec::new();
-    for page in [Page::Logs, Page::Overview] {
-        app.page = page;
-        let mut times = Vec::new();
-        for _ in 0..5 {
-            let started = Instant::now();
-            let _ = frame(app, &mut text, size, 1);
-            times.push(started.elapsed().as_secs_f64() * 1e3);
-        }
-        let first = times.first().copied().unwrap_or(0.0);
-        let rest: f64 = times.iter().skip(1).sum();
-        out.push(format!(
-            "{page:?} first {first:.0} ms then {:.0} ms",
-            rest / 4.0
-        ));
-    }
-    out.join(", ")
-}
-
-/// The clipboard, through `ext_data_control_v1`: the record a Copy took
-/// is offered as the selection, and written to whoever pastes it.
-struct Clipboard {
-    /// The manager, bound.
-    manager: compositor_toolkit::ObjectId,
-    /// The seat's data device.
-    device: compositor_toolkit::ObjectId,
-    /// The source offered now, and its text.
-    offered: Option<(compositor_toolkit::ObjectId, String)>,
-}
-
-/// The types a copy is offered as.
-const TEXT_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"];
-
-impl Clipboard {
-    /// The clipboard, when the compositor offers `ext_data_control`.
-    fn bind(client: &mut Client) -> Option<Self> {
-        use compositor_toolkit::Value;
-        use compositor_toolkit::protocol::ext_data_control::{
-            self as control, ext_data_control_manager_v1 as manager,
-        };
-        let seat = client.seat()?;
-        let (bound, _) = client
-            .bind(&control::EXT_DATA_CONTROL_MANAGER_V1, 1, None)
-            .ok()?;
-        let device = client.new_object(&control::EXT_DATA_CONTROL_DEVICE_V1, 1);
-        client
-            .request(
-                bound,
-                manager::request::GET_DATA_DEVICE,
-                &[Value::NewId(device), Value::Object(seat)],
-            )
-            .ok()?;
-        Some(Clipboard {
-            manager: bound,
-            device,
-            offered: None,
-        })
-    }
-
-    /// Offer `text` as the selection.
-    fn copy(&mut self, client: &mut Client, text: String) -> bool {
-        use compositor_toolkit::Value;
-        use compositor_toolkit::protocol::ext_data_control::{
-            self as control, ext_data_control_device_v1 as device,
-            ext_data_control_manager_v1 as manager, ext_data_control_source_v1 as source,
-        };
-        let made = client.new_object(&control::EXT_DATA_CONTROL_SOURCE_V1, 1);
-        let mut sent = client
-            .request(
-                self.manager,
-                manager::request::CREATE_DATA_SOURCE,
-                &[Value::NewId(made)],
-            )
-            .is_ok();
-        for mime in TEXT_TYPES {
-            sent &= client
-                .request(
-                    made,
-                    source::request::OFFER,
-                    &[Value::Str(Some(mime.to_owned()))],
-                )
-                .is_ok();
-        }
-        sent &= client
-            .request(
-                self.device,
-                device::request::SET_SELECTION,
-                &[Value::Object(made)],
-            )
-            .is_ok();
-        let _ = client.flush();
-        if let Some((old, _)) = self.offered.replace((made, text)) {
-            let _ = client.request(old, source::request::DESTROY, &[]);
-        }
-        sent
-    }
-
-    /// An event for one of the clipboard's objects: someone pastes, or the
-    /// selection went to another program. Answers whether it was ours.
-    fn event(
-        &mut self,
-        client: &mut Client,
-        object: compositor_toolkit::ObjectId,
-        opcode: u16,
-        args: &[compositor_toolkit::Value],
-    ) -> bool {
-        use compositor_toolkit::Value;
-        use compositor_toolkit::protocol::ext_data_control::ext_data_control_source_v1 as source;
-        let Some((offered, text)) = &self.offered else {
-            return false;
-        };
-        if object != *offered {
-            return false;
-        }
-        if opcode == source::event::SEND {
-            if let Some(Value::Fd(fd)) = args.get(1) {
-                write_and_close(*fd, text.as_bytes());
-            }
-        } else if opcode == source::event::CANCELLED {
-            let _ = client.request(*offered, source::request::DESTROY, &[]);
-            self.offered = None;
-        }
-        true
-    }
-}
 
 /// Write `bytes` to the descriptor a paste handed over, and close it.
 pub(crate) fn write_and_close(fd: i32, bytes: &[u8]) {
@@ -227,78 +45,59 @@ pub(crate) fn write_and_close(fd: i32, bytes: &[u8]) {
     let _ = pipe.write_all(bytes);
 }
 
-/// What the loop holds beside the app.
-struct Window {
-    /// The clipboard, when the compositor has one to offer to.
-    clipboard: Option<Clipboard>,
-    /// The clipboard and the primary selection, to paste from.
-    selections: crate::selection::Selections,
-    /// The last key press's serial, which a copy names.
-    key_serial: u32,
-    /// A copy waiting to be offered.
-    copied: Option<String>,
-    /// The state.
-    app: App,
-    /// The fonts.
-    text: Text,
-    /// The surface.
-    surface: SurfaceId,
-    /// Its size in logical pixels.
-    size: Option<(u32, u32)>,
-    /// The last frame's regions.
-    hits: Vec<(Rect, Action)>,
-    /// Where the pointer is.
-    pointer: (f32, f32),
-    /// Whether the left button is down on the track, to drag the cursor.
-    dragging: Option<Action>,
-    /// Whether the picture is out of date.
-    dirty: bool,
+/// What the loop holds beside the tree.
+struct Loop {
+    /// The tree and the state.
+    view: View,
+    /// The state, shared with the tree.
+    app: Rc<RefCell<App>>,
+    /// The clipboard and the primary selection.
+    selections: Selections,
     /// When the toast was put up.
     toast_since: Option<Instant>,
     /// Whether the window should close.
     done: bool,
     /// Timer turns so far.
     ticks: u32,
-    /// Whether the window was asked to be maximized.
-    maximized: bool,
-    /// When and where the header was last pressed, for a double click.
-    header_press: Option<(Instant, f32, f32)>,
-    /// The edge the pointer is over, as `xdg_toplevel.resize_edge`; 0 none.
-    edge: u32,
-}
-
-/// How close to the window's edge a press resizes it, in logical pixels.
-const EDGE: f32 = 6.0;
-
-/// The longest gap between the two presses of a double click.
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-
-/// The `xdg_toplevel.resize_edge` at (`x`, `y`) in a window of `size`, 0
-/// for none, and the pointer's shape over it (cursor-shape-v1's numbers).
-fn edge_at(x: f32, y: f32, size: (u32, u32)) -> (u32, CursorShape) {
-    let (w, h) = (size.0 as f32, size.1 as f32);
-    let top = y < EDGE;
-    let bottom = y >= h - EDGE;
-    let left = x < EDGE;
-    let right = x >= w - EDGE;
-    match (top, bottom, left, right) {
-        (true, _, true, _) => (5, CursorShape::Other(29)),
-        (true, _, _, true) => (9, CursorShape::Other(28)),
-        (_, true, true, _) => (6, CursorShape::Other(28)),
-        (_, true, _, true) => (10, CursorShape::Other(29)),
-        (true, ..) => (1, CursorShape::Other(27)),
-        (_, true, ..) => (2, CursorShape::Other(27)),
-        (_, _, true, _) => (4, CursorShape::Other(26)),
-        (_, _, _, true) => (8, CursorShape::Other(26)),
-        _ => (0, CursorShape::Default),
-    }
+    /// Whether the state changed since it was last shown.
+    dirty: bool,
+    /// Whether a field's paste is on its way from the clipboard.
+    pasting: bool,
 }
 
 /// Open the window and run until it is closed. Answers the exit status.
 #[must_use]
 pub fn run(app: App) -> i32 {
-    let mut client = match Client::connect() {
-        Ok(client) => client,
+    let fonts = fonts();
+    if fonts.faces().is_empty() {
+        say(
+            "err: no font was found, so the window has no words (LODE_VIEWER_FONTS, /usr/share/fonts)",
+        );
+    }
+    say(&format!(
+        "{} records in {} boots, {} sources",
+        app.log.entries.len(),
+        app.log.boots.len(),
+        app.log.sources.len()
+    ));
+    let background = crate::ui::paint::ink(crate::theme::Theme::of(app.mode).bg);
+    let app = Rc::new(RefCell::new(app));
+    let Some(mut view) = View::new(Rc::clone(&app), fonts) else {
+        say("err: the window's tree could not be made");
+        return 1;
+    };
+    let options = WindowOptions {
+        title: "lode".to_owned(),
+        app_id: APP_ID.to_owned(),
+        size: (1440, 960),
+        background,
+        min_size: (960, 600),
+        resize_edges: true,
+        clipboard: false,
+    };
+    let started = Instant::now();
+    let mut window = match Window::open(view.shell.common(), options) {
+        Ok(window) => window,
         Err(error) => {
             say(&format!("err: no compositor to open a window on: {error}"));
             if std::env::var_os("WAYLAND_DISPLAY").is_none()
@@ -312,200 +111,168 @@ pub fn run(app: App) -> i32 {
             return 1;
         }
     };
-    let surface = match client.toplevel(&ToplevelOptions {
-        title: "lode".to_owned(),
-        app_id: APP_ID.to_owned(),
-        size: (1440, 960),
-        min_size: (960, 600),
-        ..ToplevelOptions::default()
-    }) {
-        Ok(surface) => surface,
-        Err(error) => {
-            say(&format!("err: the compositor gave no window: {error}"));
-            return 1;
-        }
-    };
-    let text = Text::load();
-    if text.faces() == 0 {
-        say(
-            "err: no font was found, so the window has no words (LODE_VIEWER_FONTS, /usr/share/fonts)",
-        );
-    }
-    say(&format!(
-        "{} records in {} boots, {} sources",
-        app.log.entries.len(),
-        app.log.boots.len(),
-        app.log.sources.len()
-    ));
-    let timer = client.add_timer(FOLLOW_EVERY, Some(FOLLOW_EVERY));
-    let clipboard = Clipboard::bind(&mut client);
-    let waker = client.waker().ok();
-    let selections = crate::selection::Selections::bind(&mut client, waker.clone());
-    let mut app = app;
-    app.waker = waker;
-    let mut window = Window {
-        clipboard,
-        selections,
-        key_serial: 0,
-        copied: None,
+    let timer = window.client().add_timer(FOLLOW_EVERY, Some(FOLLOW_EVERY));
+    let waker = window.client().waker().ok();
+    let selections = Selections::bind(window.client(), waker.clone());
+    view.ui.set_clipboard_external(selections.has_clipboard());
+    app.borrow_mut().waker = waker;
+    let mut state = Loop {
+        view,
         app,
-        text,
-        surface,
-        size: None,
-        hits: Vec::new(),
-        pointer: (-1.0, -1.0),
-        dragging: None,
-        dirty: false,
+        selections,
         toast_since: None,
         done: false,
         ticks: 0,
-        maximized: false,
-        header_press: None,
-        edge: 0,
+        dirty: false,
+        pasting: false,
     };
-    let mut drawn = false;
-    while !window.done {
-        let events = match client.dispatch(None) {
+    let mut up = false;
+    while !state.done && !window.is_closed() {
+        let events = match window.dispatch(&mut state.view.ui, None) {
             Ok(events) => events,
             Err(error) => {
                 say(&format!("err: the compositor went away: {error}"));
                 return 1;
             }
         };
+        if !up && let Some(size) = window.size() {
+            up = true;
+            let lines = state.app.borrow().lines.len();
+            say(&format!(
+                "the window is up, {}x{}, {lines} lines in the table, first frame in {:.0} ms",
+                size.0,
+                size.1,
+                started.elapsed().as_secs_f64() * 1e3
+            ));
+        }
         for event in events {
             match event {
-                Event::Timer(id) if id == timer => window.tick(),
+                Event::Timer(id) if id == timer => state.tick(),
                 Event::Object {
                     object,
                     interface,
                     opcode,
                     args,
                 } => {
-                    if window
-                        .selections
-                        .event(&mut client, object, interface, opcode, &args)
-                    {
+                    let _ =
+                        state
+                            .selections
+                            .event(window.client(), object, interface, opcode, &args);
+                }
+                Event::Keyboard(KeyboardEvent::Key(key)) if key.pressed => {
+                    // A key that came back in the batch after `/` gave the
+                    // query the keys was given before the query had them:
+                    // it is the query's now.
+                    let event = tole::KeyEvent {
+                        key: std::rc::Rc::from(key.keysym.unwrap_or("")),
+                        text: std::rc::Rc::from(key.text.as_str()),
+                        shift: key.modifiers.shift,
+                        control: key.modifiers.control,
+                        alt: key.modifiers.alt,
+                        repeat: key.repeat,
+                    };
+                    if state.view.typing() && state.view.ui.key_press(&event) {
+                        state.dirty = true;
                         continue;
                     }
-                    if let Some(clipboard) = &mut window.clipboard {
-                        let _ = clipboard.event(&mut client, object, opcode, &args);
-                    }
+                    state.key(key.keysym.unwrap_or_default(), key.modifiers.control);
                 }
-                event => window.handle(&mut client, event),
+                Event::Pointer(PointerEvent::Button {
+                    button: BUTTON_MIDDLE,
+                    pressed: true,
+                    ..
+                }) => state.middle(window.client()),
+                Event::CloseRequested(_) | Event::Closed(_) => state.done = true,
+                _ => {}
             }
         }
-        window.selection_work(&mut client);
-        if let Some(text) = window.copied.take() {
-            let offered = window
-                .clipboard
-                .as_mut()
-                .is_some_and(|clipboard| clipboard.copy(&mut client, text.clone()));
-            if !offered {
-                window.app.toast = Some("no clipboard here: printed on standard output".to_owned());
-                window.toast_since = Some(Instant::now());
-                window.dirty = true;
+        let (done, asked) = state.view.step();
+        for action in asked {
+            match action {
+                Action::WindowMove => window.start_move(),
+                Action::WindowMaximize => window.toggle_maximized(),
+                Action::WindowMinimize => window.minimize(),
+                _ => state.done = true,
             }
-            say(&format!("copied: {text}"));
         }
-        if window.dirty && !window.done {
-            window.dirty = false;
-            let Some(size) = window.size else {
-                continue;
-            };
-            let scale = client.scale(surface);
-            let started = Instant::now();
-            let (app, text) = (&window.app, &mut window.text);
-            let mut hits = Vec::new();
-            let result = client.draw(surface, |pixmap| {
-                let mut canvas = Canvas::new(pixmap, text, scale.max(1) as f32);
-                crate::ui::paint(app, &mut canvas);
-                hits = canvas.hits;
-            });
-            window.hits = hits;
-            match result {
-                Ok(true) if !drawn => {
-                    drawn = true;
-                    say(&format!(
-                        "the window is up, {}x{} at scale {scale}, {} lines in the table, first frame in {:.0} ms",
-                        size.0,
-                        size.1,
-                        window.app.lines.len(),
-                        started.elapsed().as_secs_f64() * 1e3
-                    ));
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    say(&format!("err: a frame could not be drawn: {error}"));
-                    return 1;
-                }
+        for action in &done {
+            state.after(action);
+        }
+        let serial = window.key_serial();
+        state.selection_work(window.client(), serial);
+        if state.dirty && !state.done {
+            state.dirty = false;
+            state.view.show();
+            if let Err(error) = window.refresh(&mut state.view.ui) {
+                say(&format!("err: a frame could not be drawn: {error}"));
+                return 1;
             }
         }
     }
-    client.destroy(surface);
-    let _ = client.flush();
     0
 }
 
-impl Window {
-    /// Pastes asked for and arrived, a field's copy, and the file
-    /// dialog's answer.
-    fn selection_work(&mut self, client: &mut Client) {
-        if let Some(which) = self.app.want_paste.take()
-            && !self.selections.paste(client, which)
-            && which == crate::selection::Which::Clipboard
-        {
-            self.app.toast = Some("nothing to paste: the clipboard has no text".to_owned());
+impl Loop {
+    /// Do `action`, from a key.
+    fn act(&mut self, action: &Action) {
+        self.app.borrow_mut().act(action);
+        self.after(action);
+    }
+
+    /// What follows an action done: the toast's clock, and the query said.
+    fn after(&mut self, action: &Action) {
+        if self.app.borrow().toast.is_some() && self.toast_since.is_none() {
             self.toast_since = Some(Instant::now());
-            self.dirty = true;
         }
-        while let Some(text) = self.selections.take() {
-            if self.app.paste(&text) {
-                // How much, never what: it may be a private key.
-                say(&format!("pasted {} characters", text.chars().count()));
-                self.dirty = true;
-            }
+        if matches!(action, Action::QueryAccept) {
+            self.say_query();
         }
-        if let Some(text) = self.app.field_copy.take() {
-            let length = text.chars().count();
-            let offered = self.selections.copy(client, text.clone(), self.key_serial)
-                || self
-                    .clipboard
-                    .as_mut()
-                    .is_some_and(|clipboard| clipboard.copy(client, text));
-            if offered {
-                say(&format!("copied {length} characters from a field"));
-            }
-        }
-        if self.app.poll_picker() {
-            self.dirty = true;
+        self.dirty = true;
+    }
+
+    /// Say what the query found, as a boot that types one reads it.
+    fn say_query(&self) {
+        let app = self.app.borrow();
+        match &app.query.error {
+            Some(error) => say(&format!(
+                "where `{}` does not parse: {error}",
+                app.query.text
+            )),
+            None => say(&format!(
+                "where `{}`: {} of {} records",
+                app.query.text.trim(),
+                app.found.len(),
+                app.log.of_boot(app.boot).len()
+            )),
         }
     }
 
     /// The timer: follow the store when Live, and take a stale toast down.
     fn tick(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
+        let mut app = self.app.borrow_mut();
         // The links' states change on their own threads.
-        if self.app.page == Page::Machines {
+        if app.page == Page::Machines {
             self.dirty = true;
         }
-        if self.app.poll_machines(self.ticks) {
+        if app.poll_machines(self.ticks) {
             self.dirty = true;
         }
         if self.ticks.is_multiple_of(10)
-            && let Some(root) = self.app.machines_root.clone()
-            && self.app.rescan_machines(&root)
+            && let Some(root) = app.machines_root.clone()
+            && app.rescan_machines(&root)
         {
-            say(&format!("{} machines now", self.app.machines.len()));
+            say(&format!("{} machines now", app.machines.len()));
             // A viewer with nothing to show shows the machine that came.
-            if self.app.log.entries.is_empty() {
-                let index = self.app.machine;
-                self.app.open_machine(index);
-                self.app.live = true;
+            if app.log.entries.is_empty() {
+                let index = app.machine;
+                app.open_machine(index);
+                app.live = true;
             }
             self.dirty = true;
         }
-        if self.app.live {
-            let added = self.app.follow();
+        if app.live {
+            let added = app.follow();
             if added > 0 {
                 say(&format!("live: {added} new records"));
                 self.dirty = true;
@@ -514,143 +281,44 @@ impl Window {
         if let Some(since) = self.toast_since
             && since.elapsed() >= TOAST_FOR
         {
-            self.app.toast = None;
+            app.toast = None;
             self.toast_since = None;
             self.dirty = true;
         }
     }
 
-    /// The action under (`x`, `y`) in the last frame.
-    fn hit(&self, x: f32, y: f32) -> Option<Action> {
-        self.hits
-            .iter()
-            .rev()
-            .find(|(place, _)| place.contains(x, y))
-            .map(|(_, action)| action.clone())
-    }
-
-    /// Do `action`, pressed at `x`.
-    fn act(&mut self, action: &Action, x: f32, y: f32) {
-        if let Action::Minimap(top, height) = *action {
-            let view = self.view_height();
-            self.app.minimap(top, height, y, view);
-        } else {
-            self.app.act(action, x);
+    /// A key nobody typed into took.
+    fn key(&mut self, keysym: &str, control: bool) {
+        if control && matches!(keysym, "q" | "w") {
+            self.done = true;
+            return;
         }
-        if let Action::Select(index) = *action
-            && self.app.page == Page::Overview
-        {
-            self.app.page = Page::Logs;
-            self.app.refresh();
-            self.app.selected = Some(index);
-            self.app.scroll_to(index);
-        }
-        if self.app.toast.is_some() && self.toast_since.is_none() {
-            self.toast_since = Some(Instant::now());
-        }
-        if let Some(text) = self.app.clipboard.take() {
-            self.copied = Some(text);
-        }
-        self.dirty = true;
-    }
-
-    /// Say what the query found, as a boot that types one reads it.
-    fn say_query(&self) {
-        match &self.app.query.error {
-            Some(error) => say(&format!(
-                "where `{}` does not parse: {error}",
-                self.app.query.text
-            )),
-            None => say(&format!(
-                "where `{}`: {} of {} records",
-                self.app.query.text.trim(),
-                self.app.found.len(),
-                self.app.log.of_boot(self.app.boot).len()
-            )),
-        }
-    }
-
-    /// The table's visible height.
-    fn view_height(&self) -> f32 {
-        let (w, h) = self.size.unwrap_or((1440, 960));
-        crate::ui::logs_table(&self.app, w as f32, h as f32).h
-    }
-
-    /// One event.
-    fn handle(&mut self, client: &mut Client, event: Event) {
-        match event {
-            Event::Configure {
-                surface,
-                width,
-                height,
-            } if surface == self.surface => {
-                let size = (width.max(1), height.max(1));
-                self.size = Some(size);
-                self.dirty = true;
-            }
-            Event::Scale { surface, .. } if surface == self.surface => self.dirty = true,
-            Event::CloseRequested(surface) | Event::Closed(surface) if surface == self.surface => {
-                self.done = true;
-            }
-            Event::Keyboard(KeyboardEvent::Key(key)) if key.pressed => {
-                let keysym = key.keysym.unwrap_or_default();
-                let mods = key.modifiers;
-                self.key_serial = key.serial;
-                if mods.control && matches!(keysym, "q" | "w") {
-                    self.done = true;
-                    return;
-                }
-                let typing = self.app.form.focus.is_some() || self.app.editing;
-                let paste = (mods.control && !mods.alt && matches!(keysym, "v" | "V"))
-                    || (mods.shift && keysym == "Insert");
-                if typing && paste {
-                    self.app.want_paste = Some(crate::selection::Which::Clipboard);
-                    return;
-                }
-                if self.app.form.focus.is_some() {
-                    self.dirty |=
-                        self.app
-                            .form_key(keysym, &key.text, (mods.shift, mods.control, mods.alt));
-                    return;
-                }
-                if self.app.editing {
-                    self.dirty |= self
-                        .app
-                        .type_key(keysym, &key.text, (mods.control, mods.alt));
-                    if !self.app.editing && matches!(keysym, "Return" | "KP_Enter") {
-                        self.say_query();
-                    }
-                    return;
-                }
-                self.key(keysym);
-            }
-            Event::Pointer(pointer) => self.point(client, pointer),
-            Event::Woken => {}
-            _ => {}
-        }
-    }
-
-    /// A key, while nothing is typed into.
-    fn key(&mut self, keysym: &str) {
-        let view = self.view_height();
+        let view = self.app.borrow().table_view;
         match keysym {
-            "slash" => self.act(&Action::EditQuery, 0.0, 0.0),
-            "Escape" => {
-                self.app.selected = None;
-                self.app.boot_menu = false;
+            "slash" => {
+                self.act(&Action::Page(Page::Logs));
+                self.act(&Action::EditQuery);
+                self.view.focus_query();
             }
-            "Down" | "j" => self.move_selection(1),
-            "Up" | "k" => self.move_selection(-1),
-            "Next" | "Page_Down" => self.scroll(view * 0.9),
-            "Prior" | "Page_Up" => self.scroll(-view * 0.9),
-            "Home" => self.app.scroll = 0.0,
-            "End" => self.scroll(f32::MAX / 4.0),
-            "Left" => self.app.act(&Action::Step(-10), 0.0),
-            "Right" => self.app.act(&Action::Step(10), 0.0),
-            "o" => self.app.page = Page::Overview,
-            "l" => self.app.page = Page::Logs,
+            "Escape" => {
+                let mut app = self.app.borrow_mut();
+                app.selected = None;
+                app.boot_menu = false;
+                app.machine_menu = false;
+            }
+            "Down" | "j" => self.app.borrow_mut().move_selection(1),
+            "Up" | "k" => self.app.borrow_mut().move_selection(-1),
+            "Next" | "Page_Down" => self.app.borrow_mut().scroll_by(view * 0.9),
+            "Prior" | "Page_Up" => self.app.borrow_mut().scroll_by(-view * 0.9),
+            "Home" => self.app.borrow_mut().scroll = 0.0,
+            "End" => self.app.borrow_mut().scroll_by(f32::MAX / 4.0),
+            "Left" => self.app.borrow_mut().act(&Action::Step(-10)),
+            "Right" => self.app.borrow_mut().act(&Action::Step(10)),
+            "o" => self.app.borrow_mut().page = Page::Overview,
+            "l" => self.app.borrow_mut().page = Page::Logs,
             "t" => {
-                self.app.mode = match self.app.mode {
+                let mut app = self.app.borrow_mut();
+                app.mode = match app.mode {
                     crate::theme::Mode::Light => crate::theme::Mode::Dark,
                     crate::theme::Mode::Dark => crate::theme::Mode::Light,
                 };
@@ -660,217 +328,61 @@ impl Window {
         self.dirty = true;
     }
 
-    /// Maximize the window, or give it back its own size.
-    fn toggle_maximized(&mut self, client: &mut Client) {
-        self.maximized = !self.maximized;
-        let state = if self.maximized {
-            WindowState::Maximized
-        } else {
-            WindowState::Restored
-        };
-        client.set_window_state(self.surface, state);
-    }
-
-    /// Select the record `by` records on from the selected one.
-    fn move_selection(&mut self, by: isize) {
-        let records: Vec<usize> = self
-            .app
-            .lines
-            .iter()
-            .filter_map(|line| match line {
-                crate::lines::Line::Record(index) => Some(*index),
-                _ => None,
-            })
-            .collect();
-        if records.is_empty() {
-            return;
-        }
-        let at = self
-            .app
-            .selected
-            .and_then(|selected| records.iter().position(|&index| index == selected))
-            .map_or(0, |at| at.saturating_add_signed(by).min(records.len() - 1));
-        let Some(&chosen) = records.get(at) else {
-            return;
-        };
-        self.app.page = Page::Logs;
-        self.app.selected = Some(chosen);
-        // Keep it in view.
-        if let Some(top) = self
-            .app
-            .lines
-            .iter()
-            .zip(&self.app.tops)
-            .find(|(line, _)| **line == crate::lines::Line::Record(chosen))
-            .map(|(_, top)| *top)
-        {
-            let view = self.view_height();
-            if top < self.app.scroll {
-                self.app.scroll = top;
-            } else if top + 28.0 > self.app.scroll + view {
-                self.app.scroll = top + 28.0 - view;
-            }
+    /// The middle button: the primary selection, pasted into the field
+    /// under the pointer, which the press gave the keys to.
+    fn middle(&mut self, client: &mut compositor_toolkit::Client) {
+        if self.view.ui.active_focus_item().is_some() && self.view.typing() {
+            let _ = self.selections.paste(client, Which::Primary);
         }
     }
 
-    /// Scroll the page under the pointer by `by` pixels.
-    fn scroll(&mut self, by: f32) {
-        let (w, h) = self.size.unwrap_or((1440, 960));
-        match self.app.page {
-            Page::Logs => {
-                let view = crate::ui::logs_table(&self.app, w as f32, h as f32).h;
-                let most = (self.app.table_height - view).max(0.0);
-                self.app.scroll = (self.app.scroll + by).clamp(0.0, most);
-            }
-            Page::Overview => {
-                let most = (crate::ui::overview_height() - (h as f32 - crate::ui::HEADER)).max(0.0);
-                self.app.overview_scroll = (self.app.overview_scroll + by).clamp(0.0, most);
-            }
-            Page::Machines => {
-                let view = h as f32 - crate::ui::HEADER;
-                let most = (self.app.machines_height.get() - view).max(0.0);
-                self.app.machines_scroll = (self.app.machines_scroll + by).clamp(0.0, most);
+    /// Copies and pastes: the fields' own (tole's), a record copied as
+    /// JSON or its cursor, and what arrived.
+    fn selection_work(&mut self, client: &mut compositor_toolkit::Client, serial: u32) {
+        if let Some(text) = self.view.ui.take_copied() {
+            let length = text.chars().count();
+            if self.selections.copy(client, text.to_string(), serial) {
+                say(&format!("copied {length} characters from a field"));
             }
         }
-    }
-
-    /// The pointer moved, pressed or scrolled.
-    fn point(&mut self, client: &mut Client, pointer: PointerEvent) {
-        match pointer {
-            PointerEvent::Enter { surface, x, y } if surface == self.surface => {
-                client.set_cursor(CursorShape::Default);
-                self.pointer = (x as f32, y as f32);
-            }
-            PointerEvent::Motion { surface, x, y } if surface == self.surface => {
-                self.pointer = (x as f32, y as f32);
-                let (edge, shape) = if self.maximized {
-                    (0, CursorShape::Default)
-                } else {
-                    edge_at(x as f32, y as f32, self.size.unwrap_or((1, 1)))
-                };
-                if edge != self.edge {
-                    self.edge = edge;
-                    client.set_cursor(shape);
-                }
-                let over = self.hit(x as f32, y as f32);
-                if over != self.app.hover {
-                    self.app.hover = over;
-                    self.dirty = true;
-                }
-                if let Some(action) = self.dragging.clone() {
-                    self.act(&action, x as f32, y as f32);
-                }
-            }
-            PointerEvent::Button {
-                surface,
-                x,
-                y,
-                button: BUTTON_LEFT,
-                pressed,
-                ..
-            } if surface == self.surface => {
-                let (x, y) = (x as f32, y as f32);
-                if !pressed {
-                    self.dragging = None;
-                    return;
-                }
-                if self.edge != 0 {
-                    client.drag_window(self.surface, self.edge);
-                    return;
-                }
-                match self.hit(x, y) {
-                    Some(Action::WindowMove) => {
-                        let double = self.header_press.is_some_and(|(at, px, py)| {
-                            at.elapsed() < DOUBLE_CLICK
-                                && (px - x).abs() < 4.0
-                                && (py - y).abs() < 4.0
-                        });
-                        if double {
-                            self.header_press = None;
-                            self.toggle_maximized(client);
-                        } else {
-                            self.header_press = Some((Instant::now(), x, y));
-                            client.drag_window(self.surface, 0);
-                        }
-                        return;
-                    }
-                    Some(Action::WindowMaximize) => {
-                        self.toggle_maximized(client);
-                        return;
-                    }
-                    Some(Action::WindowMinimize) => {
-                        client.set_window_state(self.surface, WindowState::Minimized);
-                        return;
-                    }
-                    Some(Action::WindowClose) => {
-                        self.done = true;
-                        return;
-                    }
-                    _ => {}
-                }
-                let Some(action) = self.hit(x, y) else {
-                    if self.app.editing {
-                        self.app.commit_draft();
-                        self.dirty = true;
-                    }
-                    return;
-                };
-                if matches!(action, Action::Track(..) | Action::Minimap(..)) {
-                    self.dragging = Some(action.clone());
-                }
-                self.act(&action, x, y);
-            }
-            PointerEvent::Button {
-                surface,
-                x,
-                y,
-                button: BUTTON_MIDDLE,
-                pressed: true,
-                ..
-            } if surface == self.surface => {
-                // The middle button pastes the primary selection into the
-                // field under it.
-                if let Some(action @ (Action::FormFocus(_) | Action::EditQuery)) =
-                    self.hit(x as f32, y as f32)
-                {
-                    self.act(&action, x as f32, y as f32);
-                    self.app.want_paste = Some(crate::selection::Which::Primary);
-                }
-            }
-            PointerEvent::Axis {
-                surface,
-                vertical,
-                discrete,
-                ..
-            } if surface == self.surface => {
-                // Over the track the wheel zooms, as the design's does;
-                // anywhere else it scrolls.
-                if let Some(Action::Track(..)) = self.hit(self.pointer.0, self.pointer.1) {
-                    let zooms: [u64; 4] = [30, 60, 300, 0];
-                    let now = zooms
-                        .iter()
-                        .position(|&z| {
-                            z * 1_000_000 == self.app.span || (z == 0 && self.app.whole_boot())
-                        })
-                        .unwrap_or(1);
-                    let next = if vertical > 0.0 {
-                        (now + 1).min(3)
-                    } else {
-                        now.saturating_sub(1)
-                    };
-                    let zoom = zooms.get(next).copied().unwrap_or(0);
-                    self.app.act(&Action::Zoom(zoom), 0.0);
-                } else {
-                    let rows = if discrete.0 != 0 {
-                        discrete.0 as f32 * 3.0 * 28.0
-                    } else {
-                        vertical as f32 * 2.0
-                    };
-                    self.scroll(rows);
-                }
+        if !self.pasting && self.view.ui.take_paste_request() {
+            self.pasting = self.selections.paste(client, Which::Clipboard);
+            if !self.pasting {
+                // Nothing to paste: the field stops waiting.
+                self.view.ui.paste("");
+                self.app.borrow_mut().toast =
+                    Some("nothing to paste: the clipboard has no text".to_owned());
+                self.toast_since = Some(Instant::now());
+                say("a paste was asked for, and the clipboard has no text");
                 self.dirty = true;
             }
-            _ => {}
+        }
+        let wanted = self.app.borrow_mut().want_paste.take();
+        if let Some(which) = wanted
+            && !self.selections.paste(client, which)
+            && which == Which::Clipboard
+        {
+            self.app.borrow_mut().toast =
+                Some("nothing to paste: the clipboard has no text".to_owned());
+            self.toast_since = Some(Instant::now());
+            self.dirty = true;
+        }
+        while let Some(text) = self.selections.take() {
+            // How much, never what: it may be a private key.
+            say(&format!("pasted {} characters", text.chars().count()));
+            self.view.ui.paste(&text);
+            self.pasting = false;
+            self.dirty = true;
+        }
+        let copied = self.app.borrow_mut().clipboard.take();
+        if let Some(text) = copied {
+            if !self.selections.copy(client, text.clone(), serial) {
+                self.app.borrow_mut().toast =
+                    Some("no clipboard here: printed on standard output".to_owned());
+                self.toast_since = Some(Instant::now());
+            }
+            say(&format!("copied: {text}"));
+            self.dirty = true;
         }
     }
 }

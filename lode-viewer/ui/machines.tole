@@ -1,0 +1,709 @@
+// Machines: the machines the viewer follows itself, each with its link's
+// state, and the form that adds one or changes a kept one -- the key from
+// ssh's own, a file chosen in the FileDialog, or pasted into a TextArea --
+// and, for TLS, what will be done on the machine, to confirm.
+import Fx
+import Fx.Controls
+
+struct RemoteRow {
+    name: string
+    at: string
+    state: string
+    error: string
+    // 0 up, 1 waiting, 2 failing.
+    health: int
+    selected: bool
+}
+
+// One line of what is kept of a machine: its label on its first line,
+// and the height the line takes, the gap after the last one counted.
+struct DetailLine {
+    label: string
+    text: string
+    problem: bool
+    height: real
+}
+
+struct ProgressLine {
+    text: string
+    stopped: bool
+}
+
+// Lines of text the program broke at a width, one under another.
+component Lines : Column {
+    id: lines
+    property list<string> lines
+    property font font: Theme.sans(12)
+    property color ink: Theme.ink4
+    property real lineHeight: 18
+    Repeater {
+        model: lines.lines
+        Text { height: lines.lineHeight; text: modelData; font: lines.font; color: lines.ink }
+    }
+}
+
+// A radio choice's ring at (`cx`, `cy`): filled when chosen, an open ring
+// when not, and pale when it cannot be chosen. `inside` is behind it.
+component Ring : Item {
+    property real cx
+    property real cy
+    property bool on
+    property bool can: true
+    property color inside: Theme.bg
+    Dot { cx: parent.cx; cy: parent.cy; r: 7; color: on ? Theme.accent : can ? Theme.ink4 : Theme.line3 }
+    Dot { cx: parent.cx; cy: parent.cy; r: on ? 5.5 : 5.6; color: on || can ? inside : Theme.bg3 }
+    Dot { visible: on; cx: parent.cx; cy: parent.cy; r: 3.5; color: Theme.accent }
+}
+
+// One choice of a radio group: its box, ring, label and note. A choice
+// that cannot be made still answers a press: with why.
+component Choice : Rectangle {
+    id: choice
+    property string text
+    property list<string> note
+    property bool on
+    property bool can: true
+    property bool hovered: area.containsMouse && can && !on
+    signal clicked()
+    radius: 7
+    color: on ? Theme.accentOver : hovered ? Theme.hover : can ? Theme.bg : Theme.bg3
+    border.width: 1
+    border.color: on ? Theme.accent : hovered ? Theme.ink4 : Theme.line3
+    border.dash: !on && !can ? 3 : 0
+    Ring {
+        cx: 16
+        cy: choice.note.length == 0 ? choice.height / 2 : 15
+        on: choice.on
+        can: choice.can
+        inside: choice.on ? Theme.accentOver : choice.hovered ? Theme.hover : choice.can ? Theme.bg : Theme.bg3
+    }
+    Text {
+        x: 30
+        y: choice.note.length == 0 ? 0 : 5
+        width: choice.width - 38
+        height: choice.note.length == 0 ? choice.height : 20
+        elide: Text.ElideRight
+        text: choice.text
+        font: Theme.sans(13, 500)
+        color: choice.can ? Theme.ink : Theme.ink5
+    }
+    Lines {
+        x: 30
+        y: 24
+        lines: choice.note
+        font: Theme.sans(11)
+        ink: choice.can ? Theme.ink4 : Theme.amberInk
+        lineHeight: 15
+    }
+    MouseArea { id: area; anchors.fill: parent; hoverEnabled: true; onClicked: choice.clicked() }
+}
+
+// A one-line input of the form: its box, its value or placeholder, and
+// what is wrong with it beside it.
+component Field : Rectangle {
+    id: field
+    property alias text: input.text
+    property string placeholder
+    property list<string> problem
+    property bool focused: input.activeFocus
+    signal edited(string text)
+    signal pressed()
+    height: 32
+    radius: 6
+    color: Theme.bg
+    border.width: 1
+    border.color: focused ? Theme.accent : Theme.line3
+    Text {
+        visible: input.text == ""
+        x: 10
+        width: field.width - 20
+        height: field.height
+        elide: Text.ElideRight
+        text: field.placeholder
+        font: Theme.sans(12.5)
+        color: Theme.ink5
+    }
+    MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.IBeamCursor
+        onPressed: { input.forceActiveFocus(); field.pressed() }
+    }
+    TextInput {
+        id: input
+        x: 10
+        width: field.width - 20
+        height: field.height
+        activeFocusOnTab: true
+        font: Theme.mono(12.5)
+        color: Theme.ink
+        cursorColor: Theme.ink
+        selectionColor: Theme.accentBg
+        onTextEdited: field.edited(text)
+    }
+    Lines {
+        x: field.width + 12
+        y: 7
+        lines: field.problem
+        font: Theme.sans(12)
+        ink: Theme.redInk
+        lineHeight: 17
+    }
+}
+
+export component MachinesPage : Item {
+    id: page
+    property list<string> intro
+    property list<RemoteRow> remotes
+    // The form: a new machine, or a kept one's name.
+    property string editing
+    property list<DetailLine> details
+    property bool tls
+    property bool receiver
+    property list<string> sshNote
+    property list<string> tlsNote
+    // 0 ssh's own keys, 1 a file, 2 pasted.
+    property int key
+    property alias name: nameField.text
+    property alias host: hostField.text
+    property alias user: userField.text
+    property alias port: portField.text
+    property alias keyFile: keyField.text
+    property alias server: serverField.text
+    property alias pasted: pasteArea.text
+    property list<string> nameProblem
+    property list<string> hostProblem
+    property list<string> userProblem
+    property list<string> portProblem
+    property list<string> keyProblem
+    property list<string> serverProblem
+    property list<string> pasteProblem
+    property list<string> pasteKept
+    property list<string> pastePlaceholder
+    property list<string> agentNote
+    property list<string> reach
+    property int reachOn: -1
+    property list<string> keysOnly
+    property string addWord
+    property list<string> error
+    property real errorX
+    property list<ProgressLine> progress
+    // The TLS set-up shown, to confirm.
+    property bool confirming
+    property list<string> confirmTitle
+    property list<DetailLine> commands
+    property list<string> prints
+    property list<string> then
+    property alias scroll: flick.contentY
+    property real formWidth: min(page.width - 72, 980)
+    property real fieldWidth: max(min(440, formWidth - 44 - 96 - 200), 260)
+    property real noteWidth: max(formWidth - 44 - 96 - fieldWidth - 12, 80)
+    // Where the key file's chooser opens.
+    property alias keyFolder: chooser.folder
+
+    signal openRemote(int index)
+    signal removeRemote(int index)
+    signal select(int index)
+    signal another()
+    signal kind(bool tls)
+    signal keyChoice(int choice)
+    signal fieldEdited(int field, string text)
+    signal fieldPressed(int field)
+    signal chooseKey()
+    signal keyChosen(string path)
+    signal paste()
+    signal serverChoice(int index)
+    signal add()
+    signal pairAgain()
+    signal confirm()
+    signal cancel()
+
+    Flickable {
+        id: flick
+        anchors.fill: parent
+        contentHeight: content.y + content.height + 40
+
+        Column {
+            id: content
+            x: 36
+            y: 28
+            width: page.formWidth
+
+            Text { height: 30; text: "Machines"; font: Theme.sans(18, 600); color: Theme.ink }
+            Item { width: 1; height: 18 }
+            Lines { lines: page.intro; font: Theme.sans(12.5); ink: Theme.ink3 }
+            Item { width: 1; height: 14 }
+            Text { height: 20; text: "Followed"; font: Theme.sans(13, 600); color: Theme.ink3 }
+            Item { width: 1; height: 8 }
+            Rectangle {
+                width: page.formWidth
+                height: 64 * max(page.remotes.length, 1)
+                radius: 10
+                color: Theme.bg
+                border.width: 1
+                border.color: Theme.line
+                Text {
+                    visible: page.remotes.length == 0
+                    x: 18
+                    height: 64
+                    text: "None yet: add one below."
+                    font: Theme.sans(13)
+                    color: Theme.ink4
+                }
+                Repeater {
+                    model: page.remotes
+                    Item {
+                        id: row
+                        y: 64 * index
+                        width: page.formWidth
+                        height: 64
+                        Rectangle {
+                            x: 1; y: 1
+                            width: row.width - 2
+                            height: 62
+                            radius: 9
+                            color: modelData.selected ? Theme.accentBg : rowArea.containsMouse ? Theme.hover : "transparent"
+                        }
+                        MouseArea { id: rowArea; anchors.fill: parent; hoverEnabled: true; onClicked: page.select(index) }
+                        Rectangle { visible: index > 0; x: 1; width: row.width - 2; height: 1; color: Theme.line2 }
+                        Dot {
+                            cx: 22; cy: 22; r: 4.5
+                            color: modelData.health == 2 ? Theme.red : modelData.health == 0 ? Theme.green : Theme.amber
+                        }
+                        Text {
+                            x: 36; y: 10; width: 160; height: 24
+                            elide: Text.ElideRight
+                            text: modelData.name
+                            font: Theme.sans(13.5, 600)
+                            color: Theme.ink
+                        }
+                        Text {
+                            x: 210; y: 10; width: 250; height: 24
+                            elide: Text.ElideRight
+                            text: modelData.at
+                            font: Theme.mono(12)
+                            color: Theme.ink3
+                        }
+                        Text {
+                            x: 36; y: 34; width: 430; height: 20
+                            elide: Text.ElideRight
+                            text: modelData.state
+                            font: Theme.sans(12)
+                            color: Theme.ink4
+                        }
+                        Text {
+                            x: 470; y: 34; width: row.width - 640; height: 20
+                            elide: Text.ElideRight
+                            text: modelData.error
+                            font: Theme.sans(12)
+                            color: Theme.redInk
+                        }
+                        PushButton {
+                            x: row.width - 164; y: 16; width: 70; height: 30
+                            hoverable: false
+                            text: "Open"
+                            onClicked: page.openRemote(index)
+                        }
+                        PushButton {
+                            x: row.width - 86; y: 16; width: 70; height: 30
+                            hoverable: false
+                            text: "Remove"
+                            ink: Theme.redInk
+                            onClicked: page.removeRemote(index)
+                        }
+                    }
+                }
+            }
+            Item { width: 1; height: 28 }
+
+            // The form.
+            Item {
+                width: page.formWidth
+                height: 20
+                Text {
+                    height: 20
+                    text: page.editing == "" ? "Add machine" : "Machine " + page.editing
+                    font: Theme.sans(13, 600)
+                    color: Theme.ink3
+                }
+                PushButton {
+                    visible: page.editing != ""
+                    x: page.formWidth - 170; y: -6; width: 170; height: 30
+                    text: "Add another machine"
+                    onClicked: page.another()
+                }
+            }
+            Item { width: 1; height: 8 }
+            Item {
+                id: card
+                width: page.formWidth
+                height: form.height + 28
+
+                Column {
+                    id: form
+                    x: 22
+                    y: 18
+                    width: page.formWidth - 44
+
+                    Column {
+                        visible: page.editing != ""
+                        Repeater {
+                            model: page.details
+                            Item {
+                                width: form.width
+                                height: modelData.height
+                                Text { height: 20; text: modelData.label; font: Theme.sans(12.5); color: Theme.ink4 }
+                                Text {
+                                    x: 96; y: 1; height: 18
+                                    text: modelData.text
+                                    font: Theme.mono(12)
+                                    color: modelData.problem ? Theme.redInk : Theme.ink2
+                                }
+                            }
+                        }
+                        Item { width: 1; height: 12 }
+                    }
+
+                    // How the log comes.
+                    Item {
+                        width: form.width
+                        height: 66
+                        Choice {
+                            width: min((form.width - 12) / 2, 320)
+                            height: 50
+                            text: "Live over SSH"
+                            note: page.sshNote
+                            on: !page.tls
+                            onClicked: page.kind(false)
+                        }
+                        Choice {
+                            x: min((form.width - 12) / 2, 320) + 12
+                            width: min((form.width - 12) / 2, 320)
+                            height: 50
+                            text: "Forwarded over TLS"
+                            note: page.tlsNote
+                            on: page.tls
+                            can: page.receiver
+                            onClicked: page.kind(true)
+                        }
+                    }
+
+                    // Name, host, user and port.
+                    Item {
+                        width: form.width
+                        height: 42
+                        Text { height: 32; text: "Name"; font: Theme.sans(13); color: Theme.ink3 }
+                        Field {
+                            id: nameField
+                            visible: page.editing == ""
+                            x: 96
+                            width: page.fieldWidth
+                            placeholder: "made from the host"
+                            problem: page.nameProblem
+                            onEdited: page.fieldEdited(0, text)
+                            onPressed: page.fieldPressed(0)
+                        }
+                        Text {
+                            id: keptName
+                            visible: page.editing != ""
+                            x: 96
+                            height: 32
+                            text: page.editing
+                            font: Theme.mono(12.5, 600)
+                            color: Theme.ink
+                        }
+                        Text {
+                            visible: page.editing != ""
+                            x: 96 + keptName.implicitWidth + 14
+                            height: 32
+                            text: "its name stays: it ties the machine to its store and pairing"
+                            font: Theme.sans(11.5)
+                            color: Theme.ink4
+                        }
+                    }
+                    Item {
+                        width: form.width
+                        height: 42
+                        Text { height: 32; text: "Host"; font: Theme.sans(13); color: Theme.ink3 }
+                        Field {
+                            id: hostField
+                            x: 96
+                            width: page.fieldWidth
+                            placeholder: "e.g. 192.168.9.193 or box.lan"
+                            problem: page.hostProblem
+                            onEdited: page.fieldEdited(1, text)
+                            onPressed: page.fieldPressed(1)
+                        }
+                    }
+                    Item {
+                        width: form.width
+                        height: 42
+                        Text { height: 32; text: "User"; font: Theme.sans(13); color: Theme.ink3 }
+                        Field {
+                            id: userField
+                            x: 96
+                            width: page.fieldWidth
+                            placeholder: "e.g. root"
+                            problem: page.userProblem
+                            onEdited: page.fieldEdited(2, text)
+                            onPressed: page.fieldPressed(2)
+                        }
+                    }
+                    Item {
+                        width: form.width
+                        height: 42
+                        Text { height: 32; text: "Port"; font: Theme.sans(13); color: Theme.ink3 }
+                        Field {
+                            id: portField
+                            x: 96
+                            width: page.fieldWidth
+                            placeholder: "e.g. 22"
+                            problem: page.portProblem
+                            onEdited: page.fieldEdited(3, text)
+                            onPressed: page.fieldPressed(3)
+                        }
+                    }
+
+                    // The key: ssh's own, a file, or pasted.
+                    Item {
+                        width: form.width
+                        height: 42
+                        Text { height: 32; text: "Key"; font: Theme.sans(13); color: Theme.ink3 }
+                        Choice {
+                            x: 96; width: 236; height: 32
+                            text: "ssh's own keys and the agent"
+                            on: page.key == 0
+                            onClicked: page.keyChoice(0)
+                        }
+                        Choice {
+                            x: 96 + 244; width: 120; height: 32
+                            text: "A key file"
+                            on: page.key == 1
+                            onClicked: page.keyChoice(1)
+                        }
+                        Choice {
+                            x: 96 + 372; width: 128; height: 32
+                            text: "Paste a key"
+                            on: page.key == 2
+                            onClicked: page.keyChoice(2)
+                        }
+                    }
+                    Item {
+                        visible: page.key == 0
+                        width: form.width
+                        height: 18 * page.agentNote.length + 10
+                        Lines { x: 96; lines: page.agentNote }
+                    }
+                    Item {
+                        visible: page.key == 1
+                        width: form.width
+                        height: 42
+                        PushButton {
+                            x: 96; width: 96; height: 32
+                            text: "Choose…"
+                            onClicked: { page.chooseKey(); chooser.open() }
+                        }
+                        Field {
+                            id: keyField
+                            x: 96 + 104
+                            width: page.fieldWidth - 104
+                            placeholder: "no file chosen"
+                            problem: page.keyProblem
+                            onEdited: page.fieldEdited(4, text)
+                            onPressed: page.fieldPressed(4)
+                        }
+                    }
+                    Item {
+                        visible: page.key == 2
+                        width: form.width
+                        height: 7 * 16 + 16 + 12
+                        TextArea {
+                            id: pasteArea
+                            x: 96
+                            width: page.fieldWidth
+                            height: 7 * 16 + 16
+                            echoMode: TextInput.Password
+                            font: Theme.mono(11)
+                            border.width: 1
+                            border.color: focused ? Theme.accent : Theme.line3
+                            onTextEdited: page.fieldEdited(5, text)
+                        }
+                        Lines {
+                            visible: page.pasted == ""
+                            x: 96 + 10
+                            y: 8
+                            lines: page.pastePlaceholder
+                            font: Theme.sans(12.5)
+                            ink: Theme.ink5
+                            lineHeight: 16
+                        }
+                        PushButton {
+                            x: 96 + page.fieldWidth + 12; width: 80; height: 30
+                            text: "Paste"
+                            onClicked: page.paste()
+                        }
+                        Column {
+                            x: 96 + page.fieldWidth + 12
+                            y: 40
+                            Lines { lines: page.pasteProblem; ink: Theme.redInk; lineHeight: 17 }
+                            Item { width: 1; height: 4 }
+                            Lines { lines: page.pasteKept; font: Theme.sans(11.5); lineHeight: 16 }
+                        }
+                    }
+
+                    // TLS: how the machine reaches this one.
+                    Item {
+                        visible: page.tls
+                        width: form.width
+                        height: 72
+                        Text { height: 32; text: "Server"; font: Theme.sans(13); color: Theme.ink3 }
+                        Field {
+                            id: serverField
+                            x: 96
+                            width: page.fieldWidth
+                            placeholder: "this machine's address, as the machine reaches it"
+                            problem: page.serverProblem
+                            onEdited: page.fieldEdited(6, text)
+                            onPressed: page.fieldPressed(6)
+                        }
+                        Row {
+                            x: 96
+                            y: 38
+                            spacing: 8
+                            Text {
+                                height: 24
+                                text: "How the machine reaches this one. Found here:"
+                                font: Theme.sans(11.5)
+                                color: Theme.ink4
+                            }
+                            Row {
+                                y: 1
+                                spacing: 6
+                                Repeater {
+                                    model: page.reach
+                                    Rectangle {
+                                        width: reachText.implicitWidth + 18
+                                        height: 22
+                                        radius: 11
+                                        color: index == page.reachOn ? Theme.accentOver : reachArea.containsMouse ? Theme.hover : Theme.bg
+                                        border.width: 1
+                                        border.color: index == page.reachOn ? Theme.accent : Theme.line3
+                                        Text {
+                                            id: reachText
+                                            width: parent.width
+                                            height: 22
+                                            horizontalAlignment: Text.AlignHCenter
+                                            text: modelData
+                                            font: Theme.mono(11.5)
+                                            color: Theme.ink2
+                                        }
+                                        MouseArea {
+                                            id: reachArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            onClicked: page.serverChoice(index)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item { width: 1; height: 4 }
+                    Lines { lines: page.keysOnly }
+                    Item { width: 1; height: 14 }
+                    Item {
+                        width: form.width
+                        height: max(34 + 12, 8 + 18 * page.error.length + 10)
+                        MainButton {
+                            width: 150
+                            height: 34
+                            text: page.addWord
+                            onClicked: page.add()
+                        }
+                        PushButton {
+                            visible: page.editing != "" && page.tls
+                            x: 160; width: 120; height: 34
+                            text: "Pair again…"
+                            onClicked: page.pairAgain()
+                        }
+                        Lines {
+                            x: page.errorX + 16
+                            y: 8
+                            lines: page.error
+                            font: Theme.sans(12.5)
+                            ink: Theme.redInk
+                        }
+                    }
+                    Repeater {
+                        model: page.progress
+                        Text {
+                            height: 18
+                            text: modelData.text
+                            font: Theme.mono(12)
+                            color: modelData.stopped ? Theme.redInk : Theme.ink3
+                        }
+                    }
+                }
+                Rectangle {
+                    width: page.formWidth
+                    height: form.height + 28
+                    radius: 10
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Theme.line
+                }
+
+                // What the TLS set-up will do on the machine.
+                Item {
+                    visible: page.confirming
+                    x: 12
+                    y: 28
+                    width: page.formWidth - 24
+                    height: panel.height + 32
+                    Rectangle { x: 2; y: 3; width: parent.width; height: parent.height; radius: 10; color: Theme.fill }
+                    Rectangle {
+                        width: parent.width
+                        height: parent.height
+                        radius: 10
+                        color: Theme.bg
+                        border.width: 1
+                        border.color: Theme.ink
+                    }
+                    Column {
+                        id: panel
+                        x: 20
+                        y: 16
+                        Lines { lines: page.confirmTitle; font: Theme.sans(13.5, 600); ink: Theme.ink; lineHeight: 22 }
+                        Item { width: 1; height: 8 }
+                        Repeater {
+                            model: page.commands
+                            Item {
+                                width: 1
+                                height: modelData.height
+                                Text { height: 18; text: modelData.text; font: Theme.mono(11.5); color: Theme.ink2 }
+                            }
+                        }
+                        Item { width: 1; height: 6 }
+                        Lines { lines: page.prints; font: Theme.mono(11); ink: Theme.ink4 }
+                        Item { width: 1; height: 10 }
+                        Lines { lines: page.then; ink: Theme.ink3 }
+                        Item { width: 1; height: 10 }
+                        Row {
+                            spacing: 10
+                            MainButton { width: 190; height: 32; text: "Apply on the machine"; onClicked: page.confirm() }
+                            PushButton { width: 90; height: 32; px: 13; hoverable: false; text: "Cancel"; onClicked: page.cancel() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    FileDialog {
+        id: chooser
+        anchors.centerIn: parent
+        title: "Choose the machine's private key"
+        showHidden: true
+        onAccepted: page.keyChosen(path)
+    }
+}

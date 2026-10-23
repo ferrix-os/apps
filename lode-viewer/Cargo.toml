@@ -32,9 +32,13 @@ compositor-text = { path = "../../system/linux/compositor/text" }
 # The Wayland client: the window, the keyboard, the pointer, the buffers,
 # and the timer Live follows the store on.
 compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
-# The session bus, for the desktop's file dialog (the XDG Desktop Portal's
-# FileChooser) when a key file is chosen.
-compositor-dbus = { path = "../../system/linux/compositor/dbus" }
+# tole, Ferrix's UI framework: the window's tree, from the markup under
+# `ui/`, drawn on the CPU with the desktop's own text.
+tole = { path = "../../system/linux/tole/tole", features = ["wayland"] }
+
+[build-dependencies]
+# The markup, compiled into Rust when the viewer is built.
+tole-compiler = { path = "../../system/linux/tole/tole-compiler" }
 
 # As the compositor's: overflow checks on everywhere.
 [profile.dev]

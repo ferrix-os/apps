@@ -1,839 +1,414 @@
-//! One frame: the header, the sidebar and the page, drawn whole from the
-//! [`App`], back to front, after the design (`Lode App.dc.html`): its
-//! sizes, its palette ([`crate::theme`]) and its two faces.
+//! The window's tree, in tole (Ferrix's `docs/UI-FRAMEWORK.md`): the
+//! markup under `ui/` is the header, the sidebar, the menus and the
+//! pages; this module hands it what the [`App`] holds, after every change,
+//! and turns what was pressed back into [`Action`]s. The charts are the
+//! Rust painters of [`paint`]; the table's lines are a model over the log
+//! ([`rows::LinesModel`]), made only for the rows in view.
 
-mod logs;
-mod machines;
-mod overview;
+mod machines_show;
+pub mod paint;
+pub mod rows;
+mod show;
 
-use crate::app::{Action, App, Origin, Page, ZOOMS, clock, clock_hm};
-use crate::data::{Kind, level_name};
-use crate::draw::{Canvas, Rect, mono, sans};
-use crate::lines::group;
-use crate::stats::Lane;
-use crate::theme::{self, Color, Mode, Theme};
+use std::path::Path;
+use std::rc::Rc;
+
+use tole::{Element as _, Ui};
+
+use crate::app::{Action, App};
+pub use paint::Shared;
+
+tole::include_ui!();
 
 /// The header's height.
 pub const HEADER: f32 = 38.0;
 /// The sidebar's width.
 pub const SIDEBAR: f32 = 220.0;
-/// The page's margin left and right.
-pub const MARGIN: f32 = 36.0;
-/// The record pane's width.
-pub const DETAIL: f32 = 392.0;
-/// The track card's height.
-pub const TRACK: f32 = 148.0;
 /// A retention class's budget when nothing says otherwise: lode's
 /// `system` class, 1 GiB (`docs/LOGGING.md` §8.5).
 pub const BUDGET: u64 = 1 << 30;
 
-/// The canvas the viewer draws on.
-pub type Frame<'a, 'p> = Canvas<'a, 'p, Action>;
-
-/// Draw `app` whole.
-pub fn paint(app: &App, c: &mut Frame<'_, '_>) {
-    let t = Theme::of(app.mode);
-    let (width, height) = c.size();
-    c.clear(t.bg);
-    let page = Rect::new(SIDEBAR, HEADER, width - SIDEBAR, height - HEADER);
-    match app.page {
-        Page::Overview => overview::paint(app, c, &t, page),
-        Page::Logs => logs::paint(app, c, &t, page),
-        Page::Machines => machines::paint(app, c, &t, page),
-    }
-    sidebar(app, c, &t, Rect::new(0.0, HEADER, SIDEBAR, height - HEADER));
-    header(app, c, &t, width);
-    if app.boot_menu {
-        boot_menu(app, c, &t);
-    }
-    if app.machine_menu {
-        machine_menu(app, c, &t);
-    }
-    if let Some(toast) = &app.toast {
-        let w = c.width(sans(12.5, 500), toast) + 28.0;
-        let place = Rect::new((width - w) / 2.0, height - 46.0, w, 30.0);
-        c.fill(place, 15.0, t.ink);
-        c.text_center(sans(12.5, 500), toast, place, t.inv);
-    }
-    if c.text.faces() == 0 {
-        // No font: say so in shapes, the one way left.
-        c.fill(Rect::new(0.0, 0.0, width, 4.0), 0.0, theme::RED);
-    }
-}
-
-/// The bar across the top: the name, where the records are from, and the
-/// palette's switch.
-fn header(app: &App, c: &mut Frame<'_, '_>, t: &Theme, width: f32) {
-    let bar = Rect::new(0.0, 0.0, width, HEADER);
-    c.fill(bar, 0.0, t.bg3);
-    // The header moves the window where the compositor draws no title bar
-    // (GNOME's mutter); everything on it is pressed before it.
-    c.hit(bar, Action::WindowMove);
-    c.fill(Rect::new(0.0, HEADER - 1.0, width, 1.0), 0.0, t.line);
-    let logo = Rect::new(14.0, 11.0, 16.0, 16.0);
-    c.fill(logo, 4.0, t.ink);
-    c.text_center(mono(10.0, 600), "L", logo, t.inv);
-    let mut x = 40.0;
-    x += c.text(sans(13.0, 600), "lode", (x, 0.0, HEADER), t.ink, None) + 10.0;
-    let host = app
-        .boot()
-        .map_or_else(String::new, |boot| boot.host.clone());
-    let offset = app.log.offset_of(app.boot);
-    let place = format!(
-        "{} · {} · boot {}",
-        if host.is_empty() { "ferrix" } else { &host },
-        app.origin_name,
-        offset
-    );
-    let _ = c.text(
-        sans(13.0, 400),
-        &place,
-        (x, 0.0, HEADER),
-        t.ink4,
-        Some(width - x - 330.0),
-    );
-    // Light | Dark.
-    window_buttons(c, t, width);
-    let group = Rect::new(width - 132.0 - 108.0, 8.0, 120.0, 22.0);
-    c.boxed(group, 6.0, t.bg3, t.line3);
-    for (index, (label, mode)) in [("Light", Mode::Light), ("Dark", Mode::Dark)]
-        .into_iter()
-        .enumerate()
-    {
-        let half = Rect::new(group.x + 60.0 * index as f32, group.y, 60.0, group.h);
-        let on = app.mode == mode;
-        if on {
-            c.fill(half.inset(1.0), 5.0, t.ink);
-        }
-        let ink = if on { t.inv } else { t.ink2 };
-        // The sun and the moon are drawn: the design's glyphs are not in
-        // Plex.
-        let mark_x = half.x + 12.0;
-        if mode == Mode::Light {
-            c.dot(mark_x, half.y + 11.0, 3.0, ink);
-        } else {
-            c.dot(mark_x, half.y + 11.0, 3.5, ink);
-            c.dot(
-                mark_x + 1.6,
-                half.y + 9.8,
-                3.0,
-                if on { t.ink } else { t.bg3 },
-            );
-        }
-        let _ = c.text(
-            sans(12.0, 400),
-            label,
-            (half.x + 19.0, half.y, half.h),
-            ink,
-            None,
-        );
-        c.hit(half, Action::Theme(mode));
-    }
-}
-
-/// Minimize, maximize and close, as GNOME's own windows draw them.
-fn window_buttons(c: &mut Frame<'_, '_>, t: &Theme, width: f32) {
-    let ink = t.ink3;
-    for (n, action) in [
-        Action::WindowMinimize,
-        Action::WindowMaximize,
-        Action::WindowClose,
+/// The fonts the viewer draws with: the design's own IBM Plex, from the
+/// directory the package installs them in or, on a development host,
+/// beside the sources, then the system's.
+#[must_use]
+pub fn fonts() -> tole::Fonts {
+    let mut fonts = tole::Fonts::system();
+    // Installed on a Linux desktop beside the program: `<prefix>/bin`
+    // and `<prefix>/share/lode-viewer/fonts`.
+    let beside = std::env::current_exe().ok().and_then(|exe| {
+        let prefix = exe.parent()?.parent()?.to_path_buf();
+        Some(
+            prefix
+                .join("share/lode-viewer/fonts")
+                .to_string_lossy()
+                .into_owned(),
+        )
+    });
+    for dir in [
+        std::env::var("LODE_VIEWER_FONTS").ok(),
+        Some("/usr/share/fonts/ibm-plex".to_owned()),
+        beside,
+        Some(concat!(env!("CARGO_MANIFEST_DIR"), "/share/fonts").to_owned()),
     ]
     .into_iter()
-    .enumerate()
+    .flatten()
     {
-        let place = Rect::new(width - 104.0 + 34.0 * n as f32, 6.0, 32.0, 26.0);
-        let (cx, cy) = (place.x + 16.0, place.y + 13.0);
-        match action {
-            Action::WindowMinimize => c.fill(Rect::new(cx - 5.0, cy + 3.0, 10.0, 1.5), 0.0, ink),
-            Action::WindowMaximize => {
-                c.outline(Rect::new(cx - 5.0, cy - 5.0, 10.0, 10.0), 1.0, 1.3, ink)
-            }
-            _ => {
-                c.polyline(&[(cx - 5.0, cy - 5.0), (cx + 5.0, cy + 5.0)], 1.4, ink, 0.0);
-                c.polyline(&[(cx + 5.0, cy - 5.0), (cx - 5.0, cy + 5.0)], 1.4, ink, 0.0);
-            }
+        let path = Path::new(&dir);
+        if path.is_dir()
+            && !fonts
+                .faces()
+                .iter()
+                .any(|face| face.families.iter().any(|name| name == "IBM Plex Sans"))
+        {
+            let _ = fonts.add_dir(path);
         }
-        c.hit(place, action);
     }
+    fonts
 }
 
-/// The sidebar: the pages, the saved queries and lode's state.
-fn sidebar(app: &App, c: &mut Frame<'_, '_>, t: &Theme, bar: Rect) {
-    c.fill(bar, 0.0, t.bg2);
-    c.fill(Rect::new(bar.right() - 1.0, bar.y, 1.0, bar.h), 0.0, t.line);
-    let mut y = bar.y + 22.0;
-    let crashes = app.crashes();
-    let pages: [(&str, Action, bool, usize); 4] = [
-        (
-            "Overview",
-            Action::Page(Page::Overview),
-            app.page == Page::Overview,
-            0,
-        ),
-        ("Logs", Action::Page(Page::Logs), app.page == Page::Logs, 0),
-        ("Crashes", Action::Crashes, false, crashes),
-        (
-            "Machines",
-            Action::Page(Page::Machines),
-            app.page == Page::Machines,
-            0,
-        ),
-    ];
-    for (label, action, on, badge) in pages {
-        let place = Rect::new(14.0, y, SIDEBAR - 28.0, 36.0);
-        if on {
-            c.fill(place, 7.0, t.ink);
-        }
-        let _ = c.text(
-            sans(13.5, if on { 500 } else { 400 }),
-            label,
-            (place.x + 12.0, place.y, place.h),
-            if on { t.inv } else { t.ink2 },
-            None,
-        );
-        if badge > 0 {
-            let text = badge.to_string();
-            let w = c.width(mono(11.0, 600), &text).max(8.0) + 10.0;
-            let pill = Rect::new(place.right() - 12.0 - w, place.y + 9.0, w, 18.0);
-            c.fill(pill, 9.0, theme::RED);
-            c.text_center(mono(11.0, 600), &text, pill, theme::WHITE);
-        }
-        c.hit(place, action);
-        y += 40.0;
-    }
-    y += 16.0;
-    let _ = c.text(
-        sans(11.0, 600),
-        "SAVED QUERIES",
-        (26.0, y, 20.0),
-        t.ink5,
-        None,
-    );
-    y += 28.0;
-    for (index, saved) in app.saved.iter().enumerate() {
-        let place = Rect::new(14.0, y, SIDEBAR - 28.0, 30.0);
-        if app.saved_in_use == Some(index) {
-            c.fill(place, 6.0, t.hover);
-        }
-        let _ = c.text(
-            mono(12.5, 400),
-            &format!("@{}", saved.name),
-            (place.x + 12.0, place.y, place.h),
-            t.ink2,
-            Some(place.w - 24.0),
-        );
-        c.hit(place, Action::Saved(index));
-        y += 32.0;
-    }
-    let new = Rect::new(14.0, y, SIDEBAR - 28.0, 30.0);
-    let _ = c.text(
-        mono(12.5, 400),
-        "+ new",
-        (new.x + 12.0, new.y, new.h),
-        t.blue,
-        None,
-    );
-    c.hit(new, Action::NewSaved);
-    // lode's state at the foot.
-    let foot = bar.bottom() - 92.0;
-    let mut notice_y = foot - 8.0;
-    for notice in app.notices.iter().rev().take(3) {
-        notice_y -= 34.0;
-        let _ = c.text(
-            sans(11.0, 400),
-            notice,
-            (26.0, notice_y, 16.0),
-            t.red_ink,
-            Some(SIDEBAR - 40.0),
-        );
-    }
-    c.fill(Rect::new(14.0, foot, SIDEBAR - 28.0, 1.0), 0.0, t.line);
-    let (running, line, tier) = match &app.origin {
-        Origin::Store(_) if !app.machines.is_empty() => {
-            let mib = app.status.used as f32 / 1_048_576.0;
-            (
-                app.live,
-                format!("{} machines · {mib:.0} MiB here", app.machines.len()),
-                if app.live {
-                    "received · following".to_owned()
-                } else {
-                    "received · Live is off".to_owned()
-                },
-            )
-        }
-        Origin::Store(_) => {
-            let mib = app.status.used as f32 / 1_048_576.0;
-            let state = if app.status.running {
-                "lode running"
+/// `text` broken at spaces into lines no wider than `max` by `width`; a
+/// word wider than `max` alone is broken where it must be. Explicit line
+/// breaks stay.
+pub fn wrap_with(text: &str, max: f32, mut width: impl FnMut(&str) -> f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        for word in paragraph.split(' ').filter(|word| !word.is_empty()) {
+            let tried = if line.is_empty() {
+                word.to_owned()
             } else {
-                "lode not running"
+                format!("{line} {word}")
             };
-            (
-                app.status.running,
-                format!("{state} · {mib:.0} MiB used"),
-                format!("{} tier · {} budget", app.status.tier, bytes(BUDGET)),
-            )
-        }
-        Origin::File(path) => {
-            let size = std::fs::metadata(path).map_or(0, |meta| meta.len());
-            (
-                false,
-                format!("file · {} records", group(app.log.entries.len() as u64)),
-                format!("{} · not live", bytes(size)),
-            )
-        }
-    };
-    c.dot(
-        30.0,
-        foot + 26.0,
-        4.0,
-        if running { theme::GREEN } else { theme::IDLE },
-    );
-    let _ = c.text(
-        sans(12.0, 400),
-        &line,
-        (40.0, foot + 16.0, 20.0),
-        t.ink3,
-        Some(SIDEBAR - 54.0),
-    );
-    let meter = Rect::new(26.0, foot + 44.0, SIDEBAR - 52.0, 4.0);
-    c.fill(meter, 2.0, t.line);
-    let used = match &app.origin {
-        Origin::Store(_) => (app.status.used as f32 / BUDGET as f32).clamp(0.0, 1.0),
-        Origin::File(_) => 0.0,
-    };
-    c.fill(
-        Rect::new(meter.x, meter.y, (meter.w * used).max(4.0), 4.0),
-        2.0,
-        t.ink3,
-    );
-    let _ = c.text(
-        sans(12.0, 400),
-        &tier,
-        (26.0, foot + 56.0, 20.0),
-        t.ink4,
-        None,
-    );
-}
-
-/// A size, in the unit that reads best.
-#[must_use]
-pub fn bytes(size: u64) -> String {
-    if size >= 1 << 30 {
-        format!("{:.0} GiB", size as f64 / f64::from(1_u32 << 30))
-    } else if size >= 1 << 20 {
-        format!("{:.1} MiB", size as f64 / f64::from(1_u32 << 20))
-    } else {
-        format!("{} KiB", size / 1024)
-    }
-}
-
-/// The page's heading: its name, the boot picker and, at the right, the
-/// Live state. Answers where the right-hand side begins.
-pub(super) fn page_heading(
-    app: &App,
-    c: &mut Frame<'_, '_>,
-    t: &Theme,
-    area: Rect,
-    title: &str,
-) -> f32 {
-    let y = area.y;
-    let mut x = area.x + c.text(sans(18.0, 600), title, (area.x, y, 30.0), t.ink, None) + 16.0;
-    // The machine, when the viewer holds several (lode-receive's stores).
-    if !app.machines.is_empty() {
-        let name = app.origin_name.as_str();
-        let w = c.width(sans(13.0, 500), name) + 40.0;
-        let picker = Rect::new(x, y + 1.0, w, 28.0);
-        c.boxed(picker, 6.0, t.bg, t.line3);
-        c.dot(picker.x + 12.0, picker.y + 14.0, 3.5, theme::GREEN);
-        let _ = c.text(
-            sans(13.0, 500),
-            name,
-            (picker.x + 20.0, picker.y, picker.h),
-            t.ink,
-            None,
-        );
-        let cx = picker.right() - 12.0;
-        c.polygon(
-            &[(cx - 4.0, y + 13.0), (cx + 4.0, y + 13.0), (cx, y + 18.0)],
-            t.ink,
-        );
-        c.hit(picker, Action::MachineMenu);
-        x = picker.right() + 8.0;
-    }
-    let (from, to) = app
-        .boot()
-        .map_or((0, 0), |boot| (boot.first_us, boot.last_us));
-    let offset = app.offset_of_boot_label();
-    let end = if app.boot + 1 == app.log.boots.len() && app.live {
-        "now".to_owned()
-    } else {
-        clock(to, app.zone())
-    };
-    let label = format!("Boot {offset}");
-    let rest = format!(" · {} → {end}", clock(from, app.zone()));
-    let w = c.width(sans(13.0, 400), &label) + c.width(sans(13.0, 400), &rest) + 36.0;
-    let picker = Rect::new(x, y + 1.0, w, 28.0);
-    c.boxed(picker, 6.0, t.bg, t.line3);
-    let lx = picker.x
-        + 10.0
-        + c.text(
-            sans(13.0, 400),
-            &label,
-            (picker.x + 10.0, picker.y, picker.h),
-            t.ink,
-            None,
-        );
-    let _ = c.text(
-        sans(13.0, 400),
-        &rest,
-        (lx, picker.y, picker.h),
-        t.ink4,
-        None,
-    );
-    let cx = picker.right() - 14.0;
-    c.polygon(
-        &[(cx - 4.0, y + 13.0), (cx + 4.0, y + 13.0), (cx, y + 18.0)],
-        t.ink,
-    );
-    c.hit(picker, Action::BootMenu);
-    // Live, or why not.
-    let (dot, word, ink) = match (&app.origin, app.live) {
-        (Origin::Store(_), true) => (theme::GREEN, "Live", theme::GREEN),
-        (Origin::Store(_), false) => (theme::IDLE, "Paused", t.ink4),
-        (Origin::File(_), _) => (theme::IDLE, "From a file", t.ink4),
-    };
-    let w = c.width(sans(13.0, 500), word);
-    let right = area.right();
-    let _ = c.text(sans(13.0, 500), word, (right - w, y, 30.0), ink, None);
-    c.dot(right - w - 10.0, y + 15.0, 4.0, dot);
-    right - w - 24.0
-}
-
-/// The boots, to pick one.
-fn boot_menu(app: &App, c: &mut Frame<'_, '_>, t: &Theme) {
-    let x = SIDEBAR + MARGIN + if app.machines.is_empty() { 80.0 } else { 220.0 };
-    let y = HEADER + 28.0 + 34.0;
-    let count = app.log.boots.len();
-    let place = Rect::new(x, y, 420.0, 12.0 + 32.0 * count.min(12) as f32);
-    c.fill(
-        Rect::new(place.x + 2.0, place.y + 3.0, place.w, place.h),
-        8.0,
-        t.fill,
-    );
-    c.boxed(place, 8.0, t.bg, t.line3);
-    for (row, (index, boot)) in app.log.boots.iter().enumerate().rev().take(12).enumerate() {
-        let line = Rect::new(
-            place.x + 6.0,
-            place.y + 6.0 + 32.0 * row as f32,
-            place.w - 12.0,
-            32.0,
-        );
-        if index == app.boot {
-            c.fill(line, 5.0, t.hover);
-        }
-        let zone = app.zone();
-        let _ = c.text(
-            sans(13.0, 500),
-            &format!("Boot {}", app.log.offset_of(index)),
-            (line.x + 10.0, line.y, line.h),
-            t.ink,
-            None,
-        );
-        let _ = c.text(
-            mono(12.0, 400),
-            &format!(
-                "{} → {} · {} records · {}",
-                clock(boot.first_us, zone),
-                clock(boot.last_us, zone),
-                group(boot.range.len() as u64),
-                &boot.hex()[..8]
-            ),
-            (line.x + 76.0, line.y, line.h),
-            t.ink4,
-            Some(line.w - 86.0),
-        );
-        c.hit(line, Action::Boot(index));
-    }
-}
-
-/// The machines, to pick one.
-fn machine_menu(app: &App, c: &mut Frame<'_, '_>, t: &Theme) {
-    let x = SIDEBAR + MARGIN + 80.0;
-    let y = HEADER + 28.0 + 34.0;
-    let count = app.machines.len().min(12);
-    let place = Rect::new(x, y, 380.0, 12.0 + 32.0 * (count + 1) as f32);
-    c.fill(
-        Rect::new(place.x + 2.0, place.y + 3.0, place.w, place.h),
-        8.0,
-        t.fill,
-    );
-    c.boxed(place, 8.0, t.bg, t.line3);
-    for (row, machine) in app.machines.iter().take(12).enumerate() {
-        let line = Rect::new(
-            place.x + 6.0,
-            place.y + 6.0 + 32.0 * row as f32,
-            place.w - 12.0,
-            32.0,
-        );
-        if row == app.machine {
-            c.fill(line, 5.0, t.hover);
-        }
-        let _ = c.text(
-            sans(13.0, 500),
-            &machine.name,
-            (line.x + 10.0, line.y, line.h),
-            t.ink,
-            Some(150.0),
-        );
-        let _ = c.text(
-            mono(12.0, 400),
-            &machine.note,
-            (line.x + 170.0, line.y, line.h),
-            t.ink4,
-            Some(line.w - 180.0),
-        );
-        c.hit(line, Action::Machine(row));
-    }
-    let add = Rect::new(
-        place.x + 6.0,
-        place.y + 6.0 + 32.0 * count as f32,
-        place.w - 12.0,
-        32.0,
-    );
-    let _ = c.text(
-        sans(13.0, 500),
-        "Add machine…",
-        (add.x + 10.0, add.y, add.h),
-        t.blue,
-        None,
-    );
-    c.hit(add, Action::FormFocus(crate::app::FormField::Name));
-}
-
-/// A button with an edge.
-pub(super) fn button(c: &mut Frame<'_, '_>, t: &Theme, place: Rect, label: &str, action: Action) {
-    c.boxed(place, 5.0, t.bg, t.line3);
-    c.text_center(mono(12.0, 400), label, place, t.ink2);
-    c.hit(place, action);
-}
-
-/// The time track: the controls, the swim lanes, the window's brush and
-/// the cursor.
-pub(super) fn track(app: &App, c: &mut Frame<'_, '_>, t: &Theme, card: Rect) {
-    c.boxed(card, 12.0, t.bg2, t.line);
-    let row_y = card.y + 14.0;
-    let mut x = card.x + 18.0;
-    // The step buttons: to the problem before, back, forward, to the next.
-    let prev = Rect::new(x, row_y, 40.0, 24.0);
-    c.boxed(prev, 5.0, t.bg, t.line3);
-    skip_mark(c, prev.x + 9.0, prev.y + 12.0, false, t.ink2);
-    c.dot(prev.x + 28.0, prev.y + 12.0, 3.5, theme::RED);
-    c.hit(prev, Action::PrevProblem);
-    x += 46.0;
-    button(
-        c,
-        t,
-        Rect::new(x, row_y, 46.0, 24.0),
-        "−10s",
-        Action::Step(-10),
-    );
-    x += 52.0;
-    button(
-        c,
-        t,
-        Rect::new(x, row_y, 46.0, 24.0),
-        "+10s",
-        Action::Step(10),
-    );
-    x += 52.0;
-    let next = Rect::new(x, row_y, 40.0, 24.0);
-    c.boxed(next, 5.0, t.bg, t.line3);
-    c.dot(next.x + 12.0, next.y + 12.0, 3.5, theme::RED);
-    skip_mark(c, next.x + 22.0, next.y + 12.0, true, t.ink2);
-    c.hit(next, Action::NextProblem);
-    x += 52.0;
-    let (from, to) = app.window();
-    let zone = app.zone();
-    let label = if app.live && app.whole_boot() {
-        format!("live · {}", clock(to, zone))
-    } else {
-        format!(
-            "{} → {} · {} s",
-            clock(from, zone),
-            clock(to, zone),
-            (to - from).div_ceil(1_000_000)
-        )
-    };
-    let _ = c.text(mono(12.0, 400), &label, (x, row_y, 24.0), t.ink, None);
-    // Live, then the zooms, from the right.
-    let live = Rect::new(card.right() - 18.0 - 52.0, row_y, 52.0, 24.0);
-    c.fill(live, 5.0, if app.live { theme::GREEN } else { theme::IDLE });
-    c.dot(live.x + 12.0, live.y + 12.0, 3.5, t.bg);
-    let _ = c.text(
-        sans(12.0, 400),
-        "Live",
-        (live.x + 20.0, live.y, live.h),
-        theme::WHITE,
-        None,
-    );
-    c.hit(live, Action::Live);
-    let zooms = Rect::new(live.x - 8.0 - 156.0, row_y, 156.0, 24.0);
-    c.boxed(zooms, 5.0, t.bg, t.line3);
-    let mut zx = zooms.x + 1.0;
-    for (label, seconds) in ZOOMS {
-        let w = if seconds == 0 { 45.0 } else { 36.0 };
-        let cell = Rect::new(zx, zooms.y + 1.0, w, 22.0);
-        let on = if seconds == 0 {
-            app.whole_boot()
-        } else {
-            app.span == seconds * 1_000_000 && !app.whole_boot()
-        };
-        if on {
-            c.fill(cell, 3.0, t.ink);
-        }
-        c.text_center(
-            mono(12.0, 400),
-            label,
-            cell,
-            if on { t.inv } else { t.ink2 },
-        );
-        c.hit(cell, Action::Zoom(seconds));
-        zx += w;
-    }
-    // The lanes.
-    let lanes_top = card.y + 50.0;
-    let left = card.x + 98.0;
-    let right = card.right() - 18.0;
-    let width = right - left;
-    let (start, span) = app.extent();
-    let entries = app.log.of_boot(app.boot);
-    let columns = (width / 3.0).max(1.0) as usize;
-    let lanes = crate::stats::lanes(entries, &app.log.sources, start, span, columns);
-    let lane_h = 17.0;
-    let lane_rows = lanes.len().min(5);
-    for (row, lane) in lanes.iter().take(lane_rows).enumerate() {
-        let y = lanes_top + lane_h * row as f32;
-        let _ = c.text(
-            mono(11.0, 400),
-            &lane.name,
-            (card.x + 18.0, y, 12.0),
-            t.ink3,
-            Some(76.0),
-        );
-        draw_lane(c, t, lane, Rect::new(left, y + 1.0, width, 10.0));
-    }
-    let axis_y = lanes_top + lane_h * lane_rows as f32 + 2.0;
-    for step in 0..5 {
-        let fraction = step as f32 / 4.0;
-        let at = start + (f64::from(fraction) * span as f64) as u64;
-        let text = if step == 4 && app.live {
-            "now".to_owned()
-        } else if span < 600_000_000 {
-            clock(at, zone)
-        } else {
-            clock_hm(at, zone)
-        };
-        let ink = if step == 4 && app.live {
-            theme::GREEN
-        } else {
-            t.ink5
-        };
-        let w = c.width(mono(10.5, 400), &text);
-        let tx = (left + width * fraction - if step == 4 { w } else { 0.0 }).max(left);
-        let _ = c.text(mono(10.5, 400), &text, (tx, axis_y, 14.0), ink, None);
-    }
-    // The brush over the window, and the cursor.
-    let fraction =
-        |at: u64| ((at.saturating_sub(start)) as f64 / span as f64).clamp(0.0, 1.0) as f32;
-    let (bl, br) = (left + width * fraction(from), left + width * fraction(to));
-    let brush = Rect::new(
-        bl,
-        lanes_top - 3.0,
-        (br - bl).max(4.0),
-        lane_h * lane_rows as f32 + 4.0,
-    );
-    if !app.whole_boot() {
-        c.fill(brush, 4.0, t.blue_bg);
-        c.outline(brush, 4.0, 1.5, t.blue);
-        for edge in [brush.x, brush.right()] {
-            let handle = Rect::new(edge - 4.0, brush.y + brush.h / 2.0 - 8.0, 8.0, 16.0);
-            c.fill(handle, 3.0, t.blue);
-        }
-    }
-    let cx = left + width * fraction(app.cursor.clamp(from, to));
-    let cursor_x = if app.whole_boot() { right } else { cx };
-    c.fill(
-        Rect::new(
-            cursor_x - 1.0,
-            lanes_top - 7.0,
-            2.0,
-            lane_h * lane_rows as f32 + 12.0,
-        ),
-        0.0,
-        t.ink,
-    );
-    c.polygon(
-        &[
-            (cursor_x - 5.0, lanes_top - 10.0),
-            (cursor_x + 5.0, lanes_top - 10.0),
-            (cursor_x, lanes_top - 4.0),
-        ],
-        t.ink,
-    );
-    c.hit(
-        Rect::new(
-            left,
-            lanes_top - 8.0,
-            width,
-            lane_h * lane_rows as f32 + 10.0,
-        ),
-        Action::Track(left, width),
-    );
-}
-
-/// A skip mark: a bar and a triangle, pointing right when `forward`.
-fn skip_mark(c: &mut Frame<'_, '_>, x: f32, y: f32, forward: bool, ink: Color) {
-    if forward {
-        c.polygon(&[(x, y - 4.0), (x + 6.0, y), (x, y + 4.0)], ink);
-        c.fill(Rect::new(x + 6.0, y - 4.0, 1.5, 8.0), 0.0, ink);
-    } else {
-        c.fill(Rect::new(x, y - 4.0, 1.5, 8.0), 0.0, ink);
-        c.polygon(&[(x + 7.5, y - 4.0), (x + 1.5, y), (x + 7.5, y + 4.0)], ink);
-    }
-}
-
-/// One swim lane: where its source was busy, held, warned and failed.
-fn draw_lane(c: &mut Frame<'_, '_>, t: &Theme, lane: &Lane, place: Rect) {
-    let columns = lane.columns.len().max(1);
-    let step = place.w / columns as f32;
-    let busy: usize = lane.columns.iter().copied().max().unwrap_or(0);
-    // Where the source was heard at all: a thin line, its quiet gaps of a
-    // few columns bridged; where it was busy, a thicker bar over it.
-    for (dense, bridge, top, height) in [(false, 6, 4.0, 2.0), (true, 2, 2.0, 6.0)] {
-        let heard = |count: usize| {
-            if dense {
-                count > 0 && count * 4 > busy
-            } else {
-                count > 0
-            }
-        };
-        let at = |column: usize| lane.columns.get(column).copied().unwrap_or(0);
-        let mut column = 0;
-        while column < columns {
-            if !heard(at(column)) {
-                column += 1;
+            if width(&tried) <= max {
+                line = tried;
                 continue;
             }
-            let mut end = column + 1;
-            let mut quiet = 0;
-            while end < columns && quiet <= bridge {
-                if heard(at(end)) {
-                    quiet = 0;
-                } else {
-                    quiet += 1;
-                }
-                end += 1;
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
             }
-            let last = end - quiet;
-            let x = place.x + step * column as f32;
-            let w = (step * (last - column) as f32).max(step);
-            c.fill(Rect::new(x, place.y + top, w, height), 1.0, t.line3);
-            column = end;
+            // A word too wide alone is broken by characters.
+            for c in word.chars() {
+                line.push(c);
+                if width(&line) > max && line.chars().count() > 1 {
+                    let last = line.pop().unwrap_or(c);
+                    lines.push(std::mem::take(&mut line));
+                    line.push(last);
+                }
+            }
         }
+        lines.push(line);
     }
-    for &(since, until) in &lane.held {
-        let x = place.x + place.w * since;
-        let w = (place.w * (until - since)).max(4.0);
-        let span = Rect::new(x, place.y + 1.0, w, 8.0);
-        c.hatch(span, theme::AMBER, t.bg);
-        c.outline(span, 0.0, 1.0, theme::AMBER_EDGE);
-    }
-    let mut last = f32::MIN;
-    for &at in &lane.warnings {
-        let x = place.x + place.w * at;
-        if x - last >= 6.0 {
-            c.dot(x, place.y + 5.0, 3.5, theme::AMBER);
-            last = x;
-        }
-    }
-    let mut last = f32::MIN;
-    for &at in &lane.errors {
-        let x = place.x + place.w * at;
-        if x - last >= 7.0 {
-            c.dot(x, place.y + 5.0, 4.5, theme::RED);
-            last = x;
-        }
+    lines
+}
+
+/// The tree and what the program keeps of it.
+pub struct View {
+    /// The tree.
+    pub ui: Ui,
+    /// The window around the pages.
+    pub shell: Shell,
+    /// The Overview.
+    pub overview: OverviewPage,
+    /// Logs.
+    pub logs: LogsPage,
+    /// Machines.
+    pub machines: MachinesPage,
+    /// The table's lines.
+    pub lines: Rc<rows::LinesModel>,
+    /// The state it shows.
+    pub app: Shared,
+    /// What [`View::show`] last set, so a frame is only made again for
+    /// what changed.
+    shown: show::Shown,
+    /// The form's field last given the keys.
+    shown_focus: Option<crate::app::FormField>,
+}
+
+impl std::fmt::Debug for View {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("View").finish_non_exhaustive()
     }
 }
 
-/// A level's badge: a letter in a small square, filled for errors and
-/// warnings, outlined for the rest.
-pub(super) fn badge(c: &mut Frame<'_, '_>, t: &Theme, x: f32, y: f32, level: u8, kind: Kind) {
-    let place = Rect::new(x, y, 16.0, 16.0);
-    let letter = match (kind, level) {
-        (Kind::Crash, _) => "C",
-        (_, 0..=3) => "E",
-        (_, 4) => "W",
-        (_, 5) => "N",
-        (_, 6) => "I",
-        (_, 7) => "D",
-        _ => "?",
+impl View {
+    /// The tree for `app`, drawn with `fonts`; `None` when the markup's
+    /// items could not be made, a fault of this program.
+    #[must_use]
+    pub fn new(app: Shared, fonts: tole::Fonts) -> Option<Self> {
+        let mut ui = Ui::new(fonts);
+        let shell = Shell::new(&mut ui, None)?;
+        let content = shell.content();
+        let overview = OverviewPage::new(&mut ui, Some(content))?;
+        let logs = LogsPage::new(&mut ui, Some(content))?;
+        let machines = MachinesPage::new(&mut ui, Some(content))?;
+        for page in [overview.common(), logs.common(), machines.common()] {
+            let parent = shell.content();
+            page.width.bind(&mut ui, move |ui| {
+                ui.common(parent).map_or(0.0, |c| ui.get(c.width))
+            });
+            page.height.bind(&mut ui, move |ui| {
+                ui.common(parent).map_or(0.0, |c| ui.get(c.height))
+            });
+        }
+        let lines = Rc::new(rows::LinesModel::new(Rc::clone(&app)));
+        logs.lines
+            .set(&mut ui, tole::ModelRc::from_rc(Rc::clone(&lines) as _));
+        overview.lanes.set(&mut ui, paint::lanes(&app));
+        logs.lanes.set(&mut ui, paint::lanes(&app));
+        overview.sparks.set(&mut ui, paint::sparks(&app));
+        overview.activity.set(&mut ui, paint::activity(&app));
+        overview.rate.set(&mut ui, paint::rate(&app));
+        logs.minimap.set(&mut ui, paint::minimap(&app));
+        let mut view = View {
+            ui,
+            shell,
+            overview,
+            logs,
+            machines,
+            lines,
+            app,
+            shown: show::Shown::default(),
+            shown_focus: None,
+        };
+        if let Some(dir) = crate::form::ssh_dir().filter(|dir| dir.is_dir()) {
+            view.machines
+                .key_folder
+                .set(&mut view.ui, dir.to_string_lossy().as_ref().into());
+        }
+        view.show();
+        Some(view)
+    }
+
+    /// The window's size in logical pixels.
+    pub fn resize(&mut self, (width, height): (u32, u32)) {
+        let common = self.shell.common();
+        common.width.set(&mut self.ui, width as f32);
+        common.height.set(&mut self.ui, height as f32);
+    }
+
+    /// Take into the state what the tree changed by itself: how far the
+    /// pages were scrolled. Call it before acting on the state.
+    pub fn pull(&mut self) {
+        let overview = self.overview.scroll.get(&mut self.ui);
+        let logs = self.logs.scroll.get(&mut self.ui);
+        let machines = self.machines.scroll.get(&mut self.ui);
+        let mut most = [0.0_f32; 3];
+        let mut table_view = 0.0;
+        for (at, page) in [self.overview.id(), self.logs.id(), self.machines.id()]
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(flick) = find(&self.ui, page, |kind| {
+                matches!(kind, tole::Kind::Flickable(_) | tole::Kind::ListView(_))
+            }) && let (Some(props), Some(common)) =
+                (self.ui.flickable(flick), self.ui.common(flick))
+            {
+                let content = self.ui.get(props.content_height);
+                let height = self.ui.get(common.height);
+                if let Some(slot) = most.get_mut(at) {
+                    *slot = (content - height).max(0.0);
+                }
+                if at == 1 {
+                    table_view = height + 2.0;
+                }
+            }
+        }
+        if let Ok(mut app) = self.app.try_borrow_mut() {
+            app.overview_scroll = overview;
+            app.scroll = logs;
+            app.machines_scroll = machines;
+            app.scroll_most = most;
+            app.table_view = table_view;
+            self.shown.scrolls = (overview, logs, machines);
+        }
+    }
+
+    /// Give the query the keys.
+    pub fn focus_query(&mut self) {
+        if let Some(input) = find(&self.ui, self.logs.id(), |kind| {
+            matches!(kind, tole::Kind::TextInput(_))
+        }) {
+            self.ui.force_active_focus(input);
+        }
+    }
+
+    /// Take the keys from the query.
+    pub fn blur_query(&mut self) {
+        if let Some(input) = find(&self.ui, self.logs.id(), |kind| {
+            matches!(kind, tole::Kind::TextInput(_))
+        }) {
+            self.ui.set_focus(input, false);
+        }
+    }
+
+    /// Whether a field has the keys.
+    #[must_use]
+    pub fn typing(&self) -> bool {
+        self.ui
+            .active_focus_item()
+            .is_some_and(|item| self.ui.text_input(item).is_some())
+    }
+
+    /// What was pressed or typed since the last call, as the state's
+    /// actions; the window's own (move, close) among them.
+    pub fn actions(&mut self) -> Vec<Action> {
+        let emitted = self.ui.take_signals();
+        let mut out = Vec::new();
+        for each in &emitted {
+            if let Some(signal) = self.shell.signal(each) {
+                out.extend(show::shell_action(&self.app.borrow(), signal));
+            } else if let Some(signal) = self.overview.signal(each) {
+                out.extend(show::overview_action(&self.app.borrow(), signal));
+            } else if let Some(signal) = self.logs.signal(each) {
+                out.extend(show::logs_action(&self.app.borrow(), signal));
+            } else if let Some(signal) = self.machines.signal(each) {
+                out.extend(show::machines_action(&self.app.borrow(), signal));
+            }
+        }
+        out
+    }
+
+    /// What the tree asked since the last call, done to the state, then
+    /// the state shown again. Answers the actions done and, apart, the
+    /// window's own (move, maximize, minimize, close), which the window
+    /// does.
+    pub fn step(&mut self) -> (Vec<Action>, Vec<Action>) {
+        self.pull();
+        let mut done = Vec::new();
+        let mut window = Vec::new();
+        for action in self.actions() {
+            match action {
+                Action::WindowMove
+                | Action::WindowMaximize
+                | Action::WindowMinimize
+                | Action::WindowClose => window.push(action),
+                action => {
+                    let mut app = self.app.borrow_mut();
+                    app.act(&action);
+                    // A line pressed on the Overview opens in Logs.
+                    if let Action::Select(index) = action
+                        && app.page == crate::app::Page::Overview
+                    {
+                        app.page = crate::app::Page::Logs;
+                        app.refresh();
+                        app.selected = Some(index);
+                        app.scroll_to(index);
+                    }
+                    drop(app);
+                    // The query taken or left: the keys go back to the
+                    // window, so `/` starts it again.
+                    if matches!(action, Action::QueryAccept | Action::QueryCancel) {
+                        self.blur_query();
+                    }
+                    done.push(action);
+                }
+            }
+        }
+        self.show();
+        (done, window)
+    }
+
+    /// Hand the tree what the state holds now.
+    pub fn show(&mut self) {
+        let app = Rc::clone(&self.app);
+        let app = app.borrow();
+        show::show(self, &app);
+    }
+
+    /// One frame of `size` logical pixels at `scale`, drawn whole.
+    pub fn frame(&mut self, size: (u32, u32), scale: f32) -> Option<tole::tiny_skia::Pixmap> {
+        self.ui.set_scale(scale);
+        self.resize(size);
+        self.show();
+        let background = paint::ink(crate::theme::Theme::of(self.app.borrow().mode).bg);
+        self.ui.update();
+        self.ui.render(size, background)
+    }
+}
+
+/// The first item under `root`, in tree order, whose kind `matches` says.
+fn find(
+    ui: &Ui,
+    root: tole::ItemId,
+    matches: impl Fn(&tole::Kind) -> bool,
+) -> Option<tole::ItemId> {
+    let mut stack = vec![root];
+    while let Some(item) = stack.pop() {
+        if ui.kind(item).is_some_and(|kind| matches(&kind)) {
+            return Some(item);
+        }
+        stack.extend(ui.children(item).iter().rev());
+    }
+    None
+}
+
+/// `--render`: one frame of `app` into a PNG. Answers the exit status.
+#[must_use]
+pub fn render(app: App, out: &Path, size: (u32, u32), scale: u32) -> i32 {
+    use crate::cli::say;
+    let fonts = fonts();
+    if fonts.faces().is_empty() {
+        say("err: no font was found (LODE_VIEWER_FONTS, /usr/share/fonts)");
+    }
+    let shared = Rc::new(std::cell::RefCell::new(app));
+    let Some(mut view) = View::new(shared, fonts) else {
+        say("err: the window's tree could not be made");
+        return 1;
     };
-    match level {
-        0..=3 => {
-            c.fill(place, 3.0, theme::RED);
-            c.text_center(mono(10.0, 600), letter, place, theme::WHITE);
+    let started = std::time::Instant::now();
+    let Some(frame) = view.frame(size, scale as f32) else {
+        say("err: a frame of that size cannot be made");
+        return 1;
+    };
+    let drawn = started.elapsed();
+    let png = tole::png::encode(frame.width(), frame.height(), frame.data());
+    match std::fs::write(out, png) {
+        Ok(()) => {
+            say(&format!(
+                "drew {}x{} at scale {scale} in {:.1} ms into {}",
+                size.0,
+                size.1,
+                drawn.as_secs_f64() * 1e3,
+                out.display()
+            ));
+            0
         }
-        4 => {
-            c.fill(place, 3.0, theme::AMBER);
-            c.text_center(mono(10.0, 600), letter, place, Color::hex(0x1a_1a_1a));
-        }
-        _ => {
-            let ink = if level == 5 { t.blue } else { t.ink4 };
-            c.outline(place, 3.0, 1.0, ink);
-            c.text_center(mono(10.0, 600), letter, place, ink);
+        Err(error) => {
+            say(&format!("err: {}: {error}", out.display()));
+            1
         }
     }
 }
 
-/// A level's name and number: `3 · err`.
+/// `--bench`'s frames: each page drawn five times, the first a new tree;
+/// answers the times in words.
 #[must_use]
-pub fn level_label(level: u8) -> String {
-    if level >= 8 {
-        "unspecified".to_owned()
-    } else {
-        format!("{level} · {}", level_name(level))
+pub fn bench_frames(shared: &Shared, size: (u32, u32)) -> String {
+    use crate::app::Page;
+    let Some(mut view) = View::new(Rc::clone(shared), fonts()) else {
+        return "the tree could not be made".to_owned();
+    };
+    let mut out = Vec::new();
+    for page in [Page::Logs, Page::Overview] {
+        shared.borrow_mut().page = page;
+        let mut times = Vec::new();
+        for n in 0..5 {
+            if n > 0 {
+                // A change that redraws the page: the cursor's place.
+                let mut app = shared.borrow_mut();
+                app.cursor = app.cursor.saturating_sub(1);
+            }
+            let started = std::time::Instant::now();
+            let _ = view.frame(size, 1.0);
+            times.push(started.elapsed().as_secs_f64() * 1e3);
+        }
+        let first = times.first().copied().unwrap_or(0.0);
+        let rest: f64 = times.iter().skip(1).sum();
+        out.push(format!(
+            "{page:?} first {first:.0} ms then {:.0} ms",
+            rest / 4.0
+        ));
     }
-}
-
-impl App {
-    /// The UTC offset times are shown at: the boot's own, as lode stored
-    /// it.
-    #[must_use]
-    pub fn zone(&self) -> i32 {
-        self.log
-            .of_boot(self.boot)
-            .first()
-            .map_or(0, |entry| entry.record.utc_offset_s)
-    }
-
-    /// The boot's offset as the picker says it.
-    #[must_use]
-    pub fn offset_of_boot_label(&self) -> i64 {
-        self.log.offset_of(self.boot)
-    }
-}
-
-/// Where the Logs table's lines are, in a window `width` by `height`.
-#[must_use]
-pub fn logs_table(app: &App, width: f32, height: f32) -> Rect {
-    logs::table_area(app, width, height)
-}
-
-/// How tall the Overview is.
-#[must_use]
-pub fn overview_height() -> f32 {
-    overview::height()
+    out.join(", ")
 }

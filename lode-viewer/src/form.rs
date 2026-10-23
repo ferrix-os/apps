@@ -1,7 +1,7 @@
 //! The Add machine form, with no window: its fields, what each may hold
 //! (said beside the field as it is typed, not only when Add is pressed),
-//! the key's three ways, the name made from the host, and the line editing
-//! every field of the viewer shares.
+//! the key's three ways and the name made from the host. The fields'
+//! editing is tole's text inputs'.
 
 use std::path::{Path, PathBuf};
 
@@ -124,62 +124,6 @@ impl Default for Form {
             editing: None,
             kept_key: None,
         }
-    }
-}
-
-/// What a key did to a line of text.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Edit {
-    /// The text changed, or the selection did.
-    Changed,
-    /// Copy this.
-    Copy(String),
-    /// Nothing the line takes.
-    Unhandled,
-}
-
-/// One key typed into `value`: Backspace, Ctrl+A, Ctrl+C, Ctrl+X and
-/// printable text. `all` is whether the whole text is selected: what is
-/// typed then replaces it. Nothing is inserted while Ctrl or Alt is held.
-pub fn edit_line(
-    value: &mut String,
-    all: &mut bool,
-    keysym: &str,
-    text: &str,
-    (control, alt): (bool, bool),
-) -> Edit {
-    if control {
-        return match keysym {
-            "a" | "A" => {
-                *all = !value.is_empty();
-                Edit::Changed
-            }
-            "c" | "C" => Edit::Copy(value.clone()),
-            "x" | "X" => {
-                let cut = std::mem::take(value);
-                *all = false;
-                Edit::Copy(cut)
-            }
-            _ => Edit::Unhandled,
-        };
-    }
-    match keysym {
-        "BackSpace" => {
-            if std::mem::take(all) {
-                value.clear();
-            } else {
-                let _ = value.pop();
-            }
-            Edit::Changed
-        }
-        _ if !text.is_empty() && !alt && !text.chars().any(char::is_control) => {
-            if std::mem::take(all) {
-                value.clear();
-            }
-            value.push_str(text);
-            Edit::Changed
-        }
-        _ => Edit::Unhandled,
     }
 }
 
@@ -320,10 +264,31 @@ pub fn key_file_problem(path: &str) -> Option<&'static str> {
     if !path.is_file() {
         return Some("no such file");
     }
-    if !crate::picker::is_private_key_file(&path) {
+    if !is_private_key_file(&path) {
         return Some("not a private key file");
     }
     None
+}
+
+/// `~/.ssh`, where the key file's chooser opens.
+#[must_use]
+pub fn ssh_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".ssh"))
+}
+
+/// Whether the file at `path` starts as a PEM or OpenSSH private key does.
+/// Only its first line is read.
+#[must_use]
+pub fn is_private_key_file(path: &Path) -> bool {
+    use std::io::Read as _;
+    let mut head = [0_u8; 64];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let got = file.read(&mut head).unwrap_or(0);
+    let head = String::from_utf8_lossy(head.get(..got).unwrap_or_default());
+    let first = head.lines().next().unwrap_or("");
+    first.starts_with("-----BEGIN ") && first.contains("PRIVATE KEY")
 }
 
 impl Form {
@@ -632,7 +597,7 @@ pub fn local_addresses(trie: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Edit, Form, FormField, KeyChoice, edit_line, local_addresses, name_from_host, name_problem,
+        Form, FormField, KeyChoice, local_addresses, name_from_host, name_problem,
         pasted_key_problem,
     };
     use crate::remote::Kind;
@@ -687,34 +652,6 @@ mod tests {
                 FormField::Server
             ]
         );
-    }
-
-    #[test]
-    fn control_keys_never_type_their_letter_and_edit_the_line() {
-        let mut value = "abc".to_owned();
-        let mut all = false;
-        assert_eq!(
-            edit_line(&mut value, &mut all, "v", "v", (true, false)),
-            Edit::Unhandled
-        );
-        assert_eq!(
-            edit_line(&mut value, &mut all, "x", "x", (false, true)),
-            Edit::Unhandled
-        );
-        assert_eq!(value, "abc");
-        assert_eq!(
-            edit_line(&mut value, &mut all, "c", "", (true, false)),
-            Edit::Copy("abc".to_owned())
-        );
-        let _ = edit_line(&mut value, &mut all, "a", "", (true, false));
-        assert!(all);
-        let _ = edit_line(&mut value, &mut all, "z", "z", (false, false));
-        assert_eq!(value, "z");
-        assert_eq!(
-            edit_line(&mut value, &mut all, "x", "", (true, false)),
-            Edit::Copy("z".to_owned())
-        );
-        assert_eq!(value, "");
     }
 
     #[test]

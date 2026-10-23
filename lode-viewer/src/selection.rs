@@ -294,6 +294,12 @@ impl Selections {
         true
     }
 
+    /// Whether the compositor gave a clipboard to copy to and paste from.
+    #[must_use]
+    pub fn has_clipboard(&self) -> bool {
+        self.clipboard.device.is_some()
+    }
+
     /// A paste that arrived, if one did.
     pub fn take(&mut self) -> Option<String> {
         self.arrived.try_recv().ok()

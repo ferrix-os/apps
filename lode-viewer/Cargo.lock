@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -31,10 +37,6 @@ name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
-
-[[package]]
-name = "compositor-dbus"
-version = "0.1.0"
 
 [[package]]
 name = "compositor-protocol"
@@ -120,10 +122,11 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 name = "lode-viewer"
 version = "0.1.0"
 dependencies = [
- "compositor-dbus",
  "compositor-text",
  "compositor-toolkit",
  "ferrix-lode-core",
+ "tole",
+ "tole-compiler",
 ]
 
 [[package]]
@@ -131,6 +134,15 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "miniz_oxide"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
+dependencies = [
+ "adler2",
+]
 
 [[package]]
 name = "rustybuzz"
@@ -192,6 +204,20 @@ dependencies = [
  "bytemuck",
  "strict-num",
 ]
+
+[[package]]
+name = "tole"
+version = "0.1.0"
+dependencies = [
+ "compositor-text",
+ "compositor-toolkit",
+ "miniz_oxide",
+ "tiny-skia",
+]
+
+[[package]]
+name = "tole-compiler"
+version = "0.1.0"
 
 [[package]]
 name = "ttf-parser"
