@@ -367,6 +367,75 @@ pub fn pair(machine: &str, server: &str, root: Option<&PathBuf>) -> Result<Plan,
     plan(&value).ok_or_else(|| "lode-receive pair said something this cannot use".to_owned())
 }
 
+/// What `lode-receive check --json` says: whether it runs, and each
+/// machine's store with its records.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Check {
+    /// Whether the receiver runs.
+    pub running: bool,
+    /// Where it listens, when it runs.
+    pub listen: String,
+    /// Each store: its directory's name, records and when last heard.
+    pub machines: Vec<Receiving>,
+}
+
+/// One store's line of [`Check`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Receiving {
+    /// The store's directory name under the root (`host-ferrix`).
+    pub dir: String,
+    /// The records it holds.
+    pub records: u64,
+    /// When the machine last sent, RFC 3339.
+    pub last_seen: Option<String>,
+}
+
+impl Check {
+    /// The line for the store in directory `dir`.
+    #[must_use]
+    pub fn of(&self, dir: &std::path::Path) -> Option<&Receiving> {
+        let name = dir.file_name()?.to_str()?;
+        self.machines.iter().find(|machine| machine.dir == name)
+    }
+}
+
+/// `lode-receive check --json`'s object read.
+#[must_use]
+pub fn check_of(value: &Value) -> Check {
+    let machines = match value.get("machines") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| Receiving {
+                dir: item.text("dir"),
+                records: match item.get("records") {
+                    Some(Value::Number(n)) => n.parse().unwrap_or(0),
+                    _ => 0,
+                },
+                last_seen: item
+                    .get("last_seen")
+                    .and_then(Value::str)
+                    .map(str::to_owned),
+            })
+            .filter(|machine| !machine.dir.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    Check {
+        running: value.get("running") == Some(&Value::Bool(true)),
+        listen: value.text("listen"),
+        machines,
+    }
+}
+
+/// Ask the receiver here what it keeps.
+///
+/// # Errors
+///
+/// The receiver missing or saying no JSON.
+pub fn check(root: Option<&PathBuf>) -> Result<Check, String> {
+    receive(&["check"], root).map(|(_, value)| check_of(&value))
+}
+
 /// Make sure the receiver runs here: check, and install its service when
 /// it does not run. Answers what it found.
 ///
@@ -463,6 +532,20 @@ pub fn apply(remote: &Remote, plan: &Plan, said: &dyn Fn(String)) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::{Value, new_config, parse_json, plan, remote_commands};
+
+    #[test]
+    fn the_receivers_check_says_each_stores_records() {
+        let said = r#"{"running":true,"pid":2403839,"listen":"0.0.0.0:19532","server_fingerprint":"sha256:14e3","machines":[{"dir":"host-ferrix","hostname":"ferrix","last_seen":"2026-10-23T20:49:24Z","records":96727},{"dir":"x","hostname":null,"last_seen":null,"records":0}]}"#;
+        let check = super::check_of(&super::parse_json(said).expect("JSON"));
+        assert!(check.running);
+        assert_eq!(check.listen, "0.0.0.0:19532");
+        let n150 = check
+            .of(std::path::Path::new("/r/host-ferrix"))
+            .expect("the store");
+        assert_eq!(n150.records, 96_727);
+        assert_eq!(n150.last_seen.as_deref(), Some("2026-10-23T20:49:24Z"));
+        assert_eq!(check.machines[1].last_seen, None);
+    }
 
     const PAIRED: &str = r#"{"machine":"n150","listen":"0.0.0.0:19532","ca_fingerprint":"SHA256:aa","server_fingerprint":"SHA256:bb","remote_files":[{"local":"/home/u/.local/share/ferrix/lode-receive/.pki/n150/client.crt","remote":"/etc/ferrix/lode-upload/n150.crt","mode":"0644"},{"local":"/k/client.key","remote":"/etc/ferrix/lode-upload/n150.key","mode":"0600"}],"remote_config_file":"/etc/ferrix/lode-upload.conf","remote_config_line":"n150 https://nazuna:19532/upload export ca=/etc/ferrix/lode-upload/ca.crt cert=/etc/ferrix/lode-upload/n150.crt key=/etc/ferrix/lode-upload/n150.key","remote_restart":"svc restart lode-upload.service"}"#;
 

@@ -58,6 +58,23 @@ fn followed(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
     }
     for (index, remote) in app.remotes.iter().enumerate() {
         let row = Rect::new(card.x, y, card.w, 64.0);
+        // A press on the row shows its settings below; Open and Remove,
+        // drawn after, take their own presses.
+        let select = Action::SelectRemote(index);
+        if app.selected_remote == Some(index) {
+            c.fill(
+                Rect::new(row.x + 1.0, row.y + 1.0, row.w - 2.0, row.h - 2.0),
+                9.0,
+                t.blue_bg,
+            );
+        } else if app.hover.as_ref() == Some(&select) {
+            c.fill(
+                Rect::new(row.x + 1.0, row.y + 1.0, row.w - 2.0, row.h - 2.0),
+                9.0,
+                t.hover,
+            );
+        }
+        c.hit(row, select);
         if index > 0 {
             c.fill(
                 Rect::new(row.x + 1.0, row.y, row.w - 2.0, 1.0),
@@ -65,16 +82,11 @@ fn followed(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
                 t.line2,
             );
         }
-        let state = app
-            .links
-            .get(index)
-            .and_then(|link| link.as_ref())
-            .map(crate::remote::Link::now)
-            .unwrap_or_default();
-        let dot = if state.up {
-            theme::GREEN
-        } else if state.error.is_some() {
+        let state = app.remote_line(index);
+        let dot = if state.error.is_some() {
             theme::RED
+        } else if state.up {
+            theme::GREEN
         } else {
             theme::AMBER
         };
@@ -104,17 +116,9 @@ fn followed(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
             t.ink3,
             Some(250.0),
         );
-        let seen = state.last_seen.map_or_else(
-            || "nothing yet".to_owned(),
-            |at| format!("last record {}", crate::app::clock(at * 1_000_000, 0)),
-        );
-        let line = format!(
-            "{} · {} records this run · {seen} UTC",
-            state.state, state.records
-        );
         let _ = c.text(
             sans(12.0, 400),
-            &line,
+            &state.text,
             (row.x + 36.0, row.y + 34.0, 20.0),
             t.ink4,
             Some(430.0),
@@ -414,15 +418,94 @@ pub fn masked_key(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The Add machine form. Answers its bottom.
+/// What is kept of the machine the form shows beyond its fields: its
+/// pairing, its store and what arrives. Answers the height drawn.
+fn details(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect, label_w: f32) -> f32 {
+    let Some(index) = app.selected_remote else {
+        return 0.0;
+    };
+    let Some(remote) = app.remotes.get(index) else {
+        return 0.0;
+    };
+    let line = app.remote_line(index);
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    if remote.kind == Kind::Tls {
+        let pairing = match remote.pairing {
+            crate::remote::Pairing::Paired => "paired",
+            crate::remote::Pairing::Applying => "being set up on the machine",
+            crate::remote::Pairing::Failed => "the set-up stopped before it was done",
+            crate::remote::Pairing::None => "not paired yet",
+        };
+        let ca = remote.ca_fingerprint.as_deref().map_or_else(
+            || {
+                " · CA fingerprint not recorded (paired before it was kept; Pair again records it)"
+                    .to_owned()
+            },
+            |print| format!(" · CA {print}"),
+        );
+        rows.push(("Pairing", format!("{pairing}{ca}")));
+    }
+    rows.push(("Status", line.text.clone()));
+    if let Some(error) = &line.error {
+        rows.push(("Problem", error.clone()));
+    }
+    rows.push((
+        "Store",
+        line.store.as_deref().map_or_else(
+            || "none yet: made when its first record arrives".to_owned(),
+            crate::app::home_short,
+        ),
+    ));
+    if let Some(id) = &remote.machine_id {
+        rows.push(("Machine id", id.clone()));
+    }
+    let mut y = place.y;
+    for (label, value) in rows {
+        let _ = c.text(sans(12.5, 400), label, (place.x, y, 20.0), t.ink4, None);
+        let ink = if label == "Problem" {
+            t.red_ink
+        } else {
+            t.ink2
+        };
+        y += c
+            .wrapped(
+                mono(12.0, 400),
+                &value,
+                (place.x + label_w, y + 1.0, 18.0),
+                ink,
+                place.w - label_w,
+            )
+            .max(20.0)
+            + 4.0;
+    }
+    y + 12.0 - place.y
+}
+
+/// The form: Add machine, or a kept machine's settings to change. Answers
+/// its bottom.
 fn form(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
+    let editing = app.form.editing.clone();
+    let title = editing.as_deref().map_or_else(
+        || "Add machine".to_owned(),
+        |name| format!("Machine {name}"),
+    );
     let _ = c.text(
         sans(13.0, 600),
-        "Add machine",
+        &title,
         (place.x, place.y, 20.0),
         t.ink3,
         None,
     );
+    if editing.is_some() {
+        let _ = button(
+            app,
+            c,
+            t,
+            Rect::new(place.right() - 170.0, place.y - 6.0, 170.0, 30.0),
+            "Add another machine",
+            Action::FormNew,
+        );
+    }
     let card_top = place.y + 28.0;
     let x = place.x + 22.0;
     let inner = place.w - 44.0;
@@ -431,6 +514,9 @@ fn form(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
     let field_x = x + label_w;
     let field_w = 440.0_f32.min(inner - label_w - 200.0).max(260.0);
     let note_w = (inner - label_w - field_w - 12.0).max(80.0);
+    if editing.is_some() {
+        y += details(app, c, t, Rect::new(x, y, inner, 0.0), label_w);
+    }
     // How the log comes.
     let receiver = crate::tls::receiver().is_some();
     let kinds = [
@@ -475,6 +561,21 @@ fn form(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
     ];
     for (field, label, placeholder) in fields {
         let _ = c.text(sans(13.0, 400), label, (x, y, 32.0), t.ink3, None);
+        if field == FormField::Name
+            && let Some(name) = &editing
+        {
+            // A kept machine's name ties it to its store and pairing.
+            let w = c.text(mono(12.5, 600), name, (field_x, y, 32.0), t.ink, None);
+            let _ = c.text(
+                sans(11.5, 400),
+                "its name stays: it ties the machine to its store and pairing",
+                (field_x + w + 14.0, y, 32.0),
+                t.ink4,
+                None,
+            );
+            y += 42.0;
+            continue;
+        }
         input(
             app,
             c,
@@ -587,9 +688,13 @@ fn form(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
             c.boxed(area, 6.0, t.bg, if focused { t.blue } else { t.line3 });
             let value = app.form.value(FormField::Paste);
             if value.is_empty() {
+                let said = app.form.kept_key.as_deref().map_or_else(
+                    || "Paste the private key here (Ctrl+V, or the Paste button). Its body is shown as dots.".to_owned(),
+                    |kept| format!("A pasted key is kept for it in {}. Paste another here to replace it.", crate::app::home_short(std::path::Path::new(kept))),
+                );
                 let _ = c.wrapped(
                     sans(12.5, 400),
-                    "Paste the private key here (Ctrl+V, or the Paste button). Its body is shown as dots.",
+                    &said,
                     (area.x + 10.0, area.y + 8.0, 16.0),
                     t.ink5,
                     area.w - 20.0,
@@ -725,21 +830,32 @@ fn form(app: &App, c: &mut Frame<'_, '_>, t: &Theme, place: Rect) -> f32 {
     y += 14.0;
     let add = Rect::new(x, y, 150.0, 34.0);
     c.fill(add, 6.0, t.ink);
-    let word = if app.form.kind == Kind::Tls {
-        "Pair…"
-    } else {
-        "Add and follow"
+    let word = match (&editing, app.form.kind) {
+        (Some(_), _) => "Save",
+        (None, Kind::Tls) => "Pair…",
+        (None, Kind::Ssh) => "Add and follow",
     };
     c.text_center(sans(13.0, 500), word, add, t.inv);
     c.hit(add, Action::FormAdd);
+    let mut right = add.right();
+    if editing.is_some() && app.form.kind == Kind::Tls {
+        right = button(
+            app,
+            c,
+            t,
+            Rect::new(add.right() + 10.0, y, 120.0, 34.0),
+            "Pair again…",
+            Action::FormPairAgain,
+        );
+    }
     let mut py = add.bottom() + 12.0;
     if let Some(error) = &app.form.error {
         let h = c.wrapped(
             sans(12.5, 400),
             error,
-            (add.right() + 16.0, add.y + 8.0, 18.0),
+            (right + 16.0, add.y + 8.0, 18.0),
             t.red_ink,
-            inner - 170.0,
+            inner - (right - x) - 20.0,
         );
         py = py.max(add.y + 8.0 + h + 10.0);
     }

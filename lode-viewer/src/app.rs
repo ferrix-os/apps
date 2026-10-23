@@ -79,6 +79,12 @@ pub enum Action {
     RemoveRemote(usize),
     /// Show a followed machine's store.
     OpenRemote(usize),
+    /// Show a kept machine's settings in the form, to change them.
+    SelectRemote(usize),
+    /// An empty form, to add a machine.
+    FormNew,
+    /// Pair the machine the form shows again (TLS).
+    FormPairAgain,
     /// Do the TLS set-up shown, on the machine.
     TlsConfirm,
     /// Leave it undone.
@@ -234,6 +240,16 @@ pub struct App {
     pub tls_plan: Option<(crate::remote::Remote, crate::tls::Plan)>,
     /// What the TLS set-up has done, a line a step, shared with its thread.
     pub tls_progress: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// How the TLS set-up ended, for the machine's pairing: its name and
+    /// whether it was done.
+    pub tls_outcome: std::sync::Arc<std::sync::Mutex<Option<(String, bool)>>>,
+    /// The machine of [`App::remotes`] the form shows.
+    pub selected_remote: Option<usize>,
+    /// What `lode-receive check` said last, shared with the thread that
+    /// asks it.
+    pub receiving: std::sync::Arc<std::sync::Mutex<Option<crate::tls::Check>>>,
+    /// Whether that thread runs.
+    checking: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// What the pointer is over, for the hover state.
     pub hover: Option<Action>,
     /// The file dialog open, its answer to come.
@@ -311,6 +327,10 @@ impl App {
             form: Form::default(),
             tls_plan: None,
             tls_progress: std::sync::Arc::default(),
+            tls_outcome: std::sync::Arc::default(),
+            selected_remote: None,
+            receiving: std::sync::Arc::default(),
+            checking: std::sync::Arc::default(),
             hover: None,
             picking: None,
             key_files: None,
@@ -521,6 +541,166 @@ impl App {
                 *link = Some(crate::remote::Link::start(remote.clone(), root.clone()));
             }
         }
+        self.learn_ids();
+        self.ask_receiver();
+    }
+
+    /// Ask lode-receive what it keeps, on a thread of its own, when a
+    /// machine comes over TLS and no ask is running.
+    pub fn ask_receiver(&mut self) {
+        use std::sync::atomic::Ordering;
+        if !self
+            .remotes
+            .iter()
+            .any(|remote| remote.kind == crate::remote::Kind::Tls)
+            || crate::tls::receiver().is_none()
+            || self.checking.swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
+        let root = self.root();
+        let (answer, running) = (
+            std::sync::Arc::clone(&self.receiving),
+            std::sync::Arc::clone(&self.checking),
+        );
+        let waker = self.waker.clone();
+        let spawned = std::thread::Builder::new()
+            .name("receive-check".to_owned())
+            .spawn(move || {
+                let check = crate::tls::check(root.as_ref()).ok();
+                if let Ok(mut answer) = answer.lock() {
+                    *answer = check;
+                }
+                running.store(false, Ordering::Release);
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            });
+        if spawned.is_err() {
+            self.checking.store(false, Ordering::Release);
+        }
+    }
+
+    /// The store kept machine `index`'s records go to: a followed one's
+    /// link says it; a TLS one's is lode-receive's store that says it was
+    /// paired as its name (or is named by its machine id).
+    #[must_use]
+    pub fn remote_store(&self, index: usize) -> Option<crate::store::Received> {
+        let remote = self.remotes.get(index)?;
+        match remote.kind {
+            crate::remote::Kind::Ssh => {
+                let dir = self.links.get(index)?.as_ref()?.now().dir?;
+                let root = dir.parent()?.to_path_buf();
+                crate::store::received(&root)
+                    .into_iter()
+                    .find(|store| store.dir == dir)
+                    .or(Some(crate::store::Received {
+                        dir,
+                        ..crate::store::Received::default()
+                    }))
+            }
+            crate::remote::Kind::Tls => {
+                let root = self
+                    .machines_root
+                    .clone()
+                    .or_else(crate::cli::receive_root)?;
+                crate::store::paired_store(&root, &remote.name, remote.machine_id.as_deref())
+            }
+        }
+    }
+
+    /// A TLS machine's id, once the store it sends to is named by it, kept
+    /// with its settings; and a machine whose records arrive is paired.
+    pub fn learn_ids(&mut self) {
+        let mut changed = false;
+        // The receiver's own name, as its certificate holds it: the
+        // server of a machine paired before the server was kept.
+        let server_name = self
+            .machines_root
+            .clone()
+            .or_else(crate::cli::receive_root)
+            .and_then(|root| std::fs::read_to_string(root.join(".pki/server.names")).ok())
+            .and_then(|names| {
+                names
+                    .split([',', '\n', ' '])
+                    .map(str::trim)
+                    .find(|name| !name.is_empty())
+                    .map(str::to_owned)
+            });
+        for index in 0..self.remotes.len() {
+            if self
+                .remotes
+                .get(index)
+                .is_none_or(|remote| remote.kind != crate::remote::Kind::Tls)
+            {
+                continue;
+            }
+            let Some(store) = self.remote_store(index) else {
+                continue;
+            };
+            let Some(remote) = self.remotes.get_mut(index) else {
+                continue;
+            };
+            if let Some(id) = store.machine_id()
+                && remote.machine_id.as_deref() != Some(id.as_str())
+            {
+                remote.machine_id = Some(id);
+                changed = true;
+            }
+            if store.paired.as_deref() == Some(remote.name.as_str())
+                && remote.pairing != crate::remote::Pairing::Paired
+                && remote.pairing != crate::remote::Pairing::Applying
+            {
+                remote.pairing = crate::remote::Pairing::Paired;
+                changed = true;
+            }
+            if remote.server.is_none()
+                && remote.pairing == crate::remote::Pairing::Paired
+                && let Some(name) = &server_name
+            {
+                let mut with = remote.clone();
+                with.server = Some(name.clone());
+                if with.refused().is_none() {
+                    *remote = with;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.store_remotes();
+            if let Some(index) = self.selected_remote
+                && let Some(remote) = self.remotes.get(index)
+                && self.form.editing.as_deref() == Some(remote.name.as_str())
+                && self.form.focus.is_none()
+            {
+                self.form = Form::of(remote);
+            }
+        }
+    }
+
+    /// The machines' part of the window's timer, `tick` its count: the TLS
+    /// set-up's end taken into the machine's pairing, and every ten the
+    /// receiver asked again. Answers whether anything changed.
+    pub fn poll_machines(&mut self, tick: u32) -> bool {
+        let outcome = self.tls_outcome.lock().ok().and_then(|mut o| o.take());
+        let mut changed = false;
+        if let Some((name, done)) = outcome
+            && let Some(remote) = self.remotes.iter_mut().find(|r| r.name == name)
+        {
+            remote.pairing = if done {
+                crate::remote::Pairing::Paired
+            } else {
+                crate::remote::Pairing::Failed
+            };
+            self.store_remotes();
+            self.ask_receiver();
+            changed = true;
+        }
+        if tick.is_multiple_of(10) {
+            self.learn_ids();
+            self.ask_receiver();
+        }
+        changed
     }
 
     /// Keep the machines in their file.
@@ -536,12 +716,17 @@ impl App {
         }
     }
 
-    /// The form's machine added and followed.
+    /// The form's machine added and followed, or, for a kept machine, its
+    /// settings saved.
     fn add_remote(&mut self) {
         self.form.error = None;
         if let Some((field, why)) = self.form.first_problem() {
             self.form.error = Some(format!("{}: {why}", field_label(field)));
             self.form.focus = Some(field);
+            return;
+        }
+        if self.form.editing.is_some() {
+            self.save_remote(false);
             return;
         }
         if self
@@ -591,7 +776,91 @@ impl App {
         self.toast = Some(format!("following {} over ssh", remote.name));
         self.remotes.push(remote);
         self.store_remotes();
-        self.form = Form::default();
+        self.select_remote(self.remotes.len() - 1);
+    }
+
+    /// Show kept machine `index` in the form, its settings in the fields.
+    fn select_remote(&mut self, index: usize) {
+        let Some(remote) = self.remotes.get(index) else {
+            return;
+        };
+        self.form = Form::of(remote);
+        if remote.kind == crate::remote::Kind::Tls && self.reach.is_empty() {
+            self.reach = crate::form::reach_choices();
+        }
+        self.selected_remote = Some(index);
+        self.page = Page::Machines;
+        self.ask_receiver();
+    }
+
+    /// The form's changes to the kept machine it shows, saved; with
+    /// `pair`, or when a TLS machine's way to be reached changed, paired
+    /// again (shown first, as a new pairing is).
+    fn save_remote(&mut self, pair: bool) {
+        let Some(name) = self.form.editing.clone() else {
+            return;
+        };
+        let Some(index) = self.remotes.iter().position(|r| r.name == name) else {
+            self.form.error = Some(format!("{name} is no longer kept"));
+            return;
+        };
+        let pasted = self.form.key == KeyChoice::Paste
+            && !self.form.value(FormField::Paste).trim().is_empty();
+        let kept = if pasted {
+            match crate::form::keep_key(&name, self.form.value(FormField::Paste)) {
+                Ok(path) => Some(path),
+                Err(why) => {
+                    self.form.error = Some(format!("the key could not be kept: {why}"));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let Some(old) = self.remotes.get(index).cloned() else {
+            return;
+        };
+        let mut remote = self.form.remote(kept.as_deref());
+        if let Some(why) = remote.refused() {
+            self.form.error = Some(format!("not yet: {why}"));
+            return;
+        }
+        remote.pairing = old.pairing;
+        remote.ca_fingerprint.clone_from(&old.ca_fingerprint);
+        remote.machine_id.clone_from(&old.machine_id);
+        let tls = remote.kind == crate::remote::Kind::Tls;
+        let repair = tls
+            && (pair
+                || old.kind != crate::remote::Kind::Tls
+                // A server not kept before is taken as typed.
+                || (old.server.is_some() && old.server != remote.server)
+                || old.pairing != crate::remote::Pairing::Paired);
+        if tls && repair {
+            self.pair_tls(remote);
+            return;
+        }
+        if !tls && remote.pairing != crate::remote::Pairing::None {
+            remote.pairing = crate::remote::Pairing::None;
+        }
+        // A followed machine's link starts again with what changed.
+        if let Some(Some(link)) = self.links.get(index) {
+            link.stop();
+        }
+        let link = match (remote.kind, self.root()) {
+            (crate::remote::Kind::Ssh, Some(root)) => {
+                Some(crate::remote::Link::start(remote.clone(), root))
+            }
+            _ => None,
+        };
+        if let Some(slot) = self.links.get_mut(index) {
+            *slot = link;
+        }
+        if let Some(slot) = self.remotes.get_mut(index) {
+            *slot = remote;
+        }
+        self.store_remotes();
+        self.toast = Some(format!("{name} saved"));
+        self.select_remote(index);
     }
 
     /// Pair the form's machine with the receiver here and show what it
@@ -610,6 +879,12 @@ impl App {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if !name_ok {
             self.form.error = Some("a name of a-z, 0-9 and dashes, at most 32".to_owned());
+            return;
+        }
+        if self.form.editing.as_deref() != Some(remote.name.as_str())
+            && self.remotes.iter().any(|known| known.name == remote.name)
+        {
+            self.form.error = Some(format!("{} is a machine already", remote.name));
             return;
         }
         if let Some(why) = remote.refused() {
@@ -642,6 +917,8 @@ impl App {
             return;
         };
         let progress = std::sync::Arc::clone(&self.tls_progress);
+        let outcome = std::sync::Arc::clone(&self.tls_outcome);
+        let waker = self.waker.clone();
         let root = self.root();
         let said = move |line: String| {
             if let Ok(mut progress) = progress.lock() {
@@ -649,11 +926,13 @@ impl App {
             }
         };
         let thread_remote = remote.clone();
+        let ca = plan.ca_fingerprint.clone();
         let _ = std::thread::Builder::new()
             .name("tls-setup".to_owned())
             .spawn(move || {
                 let result = crate::tls::apply(&thread_remote, &plan, &said)
                     .and_then(|()| crate::tls::ensure_running(root.as_ref()));
+                let done = result.is_ok();
                 match result {
                     Ok(line) => {
                         said(line);
@@ -661,11 +940,46 @@ impl App {
                     }
                     Err(why) => said(format!("stopped: {why}")),
                 }
+                if let Ok(mut outcome) = outcome.lock() {
+                    *outcome = Some((thread_remote.name.clone(), done));
+                }
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
             });
-        self.remotes.push(remote);
-        self.links.push(None);
+        self.keep_pairing(remote, &ca);
+    }
+
+    /// TLS machine `remote` kept as it is being paired, every setting with
+    /// it and the CA it is paired with, and shown selected; the set-up's
+    /// outcome comes to [`App::poll_machines`].
+    fn keep_pairing(&mut self, mut remote: crate::remote::Remote, ca: &str) {
+        remote.pairing = crate::remote::Pairing::Applying;
+        remote.ca_fingerprint = (!ca.is_empty()).then(|| ca.to_owned());
+        if remote.refused().is_some() {
+            remote.ca_fingerprint = None;
+        }
+        let index = match self.remotes.iter().position(|r| r.name == remote.name) {
+            Some(index) => {
+                if let Some(Some(link)) = self.links.get(index) {
+                    link.stop();
+                }
+                if let Some(slot) = self.links.get_mut(index) {
+                    *slot = None;
+                }
+                if let Some(slot) = self.remotes.get_mut(index) {
+                    *slot = remote;
+                }
+                index
+            }
+            None => {
+                self.remotes.push(remote);
+                self.links.push(None);
+                self.remotes.len() - 1
+            }
+        };
         self.store_remotes();
-        self.form = Form::default();
+        self.select_remote(index);
     }
 
     /// Stop following machine `index` and forget it; its store stays.
@@ -681,6 +995,14 @@ impl App {
             let _ = self.links.remove(index);
         }
         self.store_remotes();
+        self.selected_remote = match self.selected_remote {
+            Some(at) if at == index => None,
+            Some(at) if at > index => Some(at - 1),
+            other => other,
+        };
+        if self.form.editing.as_deref() == Some(gone.name.as_str()) {
+            self.form = Form::default();
+        }
         self.toast = Some(format!(
             "{} is no longer followed; what came is kept",
             gone.name
@@ -954,13 +1276,23 @@ impl App {
                 self.form.error = Some("nothing was changed on the machine".to_owned());
             }
             Action::RemoveRemote(index) => self.remove_remote(index),
+            Action::SelectRemote(index) => self.select_remote(index),
+            Action::FormNew => {
+                self.form = Form::default();
+                self.selected_remote = None;
+            }
+            Action::FormPairAgain => {
+                self.form.error = None;
+                if let Some((field, why)) = self.form.first_problem() {
+                    self.form.error = Some(format!("{}: {why}", field_label(field)));
+                    self.form.focus = Some(field);
+                } else {
+                    self.save_remote(true);
+                }
+            }
             Action::OpenRemote(index) => {
-                let dir = self
-                    .links
-                    .get(index)
-                    .and_then(|link| link.as_ref())
-                    .and_then(|link| link.now().dir);
-                if let Some(root) = self.machines_root.clone() {
+                let dir = self.remote_store(index).map(|store| store.dir);
+                if let Some(root) = self.root() {
                     let _ = self.rescan_machines(&root);
                 }
                 match dir.and_then(|dir| self.machines.iter().position(|m| m.dir == dir)) {
@@ -1268,6 +1600,120 @@ pub fn field_label(field: FormField) -> &'static str {
     }
 }
 
+/// What a kept machine's row says of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemoteLine {
+    /// Its state and records, in words.
+    pub text: String,
+    /// Whether its records are coming.
+    pub up: bool,
+    /// What is wrong, if anything.
+    pub error: Option<String>,
+    /// The store its records go to.
+    pub store: Option<PathBuf>,
+}
+
+/// `n` with its thousands grouped: `96,727`.
+#[must_use]
+pub fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (at, c) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// An RFC 3339 time in UTC as the rows say it: `2026-10-23 20:49:24 UTC`.
+#[must_use]
+pub fn when(rfc3339: &str) -> String {
+    match rfc3339.strip_suffix('Z') {
+        Some(rest) => format!("{} UTC", rest.replacen('T', " ", 1)),
+        None => rfc3339.replacen('T', " ", 1),
+    }
+}
+
+impl App {
+    /// What kept machine `index`'s row says: for one followed over ssh its
+    /// link's state; for one over TLS what lode-receive keeps of it, or
+    /// where its pairing stands.
+    #[must_use]
+    pub fn remote_line(&self, index: usize) -> RemoteLine {
+        let Some(remote) = self.remotes.get(index) else {
+            return RemoteLine::default();
+        };
+        match remote.kind {
+            crate::remote::Kind::Ssh => {
+                let state = self
+                    .links
+                    .get(index)
+                    .and_then(|link| link.as_ref())
+                    .map(crate::remote::Link::now)
+                    .unwrap_or_default();
+                let records = match state.last_seen {
+                    Some(at) => format!(
+                        "{} records this run, the last at {} UTC",
+                        grouped(state.records),
+                        clock(at * 1_000_000, 0)
+                    ),
+                    None => "no records yet".to_owned(),
+                };
+                RemoteLine {
+                    text: format!("{} · {records}", state.state),
+                    up: state.up,
+                    error: state.error,
+                    store: state.dir,
+                }
+            }
+            crate::remote::Kind::Tls => {
+                let check = self.receiving.lock().ok().and_then(|check| check.clone());
+                let store = self.remote_store(index);
+                let error = match (&check, remote.pairing) {
+                    (_, crate::remote::Pairing::Failed) => {
+                        Some("the set-up on the machine stopped: Pair again".to_owned())
+                    }
+                    (Some(check), _) if !check.running => {
+                        Some("lode-receive is not running here".to_owned())
+                    }
+                    _ => None,
+                };
+                let Some(store) = store else {
+                    let text = match remote.pairing {
+                        crate::remote::Pairing::Paired => "paired · no records yet",
+                        crate::remote::Pairing::Applying => "being set up on the machine",
+                        crate::remote::Pairing::Failed => "not paired",
+                        crate::remote::Pairing::None => "not paired yet",
+                    };
+                    return RemoteLine {
+                        text: text.to_owned(),
+                        up: false,
+                        error,
+                        store: None,
+                    };
+                };
+                let counted = check.as_ref().and_then(|check| check.of(&store.dir));
+                let seen = counted
+                    .and_then(|line| line.last_seen.clone())
+                    .or_else(|| store.last_seen.clone());
+                let at = seen.map_or_else(String::new, |seen| format!(", last at {}", when(&seen)));
+                let text = match counted {
+                    Some(line) => format!("receiving: {} records{at}", grouped(line.records)),
+                    None => format!("receiving{at}"),
+                };
+                RemoteLine {
+                    text,
+                    up: check.as_ref().is_none_or(|check| check.running),
+                    error,
+                    store: Some(store.dir),
+                }
+            }
+        }
+    }
+}
+
 /// A path with the home directory written `~`.
 #[must_use]
 pub fn home_short(path: &std::path::Path) -> String {
@@ -1499,6 +1945,179 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
+    }
+
+    /// A scratch directory of the test's own.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("lode-viewer-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory");
+        dir
+    }
+
+    /// Wait for a receiver check the app started to end, so what the test
+    /// sets is not overwritten.
+    fn checked(app: &App) {
+        while app.checking.load(std::sync::atomic::Ordering::Acquire) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// The customer's N150, 2026-10-23: paired over TLS from the form
+    /// before the pairing was kept, sending as host `ferrix` with no
+    /// machine id, so lode-receive keeps it in `host-ferrix/` with
+    /// `paired=n150`. Its row shows that store's records, its settings
+    /// show in the form, and Open shows the store.
+    #[test]
+    fn a_tls_machine_shows_the_store_it_was_paired_into() {
+        use super::FormField;
+        use crate::remote::{Kind, Pairing};
+        let dir = scratch("tls-n150");
+        let root = dir.join("lode-receive");
+        let records: Vec<Record> = (1..=3)
+            .map(|n| {
+                let mut record = Record::new(6, n * 1_000_000, n);
+                record.seqnum = n;
+                record.push("MESSAGE", b"hello");
+                record
+            })
+            .collect();
+        crate::store::import(&records, &root.join("host-ferrix")).expect("a store");
+        std::fs::write(
+            root.join("host-ferrix/machine"),
+            "hostname=ferrix\nlast_seen=2026-10-23T20:49:21Z\npaired=n150\n",
+        )
+        .expect("written");
+        std::fs::create_dir_all(root.join(".pki")).expect("a directory");
+        std::fs::write(root.join(".pki/server.names"), "192.0.2.74\n").expect("written");
+        let conf = dir.join("machines.conf");
+        std::fs::write(
+            &conf,
+            "[machine n150]\nkind = tls\nhost = 192.0.2.10\nuser = root\nport = 22\n",
+        )
+        .expect("written");
+        let mut app = app();
+        app.machines_root = Some(root.clone());
+        app.load_remotes(conf.clone());
+        checked(&app);
+        // Its records found by the paired name, the pairing and the
+        // server learned from the receiver and kept.
+        assert_eq!(
+            app.remote_store(0).map(|store| store.dir),
+            Some(root.join("host-ferrix"))
+        );
+        assert_eq!(app.remotes[0].pairing, Pairing::Paired);
+        assert_eq!(app.remotes[0].server.as_deref(), Some("192.0.2.74"));
+        let kept = std::fs::read_to_string(&conf).expect("kept");
+        assert!(kept.contains("server = 192.0.2.74\n"), "{kept}");
+        assert!(kept.contains("pairing = paired\n"), "{kept}");
+        // Without the receiver's count: when it was last heard.
+        if let Ok(mut receiving) = app.receiving.lock() {
+            *receiving = None;
+        }
+        let line = app.remote_line(0);
+        assert_eq!(line.text, "receiving, last at 2026-10-23 20:49:21 UTC");
+        assert!(!line.text.contains("nothing yet"));
+        // With it: the records lode-receive holds.
+        if let Ok(mut receiving) = app.receiving.lock() {
+            *receiving = Some(crate::tls::Check {
+                running: true,
+                listen: "0.0.0.0:19532".to_owned(),
+                machines: vec![crate::tls::Receiving {
+                    dir: "host-ferrix".to_owned(),
+                    records: 96_242,
+                    last_seen: Some("2026-10-23T20:49:24Z".to_owned()),
+                }],
+            });
+        }
+        let line = app.remote_line(0);
+        assert_eq!(
+            line.text,
+            "receiving: 96,242 records, last at 2026-10-23 20:49:24 UTC"
+        );
+        assert!(line.up && line.error.is_none());
+        // Selected: every setting in the form, the name fixed.
+        app.act(&Action::SelectRemote(0), 0.0);
+        assert_eq!(app.form.editing.as_deref(), Some("n150"));
+        assert_eq!(app.form.kind, Kind::Tls);
+        assert_eq!(app.form.value(FormField::Host), "192.0.2.10");
+        assert_eq!(app.form.value(FormField::Server), "192.0.2.74");
+        assert!(!app.form.shown().contains(&FormField::Name));
+        // Changed and saved: kept, no new pairing for an unchanged server.
+        app.form.set(FormField::User, "admin");
+        app.act(&Action::FormAdd, 0.0);
+        assert_eq!(app.form.error, None);
+        assert!(app.tls_plan.is_none());
+        let kept = std::fs::read_to_string(&conf).expect("kept");
+        assert!(kept.contains("user = admin\n"), "{kept}");
+        assert!(kept.contains("pairing = paired\n"), "{kept}");
+        assert_eq!(app.form.value(FormField::User), "admin");
+        // Open shows its store, followed live.
+        app.act(&Action::OpenRemote(0), 0.0);
+        assert_eq!(app.origin_name, "n150 · ferrix");
+        assert_eq!(app.log.entries.len(), 3);
+        assert!(app.live);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// After Pair: the machine kept with every setting, shown selected
+    /// with them rather than an empty form, and the set-up's end taken
+    /// into its pairing.
+    #[test]
+    fn a_paired_machine_is_kept_whole_and_shown_selected() {
+        use super::{FormField, KeyChoice};
+        use crate::remote::{KeySource, Kind, Pairing};
+        let dir = scratch("tls-pair");
+        let conf = dir.join("machines.conf");
+        let mut app = app();
+        app.machines_root = Some(dir.join("root"));
+        app.remotes_file = Some(conf.clone());
+        app.form.kind = Kind::Tls;
+        app.form.set(FormField::Host, "192.0.2.10");
+        app.form.set(FormField::Server, "192.0.2.74");
+        app.form.key = KeyChoice::Paste;
+        let key = dir.join("keys/box");
+        let remote = app.form.remote(Some(&key));
+        app.keep_pairing(remote, "sha256:14e393f5");
+        assert_eq!(app.selected_remote, Some(0));
+        assert_eq!(app.form.editing.as_deref(), Some("192-0-2-10"));
+        assert_eq!(app.form.value(FormField::Host), "192.0.2.10");
+        assert_eq!(app.form.value(FormField::Server), "192.0.2.74");
+        assert_eq!(app.form.key, KeyChoice::Paste);
+        // The pasted key stays kept with nothing pasted again.
+        assert_eq!(app.form.problem(FormField::Paste), None);
+        let kept = crate::remote::parse(&std::fs::read_to_string(&conf).expect("kept"));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].key_source, KeySource::Pasted);
+        assert_eq!(kept[0].key.as_deref(), Some(key.to_str().expect("a path")));
+        assert_eq!(kept[0].server.as_deref(), Some("192.0.2.74"));
+        assert_eq!(kept[0].pairing, Pairing::Applying);
+        assert_eq!(kept[0].ca_fingerprint.as_deref(), Some("sha256:14e393f5"));
+        assert_eq!(app.remote_line(0).text, "being set up on the machine");
+        if let Ok(mut outcome) = app.tls_outcome.lock() {
+            *outcome = Some(("192-0-2-10".to_owned(), true));
+        }
+        assert!(app.poll_machines(1));
+        let kept = crate::remote::parse(&std::fs::read_to_string(&conf).expect("kept"));
+        assert_eq!(kept[0].pairing, Pairing::Paired);
+        assert_eq!(app.remote_line(0).text, "paired · no records yet");
+        // Another machine: an empty form again.
+        app.act(&Action::FormNew, 0.0);
+        assert_eq!(app.form.editing, None);
+        assert_eq!(app.selected_remote, None);
+        checked(&app);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn numbers_and_times_read_as_the_rows_say_them() {
+        assert_eq!(super::grouped(96_242), "96,242");
+        assert_eq!(super::grouped(7), "7");
+        assert_eq!(super::grouped(1_000), "1,000");
+        assert_eq!(
+            super::when("2026-10-23T20:49:24Z"),
+            "2026-10-23 20:49:24 UTC"
+        );
     }
 
     #[test]

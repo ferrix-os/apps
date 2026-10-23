@@ -488,6 +488,9 @@ impl Window {
         if self.app.page == Page::Machines {
             self.dirty = true;
         }
+        if self.app.poll_machines(self.ticks) {
+            self.dirty = true;
+        }
         if self.ticks.is_multiple_of(10)
             && let Some(root) = self.app.machines_root.clone()
             && self.app.rescan_machines(&root)

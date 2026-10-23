@@ -16,8 +16,15 @@
 //! password, and with `IdentitiesOnly=yes` when a key is named. An agent's
 //! keys are used as `ssh` uses them. No secret is ever written here.
 //!
-//! **Forwarded over TLS** -- lode's own upload to a lode-receive here -- is
-//! a kind the file can name and the window shows, not yet one it sets up.
+//! **Forwarded over TLS** -- lode's own upload to a lode-receive here --
+//! is set up over ssh ([`crate::tls`]); its store is the one lode-receive
+//! keeps for it, found by the `paired=` line of each store's `machine`
+//! file ([`crate::store::paired_store`]).
+//!
+//! Every setting is kept: how the log comes, the host, user and port, how
+//! ssh logs in (ssh's own keys, a key file's path, or the path of a pasted
+//! key kept under `keys/` -- never the key itself), the server the machine
+//! reaches this one by, and the pairing's state with its CA fingerprint.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write as _};
@@ -50,6 +57,69 @@ impl Kind {
     }
 }
 
+/// How ssh logs in to the machine, as kept.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeySource {
+    /// ssh's own keys and the agent's.
+    #[default]
+    Agent,
+    /// A key file the person chose: [`Remote::key`] is its path.
+    File,
+    /// A key pasted into the form, kept in a file of its own:
+    /// [`Remote::key`] is that file's path, never the key.
+    Pasted,
+}
+
+impl KeySource {
+    /// Its word in the file.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            KeySource::Agent => "agent",
+            KeySource::File => "file",
+            KeySource::Pasted => "pasted",
+        }
+    }
+}
+
+/// Where a TLS machine's pairing stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pairing {
+    /// Not paired yet (or kept before pairing was).
+    #[default]
+    None,
+    /// The set-up was confirmed and is being done on the machine.
+    Applying,
+    /// The set-up was done on the machine.
+    Paired,
+    /// The set-up stopped before it was done.
+    Failed,
+}
+
+impl Pairing {
+    /// Its word in the file.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Pairing::None => "none",
+            Pairing::Applying => "applying",
+            Pairing::Paired => "paired",
+            Pairing::Failed => "failed",
+        }
+    }
+
+    /// The pairing a word names.
+    #[must_use]
+    pub fn named(word: &str) -> Self {
+        match word {
+            "applying" => Pairing::Applying,
+            "paired" => Pairing::Paired,
+            "failed" => Pairing::Failed,
+            _ => Pairing::None,
+        }
+    }
+}
+
 /// One machine's settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Remote {
@@ -66,18 +136,23 @@ pub struct Remote {
     /// A private key to log in with; none for ssh's own choice and the
     /// agent's.
     pub key: Option<String>,
+    /// How that key was chosen.
+    pub key_source: KeySource,
+    /// TLS: how the machine reaches this one, the receiver's name or
+    /// address.
+    pub server: Option<String>,
+    /// TLS: where the pairing stands.
+    pub pairing: Pairing,
+    /// TLS: the receiver's CA, as `lode-receive pair` said it.
+    pub ca_fingerprint: Option<String>,
+    /// The machine's id, once its store says it (32 hex digits).
+    pub machine_id: Option<String>,
 }
 
 impl Remote {
     /// Why these settings cannot be used, if they cannot.
     #[must_use]
     pub fn refused(&self) -> Option<String> {
-        let plain = |text: &str| {
-            !text.is_empty()
-                && text
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':'))
-        };
         if !plain(&self.name) {
             return Some("a name of letters, digits, dots, dashes and underscores".to_owned());
         }
@@ -92,6 +167,23 @@ impl Remote {
         }
         if self.key.as_deref().is_some_and(|key| key.contains('\n')) {
             return Some("a key file's path".to_owned());
+        }
+        if self.server.as_deref().is_some_and(|server| !plain(server)) {
+            return Some("a server name or address".to_owned());
+        }
+        if self
+            .ca_fingerprint
+            .as_deref()
+            .is_some_and(|print| !plain(print))
+        {
+            return Some("a CA fingerprint".to_owned());
+        }
+        if self
+            .machine_id
+            .as_deref()
+            .is_some_and(|id| id.len() != 32 || !id.chars().all(|c| c.is_ascii_hexdigit()))
+        {
+            return Some("a machine id of 32 hex digits".to_owned());
         }
         None
     }
@@ -142,6 +234,15 @@ impl Remote {
     }
 }
 
+/// Whether `text` is a plain word of the file: letters, digits, `.`, `-`,
+/// `_` and `:`.
+fn plain(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':'))
+}
+
 /// `~/` at a path's start, the home directory.
 fn expand_home(path: &str) -> PathBuf {
     match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
@@ -176,6 +277,8 @@ pub fn config_path() -> Option<PathBuf> {
 #[must_use]
 pub fn parse(text: &str) -> Vec<Remote> {
     let mut out: Vec<Remote> = Vec::new();
+    // Each section's `key_from`, by the section's place.
+    let mut sources: Vec<Option<KeySource>> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -190,20 +293,44 @@ pub fn parse(text: &str) -> Vec<Remote> {
                 port: 22,
                 ..Remote::default()
             });
+            sources.push(None);
             continue;
         }
         let (Some(remote), Some((key, value))) = (out.last_mut(), line.split_once('=')) else {
             continue;
         };
         let value = value.trim().to_owned();
+        let some = |value: String| (!value.is_empty()).then_some(value);
         match key.trim() {
             "kind" => remote.kind = if value == "tls" { Kind::Tls } else { Kind::Ssh },
             "host" => remote.host = value,
             "user" => remote.user = value,
             "port" => remote.port = value.parse().unwrap_or(0),
-            "key" => remote.key = (!value.is_empty()).then_some(value),
+            "key" => remote.key = some(value),
+            "key_from" => {
+                if let Some(source) = sources.last_mut() {
+                    *source = Some(match value.as_str() {
+                        "file" => KeySource::File,
+                        "pasted" => KeySource::Pasted,
+                        _ => KeySource::Agent,
+                    });
+                }
+            }
+            "server" => remote.server = some(value),
+            "pairing" => remote.pairing = Pairing::named(&value),
+            "ca" => remote.ca_fingerprint = some(value),
+            "machine_id" => remote.machine_id = some(value.to_ascii_lowercase()),
             _ => {}
         }
+    }
+    for (remote, source) in out.iter_mut().zip(sources) {
+        // A file from before the key's source was kept: a key named is a
+        // file, none is ssh's own.
+        remote.key_source = match (source, &remote.key) {
+            (_, None) => KeySource::Agent,
+            (Some(KeySource::Pasted), Some(_)) => KeySource::Pasted,
+            (_, Some(_)) => KeySource::File,
+        };
     }
     out.retain(|remote| remote.refused().is_none());
     out
@@ -223,8 +350,26 @@ pub fn write(remotes: &[Remote]) -> String {
             remote.user,
             remote.port
         ));
+        let source = if remote.key.is_some() {
+            remote.key_source
+        } else {
+            KeySource::Agent
+        };
+        text.push_str(&format!("key_from = {}\n", source.word()));
         if let Some(key) = &remote.key {
             text.push_str(&format!("key = {key}\n"));
+        }
+        if let Some(server) = &remote.server {
+            text.push_str(&format!("server = {server}\n"));
+        }
+        if remote.kind == Kind::Tls {
+            text.push_str(&format!("pairing = {}\n", remote.pairing.word()));
+        }
+        if let Some(print) = &remote.ca_fingerprint {
+            text.push_str(&format!("ca = {print}\n"));
+        }
+        if let Some(id) = &remote.machine_id {
+            text.push_str(&format!("machine_id = {id}\n"));
         }
     }
     text
@@ -590,7 +735,7 @@ fn rfc3339(seconds: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, Remote, StoreWriter, follow_command, parse, write};
+    use super::{KeySource, Kind, Pairing, Remote, StoreWriter, follow_command, parse, write};
     use ferrix_lode_core::record::Record;
     use std::rc::Rc;
 
@@ -602,6 +747,8 @@ mod tests {
             user: "root".to_owned(),
             port: 2222,
             key: Some("~/.ssh/id_ed25519".to_owned()),
+            key_source: KeySource::File,
+            ..Remote::default()
         }
     }
 
@@ -615,6 +762,51 @@ mod tests {
         assert_eq!(read[0].name, "ok");
         assert_eq!(read[0].port, 22);
         assert!(!write(&remotes).to_ascii_lowercase().contains("password ="));
+    }
+
+    #[test]
+    fn every_setting_of_a_machine_is_kept_and_read_back() {
+        let tls = Remote {
+            name: "n150".to_owned(),
+            kind: Kind::Tls,
+            host: "192.0.2.10".to_owned(),
+            user: "root".to_owned(),
+            port: 22,
+            key: Some("/home/u/.config/ferrix/lode/keys/n150".to_owned()),
+            key_source: KeySource::Pasted,
+            server: Some("192.0.2.74".to_owned()),
+            pairing: Pairing::Paired,
+            ca_fingerprint: Some("sha256:14e393f5".to_owned()),
+            machine_id: Some("062359e1029c423c0c0b4c9cf5216a14".to_owned()),
+        };
+        let agent = Remote {
+            name: "pi".to_owned(),
+            host: "pi.lan".to_owned(),
+            port: 22,
+            ..Remote::default()
+        };
+        let remotes = vec![n150(), tls.clone(), agent];
+        let text = write(&remotes);
+        assert_eq!(parse(&text), remotes);
+        // The pasted key is named by its file's path: the key is never here.
+        assert!(text.contains("key_from = pasted\nkey = /home/u/.config/ferrix/lode/keys/n150\n"));
+        assert!(text.contains("server = 192.0.2.74\npairing = paired\nca = sha256:14e393f5\n"));
+        assert!(!text.contains("BEGIN"));
+        // The file the customer's first pairing left: no server, no key
+        // source, no pairing. It reads as a TLS machine with ssh's own keys.
+        let old =
+            parse("[machine n150]\nkind = tls\nhost = 192.168.9.193\nuser = root\nport = 22\n");
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0].kind, Kind::Tls);
+        assert_eq!(old[0].key_source, KeySource::Agent);
+        assert_eq!(old[0].server, None);
+        assert_eq!(old[0].pairing, Pairing::None);
+        // A key from before the source was kept is a file.
+        let keyed = parse("[machine a]\nhost = a\nkey = ~/.ssh/id\n");
+        assert_eq!(keyed[0].key_source, KeySource::File);
+        // An unsafe server or id is refused with its machine.
+        assert!(parse("[machine a]\nhost = a\nserver = x;y\n").is_empty());
+        assert!(parse("[machine a]\nhost = a\nmachine_id = 12\n").is_empty());
     }
 
     #[test]

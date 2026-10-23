@@ -288,6 +288,81 @@ pub fn machines(root: &Path) -> Vec<Machine> {
     found
 }
 
+/// A store under lode-receive's root as its `machine` file says it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Received {
+    /// The store.
+    pub dir: PathBuf,
+    /// The host's name the machine sends.
+    pub hostname: Option<String>,
+    /// When it last sent, RFC 3339.
+    pub last_seen: Option<String>,
+    /// The name it was paired as, for a machine that sends over TLS.
+    pub paired: Option<String>,
+}
+
+impl Received {
+    /// The machine's id, when the store is named by one.
+    #[must_use]
+    pub fn machine_id(&self) -> Option<String> {
+        let name = self.dir.file_name()?.to_str()?;
+        (name.len() == 32 && name.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| name.to_ascii_lowercase())
+    }
+}
+
+/// Every store under `root` with what its `machine` file says.
+#[must_use]
+pub fn received(root: &Path) -> Vec<Received> {
+    let Ok(listing) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut found: Vec<Received> = listing
+        .flatten()
+        .filter(|item| !item.file_name().to_string_lossy().starts_with('.'))
+        .filter(|item| item.path().is_dir())
+        .map(|item| {
+            let said = fs::read_to_string(item.path().join("machine")).unwrap_or_default();
+            let field = |key: &str| {
+                said.lines()
+                    .find_map(|line| line.strip_prefix(key).map(str::trim))
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            };
+            Received {
+                dir: item.path(),
+                hostname: field("hostname="),
+                last_seen: field("last_seen="),
+                paired: field("paired="),
+            }
+        })
+        .collect();
+    found.sort_by(|a, b| a.dir.cmp(&b.dir));
+    found
+}
+
+/// The store a machine paired as `name` sends to under `root`: the one
+/// named by its `machine_id` when it has one, else the one whose `machine`
+/// file says `paired=<name>` -- lode-receive names a store by the machine's
+/// id, or by the host name it sends (`host-ferrix/`), never by the paired
+/// name, so this line is what ties a store to the machine's settings. Of
+/// several, the one heard from last.
+#[must_use]
+pub fn paired_store(root: &Path, name: &str, machine_id: Option<&str>) -> Option<Received> {
+    let stores = received(root);
+    if let Some(id) = machine_id
+        && let Some(store) = stores
+            .iter()
+            .find(|store| store.machine_id().as_deref() == Some(&id.to_ascii_lowercase()))
+    {
+        return Some(store.clone());
+    }
+    stores
+        .into_iter()
+        .filter(|store| store.paired.as_deref() == Some(name))
+        .max_by(|a, b| a.last_seen.cmp(&b.last_seen))
+}
+
 /// Whether `dir`, or a directory up to `depth` below it, holds a segment.
 fn holds_segments(dir: &Path, depth: usize) -> bool {
     let Ok(listing) = fs::read_dir(dir) else {
@@ -493,6 +568,51 @@ mod tests {
         assert!(refused.is_empty());
         assert_eq!(read.len(), 2);
         assert_eq!(read[1].boot_id, [9; 16]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_tls_machine_is_found_by_the_name_it_was_paired_as() {
+        let root = std::env::temp_dir().join(format!("lode-viewer-paired-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let records = vec![record(1, "one")];
+        // The N150 has no machine id: lode-receive keeps it by its host
+        // name, ferrix; a second box also called ferrix was paired as pi.
+        for (dir, said) in [
+            (
+                "host-ferrix",
+                "hostname=ferrix\nlast_seen=2026-10-23T20:49:21Z\npaired=n150\n",
+            ),
+            (
+                "host-ferrix.lan",
+                "hostname=ferrix\nlast_seen=2026-10-23T20:00:00Z\npaired=pi\n",
+            ),
+            (
+                "0a0b0c0d0e0f00112233445566778899",
+                "hostname=ferrix\nlast_seen=2026-10-22T10:00:00Z\npaired=\n",
+            ),
+        ] {
+            super::import(&records, &root.join(dir)).expect("written");
+            std::fs::write(root.join(dir).join("machine"), said).expect("written");
+        }
+        let n150 = super::paired_store(&root, "n150", None).expect("n150's store");
+        assert_eq!(n150.dir, root.join("host-ferrix"));
+        assert_eq!(n150.last_seen.as_deref(), Some("2026-10-23T20:49:21Z"));
+        assert_eq!(n150.machine_id(), None);
+        let pi = super::paired_store(&root, "pi", None).expect("pi's store");
+        assert_eq!(pi.dir, root.join("host-ferrix.lan"));
+        assert_eq!(super::paired_store(&root, "box", None), None);
+        // Once the machine has an id, its store is the id's.
+        let by_id = super::paired_store(&root, "n150", Some("0A0B0C0D0E0F00112233445566778899"))
+            .expect("by id");
+        assert_eq!(
+            by_id.machine_id().as_deref(),
+            Some("0a0b0c0d0e0f00112233445566778899")
+        );
+        // Two senders called ferrix: the paired name is the label's first word.
+        let names: Vec<String> = super::machines(&root).into_iter().map(|m| m.name).collect();
+        assert!(names.contains(&"n150 · ferrix".to_owned()), "{names:?}");
+        assert!(names.contains(&"pi · ferrix".to_owned()), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

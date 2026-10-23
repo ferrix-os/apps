@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::remote::{Kind, Remote};
+use crate::remote::{KeySource, Kind, Remote};
 
 /// The Add machine form's fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +76,12 @@ pub struct Form {
     pub name_typed: bool,
     /// Why the last Add was refused.
     pub error: Option<String>,
+    /// The machine the form shows, by name, when it shows a kept one to
+    /// change rather than a new one to add; its name is then fixed.
+    pub editing: Option<String>,
+    /// The kept file of the machine's pasted key, when it has one: an
+    /// empty paste area keeps it.
+    pub kept_key: Option<String>,
 }
 
 // The form may hold a private key: its Debug says only how long that is.
@@ -92,6 +98,7 @@ impl std::fmt::Debug for Form {
             )
             .field("focus", &self.focus)
             .field("error", &self.error)
+            .field("editing", &self.editing)
             .finish_non_exhaustive()
     }
 }
@@ -114,6 +121,8 @@ impl Default for Form {
             all: false,
             name_typed: false,
             error: None,
+            editing: None,
+            kept_key: None,
         }
     }
 }
@@ -318,14 +327,57 @@ pub fn key_file_problem(path: &str) -> Option<&'static str> {
 }
 
 impl Form {
+    /// The form showing kept machine `remote`, to change it: every setting
+    /// in its field, the key's way chosen as it was. A pasted key is never
+    /// read back into the form; its kept file stays unless another is
+    /// pasted.
+    #[must_use]
+    pub fn of(remote: &Remote) -> Self {
+        let mut form = Form {
+            kind: remote.kind,
+            key: match (remote.key_source, &remote.key) {
+                (_, None) | (KeySource::Agent, _) => KeyChoice::Agent,
+                (KeySource::File, Some(_)) => KeyChoice::File,
+                (KeySource::Pasted, Some(_)) => KeyChoice::Paste,
+            },
+            name_typed: true,
+            editing: Some(remote.name.clone()),
+            kept_key: (remote.key_source == KeySource::Pasted)
+                .then(|| remote.key.clone())
+                .flatten(),
+            ..Form::default()
+        };
+        let key = if remote.key_source == KeySource::File {
+            remote.key.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        for (field, value) in [
+            (FormField::Name, remote.name.clone()),
+            (FormField::Host, remote.host.clone()),
+            (FormField::User, remote.user.clone()),
+            (FormField::Port, remote.port.to_string()),
+            (FormField::Key, key),
+            (FormField::Server, remote.server.clone().unwrap_or_default()),
+        ] {
+            if let Some(slot) = form.values.get_mut(field.index()) {
+                *slot = value;
+            }
+        }
+        form
+    }
+
     /// A field's value.
     #[must_use]
     pub fn value(&self, field: FormField) -> &str {
         self.values.get(field.index()).map_or("", String::as_str)
     }
 
-    /// A field's value, to change.
+    /// A field's value, to change: a kept machine's name is fixed.
     pub fn value_mut(&mut self, field: FormField) -> Option<&mut String> {
+        if field == FormField::Name && self.editing.is_some() {
+            return None;
+        }
         self.values.get_mut(field.index())
     }
 
@@ -355,12 +407,10 @@ impl Form {
     /// The fields shown, in the order Tab goes.
     #[must_use]
     pub fn shown(&self) -> Vec<FormField> {
-        let mut fields = vec![
-            FormField::Name,
-            FormField::Host,
-            FormField::User,
-            FormField::Port,
-        ];
+        let mut fields = vec![FormField::Host, FormField::User, FormField::Port];
+        if self.editing.is_none() {
+            fields.insert(0, FormField::Name);
+        }
         match self.key {
             KeyChoice::Agent => {}
             KeyChoice::File => fields.push(FormField::Key),
@@ -389,6 +439,8 @@ impl Form {
                 .is_none()
                 .then_some("a port from 1 to 65535"),
             FormField::Key => key_file_problem(value),
+            // A kept machine's pasted key stays when nothing is pasted.
+            FormField::Paste if value.is_empty() && self.kept_key.is_some() => None,
             FormField::Paste => pasted_key_problem(value),
             FormField::Server => (!plain(value))
                 .then_some("this machine's name or address, as the machine reaches it"),
@@ -404,21 +456,39 @@ impl Form {
     }
 
     /// The settings it describes; the key is the file's path, or, for a
-    /// pasted key, `keep`'s answer.
+    /// pasted key, `keep`'s answer (else the key kept before). The
+    /// pairing's state is the caller's to carry over.
     #[must_use]
     pub fn remote(&self, kept_key: Option<&Path>) -> Remote {
-        let key = match self.key {
-            KeyChoice::Agent => None,
-            KeyChoice::File => Some(self.value(FormField::Key).trim().to_owned()),
-            KeyChoice::Paste => kept_key.map(|path| path.display().to_string()),
+        let (key, key_source) = match self.key {
+            KeyChoice::Agent => (None, KeySource::Agent),
+            KeyChoice::File => (
+                Some(self.value(FormField::Key).trim().to_owned()),
+                KeySource::File,
+            ),
+            KeyChoice::Paste => (
+                kept_key
+                    .map(|path| path.display().to_string())
+                    .or_else(|| self.kept_key.clone()),
+                KeySource::Pasted,
+            ),
         };
+        let key = key.filter(|key| !key.is_empty());
+        let server = self.value(FormField::Server).trim();
         Remote {
             name: self.value(FormField::Name).trim().to_owned(),
             kind: self.kind,
             host: self.value(FormField::Host).trim().to_owned(),
             user: self.value(FormField::User).trim().to_owned(),
             port: self.value(FormField::Port).trim().parse().unwrap_or(0),
-            key: key.filter(|key| !key.is_empty()),
+            key_source: if key.is_some() {
+                key_source
+            } else {
+                KeySource::Agent
+            },
+            key,
+            server: (self.kind == Kind::Tls && !server.is_empty()).then(|| server.to_owned()),
+            ..Remote::default()
         }
     }
 

@@ -377,6 +377,21 @@ fn settle(mut app: App, options: &Options) -> App {
                 .map(|text| crate::remote::parse(&text))
                 .unwrap_or_default();
             app.links = app.remotes.iter().map(|_| None).collect();
+            // What is known of them, with nothing written: the frame has
+            // no machines file to keep it in.
+            app.learn_ids();
+            if app
+                .remotes
+                .iter()
+                .any(|remote| remote.kind == crate::remote::Kind::Tls)
+            {
+                let root = app.machines_root.clone().or_else(receive_root);
+                if let (Ok(check), Ok(mut receiving)) =
+                    (crate::tls::check(root.as_ref()), app.receiving.lock())
+                {
+                    *receiving = Some(check);
+                }
+            }
         }
     }
     if let Some(home) = std::env::var_os("XDG_CONFIG_HOME")
@@ -510,7 +525,13 @@ fn target_remote(
         host: host.to_owned(),
         user: user.to_owned(),
         port: port.parse().unwrap_or(0),
+        key_source: if key.is_some() {
+            crate::remote::KeySource::File
+        } else {
+            crate::remote::KeySource::Agent
+        },
         key,
+        ..crate::remote::Remote::default()
     }
 }
 
