@@ -306,12 +306,20 @@ pub fn remote_commands(plan: &Plan) -> Vec<String> {
     out
 }
 
-/// The receiver's program: `LODE_RECEIVE_BIN`, else `lode-receive` on the
-/// path.
+/// The receiver's program: `LODE_RECEIVE_BIN`, else beside the viewer,
+/// else `lode-receive` on the path.
 #[must_use]
 pub fn receiver() -> Option<PathBuf> {
     if let Some(bin) = std::env::var_os("LODE_RECEIVE_BIN") {
         return Some(PathBuf::from(bin));
+    }
+    // Installed beside the viewer, as install-linux.sh puts it.
+    if let Some(beside) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join("lode-receive")))
+        .filter(|bin| bin.is_file())
+    {
+        return Some(beside);
     }
     std::env::var_os("PATH").and_then(|path| {
         std::env::split_paths(&path)
@@ -470,6 +478,12 @@ mod tests {
             "mkdir -p '/etc/ferrix/lode-upload' && cat > '/etc/ferrix/lode-upload/n150.crt'"
         ));
         assert_eq!(shown[3], "svc restart lode-upload.service");
+        // lode-receive's restart since it enables the service too.
+        let enabling = PAIRED.replace(
+            "\"svc restart lode-upload.service\"",
+            "\"svc enable lode-upload.service && svc restart lode-upload.service\"",
+        );
+        assert!(plan_of(&enabling).is_some_and(|plan| plan.restart.starts_with("svc enable")));
         assert_eq!(
             parse_json("[1, true, null, \"a\\u00e9\"]"),
             Some(Value::Array(vec![

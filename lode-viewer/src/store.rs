@@ -258,12 +258,18 @@ pub fn machines(root: &Path) -> Vec<Machine> {
                     .map(str::to_owned)
             };
             let hostname = field("hostname=");
-            let name = match (&hostname, dir_name.strip_prefix("host-")) {
-                (_, Some(host)) => hostname.clone().unwrap_or_else(|| host.to_owned()),
-                (Some(host), None) => {
-                    format!("{host} · {}", dir_name.get(..8).unwrap_or(&dir_name))
-                }
-                (None, None) => dir_name.clone(),
+            // lode-receive's name for a machine it paired, beside the host's.
+            let paired = field("paired=");
+            let name = match (&paired, &hostname, dir_name.strip_prefix("host-")) {
+                (Some(paired), Some(host), _) if paired != host => format!("{paired} · {host}"),
+                (Some(paired), _, _) => paired.clone(),
+                (None, hostname, host_dir) => match (hostname, host_dir) {
+                    (_, Some(host)) => hostname.clone().unwrap_or_else(|| host.to_owned()),
+                    (Some(host), None) => {
+                        format!("{host} · {}", dir_name.get(..8).unwrap_or(&dir_name))
+                    }
+                    (None, None) => dir_name.clone(),
+                },
             };
             let seen = field("last_seen=").map_or_else(String::new, |at| format!(" · seen {at}"));
             Machine {
@@ -464,7 +470,7 @@ mod tests {
         assert_eq!(super::import(&records[..1], &id).expect("written"), 1);
         std::fs::write(
             id.join("machine"),
-            "hostname=n150-box\nlast_seen=2026-10-23T18:00:00Z\n",
+            "hostname=n150-box\nlast_seen=2026-10-23T18:00:00Z\npaired=n150\n",
         )
         .expect("written");
         std::fs::create_dir_all(root.join("empty")).expect("a directory");
@@ -477,7 +483,7 @@ mod tests {
             .iter()
             .map(|machine| machine.name.as_str())
             .collect();
-        assert_eq!(names, vec!["n150-box · 062359e1", "pixel7", "n150"]);
+        assert_eq!(names, vec!["n150 · n150-box", "pixel7", "n150"]);
         assert!(
             machines[0].note.ends_with("seen 2026-10-23T18:00:00Z"),
             "{}",

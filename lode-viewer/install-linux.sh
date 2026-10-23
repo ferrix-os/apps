@@ -22,6 +22,13 @@ target=${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/lode-viewer/target}
 (cd "$here" && CARGO_TARGET_DIR=$target cargo build --release)
 
 install -Dm755 "$target/release/lode-viewer" "$prefix/bin/lode-viewer"
+# lode-receive, the receiver machines forward their log to over TLS, beside
+# the viewer that sets them up -- where this checkout has it.
+receiver="$here/../../system/linux/lode-net"
+if [ -f "$receiver/Cargo.toml" ]; then
+    (cd "$receiver" && CARGO_TARGET_DIR=$target cargo build --release --bin lode-receive)
+    install -Dm755 "$target/release/lode-receive" "$prefix/bin/lode-receive"
+fi
 mkdir -p "$prefix/share/lode-viewer/fonts"
 install -m644 "$here"/share/fonts/*.ttf "$prefix/share/lode-viewer/fonts/"
 install -Dm644 "$here/LICENSE-ibm-plex" "$prefix/share/licenses/lode-viewer/LICENSE-ibm-plex"
