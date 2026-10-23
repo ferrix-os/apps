@@ -65,6 +65,16 @@ pub enum Action {
     FormKind(crate::remote::Kind),
     /// Add the machine the form describes, and follow it.
     FormAdd,
+    /// Choose how ssh logs in to the machine.
+    FormKeyChoice(KeyChoice),
+    /// Open the file dialog for the key.
+    FormChooseKey,
+    /// Take this key of `~/.ssh`, listed where no file dialog is.
+    FormPickKey(usize),
+    /// Paste the clipboard into the key area.
+    FormPaste,
+    /// Take this of the ways the machine may reach this one.
+    FormServer(usize),
     /// Stop following a machine and forget its settings (its store stays).
     RemoveRemote(usize),
     /// Show a followed machine's store.
@@ -143,97 +153,7 @@ pub enum Action {
     Minimap(f32, f32),
 }
 
-/// The Add machine form's fields.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FormField {
-    /// What to call it.
-    Name,
-    /// Its host.
-    Host,
-    /// The user to log in as.
-    User,
-    /// The port.
-    Port,
-    /// The key.
-    Key,
-    /// How the machine reaches this one, for TLS.
-    Server,
-}
-
-impl FormField {
-    /// Every field, in the order Tab goes.
-    pub const ALL: [FormField; 6] = [
-        FormField::Name,
-        FormField::Host,
-        FormField::User,
-        FormField::Port,
-        FormField::Key,
-        FormField::Server,
-    ];
-}
-
-/// The Add machine form.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Form {
-    /// The values, in [`FormField::ALL`]'s order.
-    pub values: [String; 6],
-    /// How the log comes.
-    pub kind: crate::remote::Kind,
-    /// The field typed into.
-    pub focus: Option<FormField>,
-    /// Why the last Add was refused.
-    pub error: Option<String>,
-}
-
-impl Default for Form {
-    fn default() -> Self {
-        Form {
-            values: [
-                String::new(),
-                String::new(),
-                "root".to_owned(),
-                "22".to_owned(),
-                String::new(),
-                String::new(),
-            ],
-            kind: crate::remote::Kind::Ssh,
-            focus: None,
-            error: None,
-        }
-    }
-}
-
-impl Form {
-    /// A field's value.
-    #[must_use]
-    pub fn value(&self, field: FormField) -> &str {
-        let index = FormField::ALL
-            .iter()
-            .position(|each| *each == field)
-            .unwrap_or(0);
-        self.values.get(index).map_or("", String::as_str)
-    }
-
-    /// A field's value, to change.
-    fn value_mut(&mut self, field: FormField) -> Option<&mut String> {
-        let index = FormField::ALL.iter().position(|each| *each == field)?;
-        self.values.get_mut(index)
-    }
-
-    /// The settings it describes.
-    #[must_use]
-    pub fn remote(&self) -> crate::remote::Remote {
-        let key = self.value(FormField::Key).trim();
-        crate::remote::Remote {
-            name: self.value(FormField::Name).trim().to_owned(),
-            kind: self.kind,
-            host: self.value(FormField::Host).trim().to_owned(),
-            user: self.value(FormField::User).trim().to_owned(),
-            port: self.value(FormField::Port).trim().parse().unwrap_or(0),
-            key: (!key.is_empty()).then(|| key.to_owned()),
-        }
-    }
-}
+pub use crate::form::{Form, FormField, KeyChoice};
 
 /// The state.
 #[derive(Debug)]
@@ -314,6 +234,28 @@ pub struct App {
     pub tls_plan: Option<(crate::remote::Remote, crate::tls::Plan)>,
     /// What the TLS set-up has done, a line a step, shared with its thread.
     pub tls_progress: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// What the pointer is over, for the hover state.
+    pub hover: Option<Action>,
+    /// The file dialog open, its answer to come.
+    pub picking: Option<std::sync::mpsc::Receiver<crate::picker::Picked>>,
+    /// Where no file dialog answered: `~/.ssh`'s private keys to pick from.
+    pub key_files: Option<Vec<PathBuf>>,
+    /// Why there is no file dialog.
+    pub picker_note: Option<String>,
+    /// Wakes the window when the file dialog answered.
+    pub waker: Option<compositor_toolkit::Waker>,
+    /// The ways a machine might reach this one, for TLS's server.
+    pub reach: Vec<String>,
+    /// A paste the window should ask the compositor for.
+    pub want_paste: Option<crate::selection::Which>,
+    /// Text a field's Ctrl+C or Ctrl+X put on the clipboard: never said.
+    pub field_copy: Option<String>,
+    /// Whether the query's whole text is selected.
+    pub draft_all: bool,
+    /// The Machines page's scroll.
+    pub machines_scroll: f32,
+    /// The Machines page's height as last drawn.
+    pub machines_height: std::cell::Cell<f32>,
     /// Whether the boot before is drawn beside this one.
     pub compare: bool,
     /// What the last copy put on the clipboard, for the window to offer.
@@ -369,6 +311,17 @@ impl App {
             form: Form::default(),
             tls_plan: None,
             tls_progress: std::sync::Arc::default(),
+            hover: None,
+            picking: None,
+            key_files: None,
+            picker_note: None,
+            waker: None,
+            reach: Vec::new(),
+            want_paste: None,
+            field_copy: None,
+            draft_all: false,
+            machines_scroll: 0.0,
+            machines_height: std::cell::Cell::new(0.0),
             compare: false,
             clipboard: None,
             toast: None,
@@ -585,7 +538,38 @@ impl App {
 
     /// The form's machine added and followed.
     fn add_remote(&mut self) {
-        let remote = self.form.remote();
+        self.form.error = None;
+        if let Some((field, why)) = self.form.first_problem() {
+            self.form.error = Some(format!("{}: {why}", field_label(field)));
+            self.form.focus = Some(field);
+            return;
+        }
+        if self
+            .remotes
+            .iter()
+            .any(|known| known.name == self.form.value(FormField::Name).trim())
+        {
+            self.form.error = Some(format!(
+                "{} is a machine already",
+                self.form.value(FormField::Name).trim()
+            ));
+            return;
+        }
+        let kept = if self.form.key == KeyChoice::Paste {
+            match crate::form::keep_key(
+                self.form.value(FormField::Name).trim(),
+                self.form.value(FormField::Paste),
+            ) {
+                Ok(path) => Some(path),
+                Err(why) => {
+                    self.form.error = Some(format!("the key could not be kept: {why}"));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let remote = self.form.remote(kept.as_deref());
         if remote.kind == crate::remote::Kind::Tls {
             self.pair_tls(remote);
             return;
@@ -703,42 +687,144 @@ impl App {
         ));
     }
 
-    /// A key typed into the form: answers whether anything changed.
-    pub fn form_key(&mut self, keysym: &str, text: &str, shift: bool) -> bool {
+    /// A key typed into the form, with Shift, Ctrl and Alt as held:
+    /// answers whether anything changed.
+    pub fn form_key(
+        &mut self,
+        keysym: &str,
+        text: &str,
+        (shift, control, alt): (bool, bool, bool),
+    ) -> bool {
         let Some(field) = self.form.focus else {
             return false;
         };
         match keysym {
             "Tab" | "ISO_Left_Tab" => {
-                let at = FormField::ALL
-                    .iter()
-                    .position(|each| *each == field)
-                    .unwrap_or(0);
+                let shown = self.form.shown();
+                let at = shown.iter().position(|each| *each == field).unwrap_or(0);
                 let next = if shift || keysym == "ISO_Left_Tab" {
-                    (at + FormField::ALL.len() - 1) % FormField::ALL.len()
+                    (at + shown.len() - 1) % shown.len()
                 } else {
-                    (at + 1) % FormField::ALL.len()
+                    (at + 1) % shown.len()
                 };
-                self.form.focus = FormField::ALL.get(next).copied();
+                self.form.focus = shown.get(next).copied();
+                self.form.all = false;
+            }
+            // A key's lines are typed with Return; Ctrl+Return adds.
+            "Return" | "KP_Enter" if field == FormField::Paste && !control => {
+                if let Some(value) = self.form.value_mut(field) {
+                    value.push('\n');
+                }
+                self.form.changed(field);
             }
             "Return" | "KP_Enter" => {
                 self.form.focus = None;
                 self.add_remote();
             }
             "Escape" => self.form.focus = None,
-            "BackSpace" => {
-                if let Some(value) = self.form.value_mut(field) {
-                    let _ = value.pop();
+            _ => {
+                let mut all = self.form.all;
+                let Some(value) = self.form.value_mut(field) else {
+                    return false;
+                };
+                let edit = crate::form::edit_line(value, &mut all, keysym, text, (control, alt));
+                self.form.all = all;
+                match edit {
+                    crate::form::Edit::Changed => self.form.changed(field),
+                    crate::form::Edit::Copy(copied) => {
+                        self.form.changed(field);
+                        // A private key is never put on the clipboard.
+                        if field != FormField::Paste {
+                            self.field_copy = Some(copied);
+                        }
+                    }
+                    crate::form::Edit::Unhandled => return false,
                 }
             }
-            _ if !text.is_empty() => {
-                if let Some(value) = self.form.value_mut(field) {
-                    value.push_str(text);
-                }
-            }
-            _ => return false,
         }
         true
+    }
+
+    /// Text pasted: into the form's field or the query, whichever is
+    /// typed into. Answers whether it went anywhere.
+    pub fn paste(&mut self, text: &str) -> bool {
+        if self.form.focus.is_some() {
+            return self.form.paste(text);
+        }
+        if self.editing {
+            if std::mem::take(&mut self.draft_all) {
+                self.draft.clear();
+            }
+            let line = text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("");
+            self.draft.push_str(line.trim());
+            self.query.set_text(&self.draft.clone());
+            return true;
+        }
+        false
+    }
+
+    /// Open the desktop's file dialog for the key, on a thread of its own.
+    fn choose_key(&mut self) {
+        if self.picking.is_some() {
+            return;
+        }
+        let (send, answer) = std::sync::mpsc::channel();
+        let waker = self.waker.clone();
+        let folder = crate::picker::ssh_dir().filter(|dir| dir.is_dir());
+        let _ = std::thread::Builder::new()
+            .name("file-dialog".to_owned())
+            .spawn(move || {
+                let picked =
+                    crate::picker::choose("Choose the machine's private key", folder.as_deref());
+                let _ = send.send(picked);
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            });
+        self.picking = Some(answer);
+    }
+
+    /// Take the file dialog's answer if it came: answers whether it did.
+    pub fn poll_picker(&mut self) -> bool {
+        let Some(answer) = &self.picking else {
+            return false;
+        };
+        let picked = match answer.try_recv() {
+            Ok(picked) => picked,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                crate::picker::Picked::NoPortal("the file dialog went away".to_owned())
+            }
+        };
+        self.picking = None;
+        self.picked(picked);
+        true
+    }
+
+    /// What the file dialog answered.
+    pub fn picked(&mut self, picked: crate::picker::Picked) {
+        match picked {
+            crate::picker::Picked::File(path) => {
+                self.form.set(FormField::Key, &home_short(&path));
+                self.key_files = None;
+                self.picker_note = None;
+            }
+            crate::picker::Picked::Cancelled => {}
+            crate::picker::Picked::NoPortal(why) => {
+                self.key_files = Some(
+                    crate::picker::ssh_dir()
+                        .map(|dir| crate::picker::private_keys(&dir))
+                        .unwrap_or_default(),
+                );
+                self.picker_note = Some(format!(
+                    "No file dialog here ({why}). Pick a key of ~/.ssh, or type its path."
+                ));
+                self.form.focus = Some(FormField::Key);
+            }
+        }
     }
 
     /// Look again for the machines under the receiver's root: one that
@@ -794,9 +880,73 @@ impl App {
             Action::BootMenu => self.boot_menu = !self.boot_menu,
             Action::FormFocus(field) => {
                 self.page = Page::Machines;
+                if self.form.focus != Some(field) {
+                    self.form.all = false;
+                }
                 self.form.focus = Some(field);
             }
-            Action::FormKind(kind) => self.form.kind = kind,
+            Action::FormKind(kind) => {
+                if kind == crate::remote::Kind::Tls && crate::tls::receiver().is_none() {
+                    self.form.error = Some(
+                        "Forwarded over TLS needs lode-receive on this machine: install-linux.sh installs it beside the viewer".to_owned(),
+                    );
+                    return;
+                }
+                self.form.kind = kind;
+                self.form.error = None;
+                if kind == crate::remote::Kind::Tls {
+                    if self.reach.is_empty() {
+                        self.reach = crate::form::reach_choices();
+                    }
+                    if self.form.value(FormField::Server).is_empty()
+                        && let Some(first) = self.reach.first().cloned()
+                    {
+                        self.form.set(FormField::Server, &first);
+                    }
+                }
+                if self
+                    .form
+                    .focus
+                    .is_some_and(|field| !self.form.shown().contains(&field))
+                {
+                    self.form.focus = None;
+                }
+            }
+            Action::FormKeyChoice(choice) => {
+                self.form.key = choice;
+                self.form.error = None;
+                self.form.focus = match choice {
+                    KeyChoice::Agent => None,
+                    KeyChoice::File => Some(FormField::Key),
+                    KeyChoice::Paste => Some(FormField::Paste),
+                };
+            }
+            Action::FormChooseKey => {
+                self.form.key = KeyChoice::File;
+                self.choose_key();
+            }
+            Action::FormPickKey(index) => {
+                if let Some(path) = self
+                    .key_files
+                    .as_ref()
+                    .and_then(|files| files.get(index))
+                    .cloned()
+                {
+                    self.form.set(FormField::Key, &home_short(&path));
+                    self.key_files = None;
+                    self.picker_note = None;
+                }
+            }
+            Action::FormPaste => {
+                self.form.key = KeyChoice::Paste;
+                self.form.focus = Some(FormField::Paste);
+                self.want_paste = Some(crate::selection::Which::Clipboard);
+            }
+            Action::FormServer(index) => {
+                if let Some(choice) = self.reach.get(index).cloned() {
+                    self.form.set(FormField::Server, &choice);
+                }
+            }
             Action::FormAdd => self.add_remote(),
             Action::TlsConfirm => self.apply_tls(),
             Action::TlsCancel => {
@@ -1028,27 +1178,32 @@ impl App {
         }
     }
 
-    /// A key, while the query is typed into: answers whether anything
-    /// changed.
-    pub fn type_key(&mut self, keysym: &str, text: &str) -> bool {
+    /// A key, while the query is typed into, with Ctrl and Alt as held:
+    /// answers whether anything changed.
+    pub fn type_key(&mut self, keysym: &str, text: &str, (control, alt): (bool, bool)) -> bool {
         match keysym {
             "Return" | "KP_Enter" => {
+                self.draft_all = false;
                 self.commit_draft();
                 self.scroll = 0.0;
             }
             "Escape" => {
+                self.draft_all = false;
                 self.editing = false;
                 self.draft = self.query.text.clone();
             }
-            "BackSpace" => {
-                let _ = self.draft.pop();
+            _ => {
+                let mut all = self.draft_all;
+                let edit =
+                    crate::form::edit_line(&mut self.draft, &mut all, keysym, text, (control, alt));
+                self.draft_all = all;
+                match edit {
+                    crate::form::Edit::Changed => {}
+                    crate::form::Edit::Copy(copied) => self.field_copy = Some(copied),
+                    crate::form::Edit::Unhandled => return false,
+                }
                 self.query.set_text(&self.draft.clone());
             }
-            _ if !text.is_empty() => {
-                self.draft.push_str(text);
-                self.query.set_text(&self.draft.clone());
-            }
-            _ => return false,
         }
         true
     }
@@ -1097,6 +1252,31 @@ pub fn clock_ms(us: u64, offset_s: i32) -> String {
 pub fn clock_hm(us: u64, offset_s: i32) -> String {
     let civil = ferrix_lode_core::time::Civil::at(us, offset_s);
     format!("{:02}:{:02}", civil.hour, civil.minute)
+}
+
+/// A field's label, for an error that names it.
+#[must_use]
+pub fn field_label(field: FormField) -> &'static str {
+    match field {
+        FormField::Name => "Name",
+        FormField::Host => "Host",
+        FormField::User => "User",
+        FormField::Port => "Port",
+        FormField::Key => "Key file",
+        FormField::Paste => "Pasted key",
+        FormField::Server => "This machine",
+    }
+}
+
+/// A path with the home directory written `~`.
+#[must_use]
+pub fn home_short(path: &std::path::Path) -> String {
+    if let Some(home) = std::env::var_os("HOME")
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rest.display());
+    }
+    path.display().to_string()
 }
 
 #[cfg(test)]
@@ -1160,9 +1340,9 @@ mod tests {
         app.act(&Action::Zoom(0), 0.0);
         app.act(&Action::EditQuery, 0.0);
         for character in "id = even".chars() {
-            let _ = app.type_key("x", &character.to_string());
+            let _ = app.type_key("x", &character.to_string(), (false, false));
         }
-        let _ = app.type_key("Return", "");
+        let _ = app.type_key("Return", "", (false, false));
         assert_eq!(app.found.len(), 100);
         app.act(&Action::Level(6), 0.0);
         assert_eq!(app.found.len(), 0);
@@ -1180,6 +1360,145 @@ mod tests {
                 .as_deref()
                 .is_some_and(|cursor| cursor.starts_with("i="))
         );
+    }
+
+    #[test]
+    fn add_names_the_first_field_wrong_and_goes_to_it() {
+        use super::FormField;
+        let mut app = app();
+        app.act(&Action::FormAdd, 0.0);
+        assert_eq!(app.form.focus, Some(FormField::Name));
+        assert!(
+            app.form
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("Name:"))
+        );
+        app.form.set(FormField::Host, "box.lan");
+        app.act(&Action::FormKeyChoice(super::KeyChoice::Paste), 0.0);
+        assert_eq!(app.form.focus, Some(FormField::Paste));
+        let _ = app.form_key("x", "x", (false, false, false));
+        let _ = app.form_key("Return", "", (false, false, false));
+        assert_eq!(app.form.value(FormField::Paste), "x\n");
+        app.act(&Action::FormAdd, 0.0);
+        assert_eq!(app.form.focus, Some(FormField::Paste));
+        assert!(app.remotes.is_empty());
+    }
+
+    #[test]
+    fn ctrl_v_is_a_paste_never_the_letter_and_tab_skips_hidden_fields() {
+        use super::FormField;
+        let mut app = app();
+        app.act(&Action::FormFocus(FormField::Port), 0.0);
+        assert!(!app.form_key("v", "v", (false, true, false)));
+        assert_eq!(app.form.value(FormField::Port), "22");
+        let _ = app.form_key("Tab", "", (false, false, false));
+        assert_eq!(
+            app.form.focus,
+            Some(FormField::Name),
+            "no Key or Server field is shown"
+        );
+        assert!(app.paste("n150\n"));
+        assert_eq!(app.form.value(FormField::Name), "n150");
+        let _ = app.form_key("a", "", (false, true, false));
+        let _ = app.form_key("c", "", (false, true, false));
+        assert_eq!(app.field_copy.as_deref(), Some("n150"));
+        // The query takes a paste too.
+        app.form.focus = None;
+        app.act(&Action::EditQuery, 0.0);
+        app.draft.clear();
+        assert!(app.paste("id = even"));
+        let _ = app.type_key("Return", "", (false, false));
+        assert_eq!(app.query.text, "id = even");
+    }
+
+    /// Run by hand against a Ferrix guest with sshd (`run-compositor
+    /// --ssh PORT`): the form filled and pressed as a person would, a
+    /// pasted key kept and followed live, then the TLS set-up planned and
+    /// applied. `LODE_E2E_PORT`, `LODE_E2E_KEY` (a private key the guest
+    /// takes), `LODE_E2E_DIR` (a scratch directory: the config, the stores
+    /// and the receiver's root go there).
+    #[test]
+    #[ignore = "needs a guest with sshd"]
+    fn the_form_adds_a_guest_live_and_pairs_it_over_tls() {
+        use super::{FormField, KeyChoice};
+        use crate::remote::Kind;
+        let var = |name: &str| std::env::var(name).expect(name);
+        let dir = std::path::PathBuf::from(var("LODE_E2E_DIR"));
+        let key = std::fs::read_to_string(var("LODE_E2E_KEY")).expect("the key");
+        let mut app = app();
+        app.machines_root = Some(dir.join("root"));
+        app.remotes_file = Some(dir.join("machines.conf"));
+        // Live over SSH, the key pasted.
+        app.act(&Action::FormFocus(FormField::Host), 0.0);
+        assert!(app.paste("127.0.0.1"));
+        app.form.set(FormField::Name, "guest");
+        app.form.set(FormField::Port, &var("LODE_E2E_PORT"));
+        app.act(&Action::FormKeyChoice(KeyChoice::Paste), 0.0);
+        assert!(app.paste(&key));
+        app.act(&Action::FormAdd, 0.0);
+        assert_eq!(app.form.error, None);
+        assert_eq!(app.remotes.len(), 1);
+        let kept = app.remotes[0].key.clone().expect("a kept key");
+        println!("key kept at {kept}");
+        let started = std::time::Instant::now();
+        let mut records = 0;
+        while started.elapsed() < std::time::Duration::from_secs(40) {
+            let state = app.links[0]
+                .as_ref()
+                .map(crate::remote::Link::now)
+                .unwrap_or_default();
+            records = state.records;
+            if records > 0 && state.up {
+                println!("live: {} records, {}", state.records, state.state);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        assert!(records > 0, "no records arrived");
+        // Forwarded over TLS, the same key as a file.
+        app.act(&Action::FormKind(Kind::Tls), 0.0);
+        assert_eq!(app.form.error, None, "TLS is offered");
+        assert!(
+            !app.form.value(FormField::Server).is_empty(),
+            "the server is filled in"
+        );
+        app.form.set(FormField::Server, "10.0.2.2");
+        app.form.set(FormField::Host, "127.0.0.1");
+        app.form.set(FormField::Name, "guest-tls");
+        app.form.set(FormField::Port, &var("LODE_E2E_PORT"));
+        app.act(&Action::FormKeyChoice(KeyChoice::File), 0.0);
+        app.form.set(FormField::Key, &kept);
+        app.act(&Action::FormAdd, 0.0);
+        assert_eq!(app.form.error, None);
+        let (_, plan) = app.tls_plan.clone().expect("a plan to confirm");
+        for command in crate::tls::remote_commands(&plan) {
+            println!("plan: {command}");
+        }
+        app.act(&Action::TlsConfirm, 0.0);
+        let started = std::time::Instant::now();
+        loop {
+            let lines = app
+                .tls_progress
+                .lock()
+                .map(|l| l.clone())
+                .unwrap_or_default();
+            if lines
+                .iter()
+                .any(|l| l.starts_with("stopped") || l.ends_with("sends its log here now"))
+                || started.elapsed() > std::time::Duration::from_secs(60)
+            {
+                for line in &lines {
+                    println!("tls: {line}");
+                }
+                assert!(
+                    lines.iter().any(|l| l.ends_with("sends its log here now")),
+                    "{lines:?}"
+                );
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
     }
 
     #[test]

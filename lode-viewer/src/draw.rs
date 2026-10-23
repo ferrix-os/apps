@@ -488,6 +488,28 @@ impl<'a, 'p, A> Canvas<'a, 'p, A> {
         run.width / s
     }
 
+    /// `text` broken into lines no wider than `max` in `face`.
+    pub fn wrap(&mut self, face: Face, text: &str, max: f32) -> Vec<String> {
+        wrap_with(text, max, |line| self.text.width(face, line))
+    }
+
+    /// `text` in `face` from (`x`, `y`), wrapped to `max` wide, a line
+    /// `line` tall each. Answers the height drawn.
+    pub fn wrapped(
+        &mut self,
+        face: Face,
+        text: &str,
+        (x, y, line): (f32, f32, f32),
+        color: Color,
+        max: f32,
+    ) -> f32 {
+        let lines = self.wrap(face, text, max);
+        for (n, each) in lines.iter().enumerate() {
+            let _ = self.text(face, each, (x, y + line * n as f32, line), color, Some(max));
+        }
+        line * lines.len() as f32
+    }
+
     /// `text` right-aligned to `right`.
     pub fn text_right(
         &mut self,
@@ -557,6 +579,41 @@ impl<'a, 'p, A> Canvas<'a, 'p, A> {
     }
 }
 
+/// `text` broken at spaces into lines no wider than `max` by `width`; a
+/// word wider than `max` alone is broken where it must be. Explicit line
+/// breaks stay.
+pub fn wrap_with(text: &str, max: f32, mut width: impl FnMut(&str) -> f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        for word in paragraph.split(' ').filter(|word| !word.is_empty()) {
+            let tried = if line.is_empty() {
+                word.to_owned()
+            } else {
+                format!("{line} {word}")
+            };
+            if width(&tried) <= max {
+                line = tried;
+                continue;
+            }
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            // A word too wide alone is broken by characters.
+            for c in word.chars() {
+                line.push(c);
+                if width(&line) > max && line.chars().count() > 1 {
+                    let last = line.pop().unwrap_or(c);
+                    lines.push(std::mem::take(&mut line));
+                    line.push(last);
+                }
+            }
+        }
+        lines.push(line);
+    }
+    lines
+}
+
 /// tiny-skia's colour.
 fn skia(color: Color) -> tiny_skia::Color {
     tiny_skia::Color::from_rgba8(color.0, color.1, color.2, color.3)
@@ -568,4 +625,24 @@ fn paint(color: Color, anti_alias: bool) -> Paint<'static> {
     paint.set_color(skia(color));
     paint.anti_alias = anti_alias;
     paint
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_with;
+
+    #[test]
+    fn long_text_wraps_at_spaces_and_a_long_word_breaks() {
+        let width = |text: &str| text.chars().count() as f32;
+        assert_eq!(
+            wrap_with("Keys only: ssh runs with BatchMode", 12.0, width),
+            vec!["Keys only:", "ssh runs", "with", "BatchMode"]
+        );
+        assert_eq!(wrap_with("abcdefgh", 3.0, width), vec!["abc", "def", "gh"]);
+        assert_eq!(wrap_with("a\nb", 10.0, width), vec!["a", "b"]);
+        let help = "Keys only: the viewer never asks for a password and keeps none. ssh runs with BatchMode, and with IdentitiesOnly when a key is named.";
+        let lines = wrap_with(help, 60.0, width);
+        assert!(lines.iter().all(|line| line.chars().count() <= 60));
+        assert_eq!(lines.join(" "), help);
+    }
 }

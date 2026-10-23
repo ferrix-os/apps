@@ -32,6 +32,9 @@ compositor-text = { path = "../../system/linux/compositor/text" }
 # The Wayland client: the window, the keyboard, the pointer, the buffers,
 # and the timer Live follows the store on.
 compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
+# The session bus, for the desktop's file dialog (the XDG Desktop Portal's
+# FileChooser) when a key file is chosen.
+compositor-dbus = { path = "../../system/linux/compositor/dbus" }
 
 # As the compositor's: overflow checks on everywhere.
 [profile.dev]

@@ -219,3 +219,79 @@ fn machines_received_are_picked_one_at_a_time_and_followed() {
     assert_eq!(app.machine, 0);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_add_machine_form_is_drawn_whole_in_each_palette_kind_and_key() {
+    use crate::app::{FormField, KeyChoice};
+    use crate::remote::Kind as Link;
+    let mut app = App::new(
+        log(),
+        Origin::File("sample.jsonl".into()),
+        "sample".to_owned(),
+    );
+    app.page = Page::Machines;
+    app.reach = vec!["192.0.2.10".to_owned(), "nazuna".to_owned()];
+    let mut text = crate::draw::Text::with(compositor_text::Fonts::new());
+    let _ = text.fonts.add_dir(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/share/fonts"
+    )));
+    for mode in [crate::theme::Mode::Light, crate::theme::Mode::Dark] {
+        app.mode = mode;
+        for kind in [Link::Ssh, Link::Tls] {
+            for key in [KeyChoice::Agent, KeyChoice::File, KeyChoice::Paste] {
+                app.form.kind = kind;
+                app.form.key = key;
+                let (_, hits) =
+                    crate::window::frame(&app, &mut text, (1440, 960), 1).expect("a frame");
+                let has = |wanted: &Action| hits.iter().any(|(_, action)| action == wanted);
+                // Both ways are offered, a disabled one answering with why.
+                assert!(has(&Action::FormKind(Link::Ssh)) && has(&Action::FormKind(Link::Tls)));
+                for choice in [KeyChoice::Agent, KeyChoice::File, KeyChoice::Paste] {
+                    assert!(has(&Action::FormKeyChoice(choice)));
+                }
+                assert_eq!(has(&Action::FormChooseKey), key == KeyChoice::File);
+                assert_eq!(has(&Action::FormPaste), key == KeyChoice::Paste);
+                assert_eq!(
+                    has(&Action::FormFocus(FormField::Server)),
+                    kind == Link::Tls,
+                    "the server field is there for TLS"
+                );
+                assert_eq!(has(&Action::FormServer(1)), kind == Link::Tls);
+                // Nothing is placed past the window's right edge.
+                assert!(hits.iter().all(|(place, _)| place.right() <= 1440.0));
+            }
+        }
+    }
+    // The help text is wrapped to the card, not cut at its edge.
+    let help = "Keys only: the viewer never asks for a password and keeps none. ssh runs with BatchMode, and with IdentitiesOnly when a key is named.";
+    let face = crate::draw::sans(12.0, 400);
+    let lines = crate::draw::wrap_with(help, 600.0, |line| text.width(face, line));
+    assert!(lines.len() >= 2);
+    assert!(lines.iter().all(|line| text.width(face, line) <= 600.0));
+    assert!(app.machines_height.get() > 600.0);
+}
+
+#[test]
+fn a_query_pasted_over_a_selected_one_replaces_it() {
+    // What the desktop boot (`test-compositor --boot lode-viewer`) pastes
+    // after its typed `id=msr`: the counts it requires.
+    let mut app = App::new(
+        log(),
+        Origin::File("sample.jsonl".into()),
+        "sample".to_owned(),
+    );
+    app.act(&Action::Zoom(0), 0.0);
+    app.act(&Action::EditQuery, 0.0);
+    for c in "id=msr".chars() {
+        let _ = app.type_key("x", &c.to_string(), (false, false));
+    }
+    let _ = app.type_key("Return", "", (false, false));
+    assert_eq!(app.found.len(), 13);
+    app.act(&Action::EditQuery, 0.0);
+    let _ = app.type_key("a", "", (true, false));
+    assert!(app.paste("id=usbhid"));
+    let _ = app.type_key("Return", "", (false, false));
+    assert_eq!(app.query.text, "id=usbhid");
+    assert_eq!(app.found.len(), 14);
+}

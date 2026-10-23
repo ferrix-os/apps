@@ -25,6 +25,9 @@ pub const APP_ID: &str = "rocks.magical.lode-viewer";
 /// The left button's evdev code.
 const BUTTON_LEFT: u32 = 0x110;
 
+/// The middle button's: it pastes the primary selection.
+const BUTTON_MIDDLE: u32 = 0x112;
+
 /// How often Live reads the store: `lode -f`'s quarter second is for a
 /// terminal; a window redraws less.
 const FOLLOW_EVERY: Duration = Duration::from_millis(1000);
@@ -214,7 +217,7 @@ impl Clipboard {
 }
 
 /// Write `bytes` to the descriptor a paste handed over, and close it.
-fn write_and_close(fd: i32, bytes: &[u8]) {
+pub(crate) fn write_and_close(fd: i32, bytes: &[u8]) {
     use std::io::Write as _;
     use std::os::fd::FromRawFd as _;
     // SAFETY: the descriptor arrived with the compositor's `send` event and
@@ -228,6 +231,10 @@ fn write_and_close(fd: i32, bytes: &[u8]) {
 struct Window {
     /// The clipboard, when the compositor has one to offer to.
     clipboard: Option<Clipboard>,
+    /// The clipboard and the primary selection, to paste from.
+    selections: crate::selection::Selections,
+    /// The last key press's serial, which a copy names.
+    key_serial: u32,
     /// A copy waiting to be offered.
     copied: Option<String>,
     /// The state.
@@ -332,8 +339,14 @@ pub fn run(app: App) -> i32 {
     ));
     let timer = client.add_timer(FOLLOW_EVERY, Some(FOLLOW_EVERY));
     let clipboard = Clipboard::bind(&mut client);
+    let waker = client.waker().ok();
+    let selections = crate::selection::Selections::bind(&mut client, waker.clone());
+    let mut app = app;
+    app.waker = waker;
     let mut window = Window {
         clipboard,
+        selections,
+        key_serial: 0,
         copied: None,
         app,
         text,
@@ -364,10 +377,16 @@ pub fn run(app: App) -> i32 {
                 Event::Timer(id) if id == timer => window.tick(),
                 Event::Object {
                     object,
+                    interface,
                     opcode,
                     args,
-                    ..
                 } => {
+                    if window
+                        .selections
+                        .event(&mut client, object, interface, opcode, &args)
+                    {
+                        continue;
+                    }
                     if let Some(clipboard) = &mut window.clipboard {
                         let _ = clipboard.event(&mut client, object, opcode, &args);
                     }
@@ -375,6 +394,7 @@ pub fn run(app: App) -> i32 {
                 event => window.handle(&mut client, event),
             }
         }
+        window.selection_work(&mut client);
         if let Some(text) = window.copied.take() {
             let offered = window
                 .clipboard
@@ -427,6 +447,40 @@ pub fn run(app: App) -> i32 {
 }
 
 impl Window {
+    /// Pastes asked for and arrived, a field's copy, and the file
+    /// dialog's answer.
+    fn selection_work(&mut self, client: &mut Client) {
+        if let Some(which) = self.app.want_paste.take()
+            && !self.selections.paste(client, which)
+            && which == crate::selection::Which::Clipboard
+        {
+            self.app.toast = Some("nothing to paste: the clipboard has no text".to_owned());
+            self.toast_since = Some(Instant::now());
+            self.dirty = true;
+        }
+        while let Some(text) = self.selections.take() {
+            if self.app.paste(&text) {
+                // How much, never what: it may be a private key.
+                say(&format!("pasted {} characters", text.chars().count()));
+                self.dirty = true;
+            }
+        }
+        if let Some(text) = self.app.field_copy.take() {
+            let length = text.chars().count();
+            let offered = self.selections.copy(client, text.clone(), self.key_serial)
+                || self
+                    .clipboard
+                    .as_mut()
+                    .is_some_and(|clipboard| clipboard.copy(client, text));
+            if offered {
+                say(&format!("copied {length} characters from a field"));
+            }
+        }
+        if self.app.poll_picker() {
+            self.dirty = true;
+        }
+    }
+
     /// The timer: follow the store when Live, and take a stale toast down.
     fn tick(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
@@ -537,16 +591,29 @@ impl Window {
             }
             Event::Keyboard(KeyboardEvent::Key(key)) if key.pressed => {
                 let keysym = key.keysym.unwrap_or_default();
-                if key.modifiers.control && matches!(keysym, "q" | "w") {
+                let mods = key.modifiers;
+                self.key_serial = key.serial;
+                if mods.control && matches!(keysym, "q" | "w") {
                     self.done = true;
                     return;
                 }
+                let typing = self.app.form.focus.is_some() || self.app.editing;
+                let paste = (mods.control && !mods.alt && matches!(keysym, "v" | "V"))
+                    || (mods.shift && keysym == "Insert");
+                if typing && paste {
+                    self.app.want_paste = Some(crate::selection::Which::Clipboard);
+                    return;
+                }
                 if self.app.form.focus.is_some() {
-                    self.dirty |= self.app.form_key(keysym, &key.text, key.modifiers.shift);
+                    self.dirty |=
+                        self.app
+                            .form_key(keysym, &key.text, (mods.shift, mods.control, mods.alt));
                     return;
                 }
                 if self.app.editing {
-                    self.dirty |= self.app.type_key(keysym, &key.text);
+                    self.dirty |= self
+                        .app
+                        .type_key(keysym, &key.text, (mods.control, mods.alt));
                     if !self.app.editing && matches!(keysym, "Return" | "KP_Enter") {
                         self.say_query();
                     }
@@ -555,6 +622,7 @@ impl Window {
                 self.key(keysym);
             }
             Event::Pointer(pointer) => self.point(client, pointer),
+            Event::Woken => {}
             _ => {}
         }
     }
@@ -655,7 +723,11 @@ impl Window {
                 let most = (crate::ui::overview_height() - (h as f32 - crate::ui::HEADER)).max(0.0);
                 self.app.overview_scroll = (self.app.overview_scroll + by).clamp(0.0, most);
             }
-            Page::Machines => {}
+            Page::Machines => {
+                let view = h as f32 - crate::ui::HEADER;
+                let most = (self.app.machines_height.get() - view).max(0.0);
+                self.app.machines_scroll = (self.app.machines_scroll + by).clamp(0.0, most);
+            }
         }
     }
 
@@ -676,6 +748,11 @@ impl Window {
                 if edge != self.edge {
                     self.edge = edge;
                     client.set_cursor(shape);
+                }
+                let over = self.hit(x as f32, y as f32);
+                if over != self.app.hover {
+                    self.app.hover = over;
+                    self.dirty = true;
                 }
                 if let Some(action) = self.dragging.clone() {
                     self.act(&action, x as f32, y as f32);
@@ -739,6 +816,23 @@ impl Window {
                     self.dragging = Some(action.clone());
                 }
                 self.act(&action, x, y);
+            }
+            PointerEvent::Button {
+                surface,
+                x,
+                y,
+                button: BUTTON_MIDDLE,
+                pressed: true,
+                ..
+            } if surface == self.surface => {
+                // The middle button pastes the primary selection into the
+                // field under it.
+                if let Some(action @ (Action::FormFocus(_) | Action::EditQuery)) =
+                    self.hit(x as f32, y as f32)
+                {
+                    self.act(&action, x as f32, y as f32);
+                    self.app.want_paste = Some(crate::selection::Which::Primary);
+                }
             }
             PointerEvent::Axis {
                 surface,

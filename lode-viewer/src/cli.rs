@@ -47,7 +47,9 @@ usage: lode-viewer [FILE.jsonl ...] [-D DIR ...] [options]
   --no-remotes      do not follow the machines of ~/.config/ferrix/lode/machines.conf
   --import FILE.jsonl --into DIR
                     write a JSONL export (a box log) into DIR as lode's store, and exit
-  --page NAME       open on overview or logs
+  --page NAME       open on overview, logs or machines
+  --form KIND[,KEY[,HOST]]
+                    the Add machine form filled so (ssh or tls; agent, file or paste), for --render
   --theme NAME      light or dark
   --boot N          the boot, as lode -b counts it: 0 the last, -1 the one before
   --where EXPR      the Logs page's query, in lode's filter language
@@ -93,6 +95,8 @@ pub struct Options {
     pub yes: bool,
     /// The page.
     pub page: Option<Page>,
+    /// `--form`: the Add machine form's kind, key and host.
+    pub form: Option<String>,
     /// The palette.
     pub mode: Option<Mode>,
     /// The boot offset.
@@ -172,7 +176,7 @@ pub fn parse(arguments: &[String]) -> Asked {
                     let name = value("a page")?;
                     options.page = Some(
                         Page::named(&name)
-                            .ok_or(format!("{name} is not a page: overview, logs"))?,
+                            .ok_or(format!("{name} is not a page: overview, logs, machines"))?,
                     );
                 }
                 "--theme" => {
@@ -189,6 +193,7 @@ pub fn parse(arguments: &[String]) -> Asked {
                             .map_err(|_| format!("{text}: not a boot offset"))?,
                     );
                 }
+                "--form" => options.form = Some(value("KIND[,KEY[,HOST]]")?),
                 "--where" => options.query = Some(value("an expression")?),
                 "--zoom" => {
                     let text = value("seconds")?;
@@ -410,6 +415,26 @@ fn settle(mut app: App, options: &Options) -> App {
     }
     if let Some(page) = options.page {
         app.page = page;
+    }
+    if let Some(form) = &options.form {
+        let mut words = form.split(',');
+        if let Some(host) = words.clone().nth(2) {
+            app.form.set(crate::app::FormField::Host, host);
+        }
+        let kind = match words.next() {
+            Some("tls") => crate::remote::Kind::Tls,
+            _ => crate::remote::Kind::Ssh,
+        };
+        app.act(&Action::FormKind(kind), 0.0);
+        let key = match words.next() {
+            Some("file") => Some(crate::app::KeyChoice::File),
+            Some("paste") => Some(crate::app::KeyChoice::Paste),
+            _ => None,
+        };
+        if let Some(key) = key {
+            app.act(&Action::FormKeyChoice(key), 0.0);
+        }
+        app.page = Page::Machines;
     }
     if let Some(seq) = options.select
         && let Some(index) = app

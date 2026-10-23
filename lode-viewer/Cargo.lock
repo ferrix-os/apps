@@ -33,6 +33,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "compositor-dbus"
+version = "0.1.0"
+
+[[package]]
 name = "compositor-protocol"
 version = "0.1.0"
 dependencies = [
@@ -116,6 +120,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 name = "lode-viewer"
 version = "0.1.0"
 dependencies = [
+ "compositor-dbus",
  "compositor-text",
  "compositor-toolkit",
  "ferrix-lode-core",

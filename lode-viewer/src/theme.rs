@@ -23,6 +23,21 @@ impl Color {
             (alpha.clamp(0.0, 1.0) * 255.0) as u8,
         )
     }
+
+    /// This colour laid over opaque `under`: the opaque colour it shows as.
+    #[must_use]
+    pub fn over(self, under: Color) -> Self {
+        let a = u16::from(self.3);
+        let mix = |top: u8, bottom: u8| {
+            ((u16::from(top) * a + u16::from(bottom) * (255 - a) + 127) / 255) as u8
+        };
+        Color(
+            mix(self.0, under.0),
+            mix(self.1, under.1),
+            mix(self.2, under.2),
+            255,
+        )
+    }
 }
 
 /// Which palette.
