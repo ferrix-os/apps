@@ -212,6 +212,7 @@ fn shell(view: &mut View, app: &App) {
             .map(|(index, saved)| SavedItem {
                 name: s(&saved.name),
                 on: app.saved_in_use == Some(index),
+                editing: app.saved_edit == Some(Some(index)),
             })
             .collect(),
     );
@@ -309,6 +310,14 @@ fn shell(view: &mut View, app: &App) {
     shell
         .toast
         .set(ui, app.toast.as_deref().map_or_else(|| s(""), s));
+    shell.toast_action.set(
+        ui,
+        s(app
+            .toast_action
+            .filter(|_| app.toast.is_some())
+            .unwrap_or("")),
+    );
+    shell.naming.set(ui, app.saved_edit == Some(None));
 }
 
 /// A page of the sidebar.
@@ -759,6 +768,22 @@ pub(super) fn shell_action(app: &App, signal: ShellSignal) -> Vec<Action> {
         },
         ShellSignal::SavedQuery(index) => Action::Saved(usize::try_from(index).unwrap_or(0)),
         ShellSignal::NewSaved => Action::NewSaved,
+        ShellSignal::SavedName(name) => Action::SavedName(name.to_string()),
+        ShellSignal::SavedEditCancel => Action::SavedEditCancel,
+        ShellSignal::SavedRename(index) => Action::SavedRename(usize::try_from(index).unwrap_or(0)),
+        ShellSignal::SavedMenu(index, what) => {
+            let index = usize::try_from(index).unwrap_or(usize::MAX);
+            match what {
+                0 => Action::SavedRename(index),
+                1 => Action::SavedHere(index),
+                2 => Action::SavedDuplicate(index),
+                3 => Action::SavedMove(index, true),
+                4 => Action::SavedMove(index, false),
+                _ => Action::SavedDelete(index),
+            }
+        }
+        ShellSignal::RestoreSaved => Action::SavedRestore,
+        ShellSignal::ToastPressed => Action::ToastAction,
         ShellSignal::Boot(row) => {
             let index = app
                 .log

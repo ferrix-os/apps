@@ -174,6 +174,30 @@ fn text_at(view: &mut crate::ui::View, label: &str) -> Option<tole::Rect> {
     None
 }
 
+/// A shown `Text` in the sidebar saying `label`, at or below `top`.
+fn sidebar_text(view: &mut crate::ui::View, label: &str, top: f32) -> Option<tole::Rect> {
+    let mut stack: Vec<tole::ItemId> = view.ui.roots().to_vec();
+    while let Some(item) = stack.pop() {
+        let shown = view
+            .ui
+            .common(item)
+            .is_some_and(|common| view.ui.get(common.visible));
+        if !shown {
+            continue;
+        }
+        if let Some(text) = view.ui.text(item)
+            && &*view.ui.get(text.text) == label
+            && let Some(rect) = view.ui.rect_of(item)
+            && rect.x < 220.0
+            && rect.y >= top
+        {
+            return Some(rect);
+        }
+        stack.extend(view.ui.children(item).iter().rev());
+    }
+    None
+}
+
 /// Press and release the pointer on the text `label`; answers what the
 /// tree asked of the state.
 fn click(view: &mut crate::ui::View, label: &str) -> Vec<Action> {
@@ -687,5 +711,88 @@ fn crashes_are_grouped_newest_first_with_their_screenshot_and_their_log() {
     let _ = click(&mut view, "Open in Logs");
     assert_eq!(view.app.borrow().page, Page::Logs);
     assert!(view.app.borrow().selected.is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn saved_queries_are_named_renamed_deleted_undone_and_kept_in_their_file() {
+    let dir = std::env::temp_dir().join(format!("lode-viewer-saved-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("made");
+    let file = dir.join("viewer-queries.conf");
+    let mut app = App::new(
+        log(),
+        Origin::File("sample.jsonl".into()),
+        "sample".to_owned(),
+    );
+    app.load_saved(file.clone());
+    app.act(&Action::Zoom(0));
+    app.act(&Action::QueryText("id=msr".to_owned()));
+    app.act(&Action::QueryAccept);
+    let mut view = view_of(app, (1440, 1000));
+    let names = |view: &crate::ui::View| -> Vec<String> {
+        view.app
+            .borrow()
+            .saved
+            .iter()
+            .map(|s| s.name.clone())
+            .collect()
+    };
+    let type_in = |view: &mut crate::ui::View, text: &str| {
+        for c in text.chars() {
+            key(view, &c.to_string(), &c.to_string(), false);
+        }
+        key(view, "Return", "", false);
+        let _ = view.step();
+    };
+    // + new asks for a name.
+    let _ = click(&mut view, "+ new");
+    assert!(text_at(&mut view, "a name, then Return").is_some());
+    type_in(&mut view, "msr");
+    assert_eq!(names(&view), ["triage", "gpu", "msr"]);
+    assert!(
+        std::fs::read_to_string(&file)
+            .expect("kept")
+            .contains("msr = id=msr")
+    );
+    // A double click renames; a built-in one renamed stays hidden.
+    let rect = sidebar_text(&mut view, "@gpu", 0.0).expect("@gpu");
+    for _ in 0..2 {
+        view.ui.pointer_move(rect.x + 4.0, rect.y + 4.0);
+        view.ui.pointer_press();
+        view.ui.pointer_release();
+    }
+    let _ = view.step();
+    type_in(&mut view, "graphics");
+    assert_eq!(names(&view), ["triage", "graphics", "msr"]);
+    let kept = std::fs::read_to_string(&file).expect("kept");
+    assert!(kept.contains("hidden = gpu"), "{kept}");
+    // Deleted from its menu, and undone from the toast.
+    let rect = sidebar_text(&mut view, "@graphics", 0.0).expect("@graphics");
+    view.ui.pointer_move(rect.x + 4.0, rect.y + 4.0);
+    let _ = view.step();
+    let dots = sidebar_text(&mut view, "···", rect.y).expect("its menu's dots");
+    view.ui
+        .pointer_move(dots.x + dots.w / 2.0, dots.y + dots.h / 2.0);
+    view.ui.pointer_press();
+    view.ui.pointer_release();
+    let _ = view.step();
+    let _ = click(&mut view, "Delete");
+    assert_eq!(names(&view), ["triage", "msr"]);
+    assert!(text_at(&mut view, "@graphics deleted").is_some());
+    let _ = click(&mut view, "Undo");
+    assert_eq!(names(&view), ["triage", "graphics", "msr"]);
+    // The built-in ones back as they came.
+    view.app.borrow_mut().act(&Action::SavedRestore);
+    assert_eq!(names(&view), ["triage", "gpu", "graphics", "msr"]);
+    // The file read again is the list.
+    let mut again = App::new(
+        log(),
+        Origin::File("sample.jsonl".into()),
+        "sample".to_owned(),
+    );
+    again.load_saved(file);
+    let again: Vec<String> = again.saved.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(again, ["triage", "gpu", "graphics", "msr"]);
     let _ = std::fs::remove_dir_all(&dir);
 }

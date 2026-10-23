@@ -278,10 +278,17 @@ impl Loop {
                 self.dirty = true;
             }
         }
+        // A toast with a button stays twice as long.
+        let lasts = if app.toast_action.is_some() {
+            TOAST_FOR * 2
+        } else {
+            TOAST_FOR
+        };
         if let Some(since) = self.toast_since
-            && since.elapsed() >= TOAST_FOR
+            && since.elapsed() >= lasts
         {
             app.toast = None;
+            app.toast_action = None;
             self.toast_since = None;
             self.dirty = true;
         }
@@ -314,6 +321,12 @@ impl Loop {
             "End" => self.app.borrow_mut().scroll_by(f32::MAX / 4.0),
             "Left" => self.app.borrow_mut().act(&Action::Step(-10)),
             "Right" => self.app.borrow_mut().act(&Action::Step(10)),
+            "F2" => {
+                let in_use = self.app.borrow().saved_in_use;
+                if let Some(index) = in_use {
+                    self.act(&Action::SavedRename(index));
+                }
+            }
             "o" => self.app.borrow_mut().page = Page::Overview,
             "l" => self.app.borrow_mut().page = Page::Logs,
             "t" => {

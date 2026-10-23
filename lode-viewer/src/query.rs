@@ -33,33 +33,88 @@ pub fn builtin() -> Vec<Saved> {
     ]
 }
 
-/// The saved queries' file: `name = expression` a line, `#` a comment.
+/// The saved queries' file: `name = expression` a line, in the order
+/// they are listed, `#` a comment, and `hidden = NAME ...` for the
+/// built-in ones a person hid.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SavedFile {
+    /// The queries, in order.
+    pub saved: Vec<Saved>,
+    /// The built-in ones hidden.
+    pub hidden: Vec<String>,
+}
+
+/// The saved queries' file read.
 #[must_use]
-pub fn parse_saved(text: &str) -> Vec<Saved> {
-    text.lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                return None;
-            }
-            let (name, expr) = line.split_once('=')?;
-            let name = name.trim().trim_start_matches('@');
-            (!name.is_empty() && filter::parse(expr.trim()).is_ok()).then(|| Saved {
+pub fn parse_saved(text: &str) -> SavedFile {
+    let mut file = SavedFile::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((name, expr)) = line.split_once('=') else {
+            continue;
+        };
+        let name = name.trim().trim_start_matches('@');
+        if name == "hidden" {
+            file.hidden.extend(
+                expr.split_whitespace()
+                    .map(|each| each.trim_start_matches('@').to_owned()),
+            );
+            continue;
+        }
+        if valid_saved_name(name) && filter::parse(expr.trim()).is_ok() {
+            file.saved.push(Saved {
                 name: name.to_owned(),
                 text: expr.trim().to_owned(),
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    file
 }
 
 /// The saved queries as their file holds them.
 #[must_use]
-pub fn write_saved(saved: &[Saved]) -> String {
-    let mut text = String::from("# lode-viewer's saved queries: name = lode filter expression\n");
+pub fn write_saved(saved: &[Saved], hidden: &[String]) -> String {
+    let mut text = String::from(
+        "# lode-viewer's saved queries: name = lode filter expression, in order;\n\
+         # `hidden =` names the built-in ones hidden.\n",
+    );
     for each in saved {
         text.push_str(&format!("{} = {}\n", each.name, each.text));
     }
+    if !hidden.is_empty() {
+        text.push_str(&format!("hidden = {}\n", hidden.join(" ")));
+    }
     text
+}
+
+/// The list a viewer shows: the file's, in its order, with each built-in
+/// it neither holds nor hides first.
+#[must_use]
+pub fn saved_list(file: &SavedFile) -> Vec<Saved> {
+    let mut list: Vec<Saved> = builtin()
+        .into_iter()
+        .filter(|each| {
+            !file.hidden.contains(&each.name)
+                && !file.saved.iter().any(|kept| kept.name == each.name)
+        })
+        .collect();
+    list.extend(file.saved.iter().cloned());
+    list
+}
+
+/// Whether `name` can name a saved query: letters, digits, `-` and `_`,
+/// at most 32, and not `hidden`.
+#[must_use]
+pub fn valid_saved_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name != "hidden"
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
 /// A chip: one more condition, shown beside the query and removed with its
@@ -237,7 +292,7 @@ impl Query {
 
 #[cfg(test)]
 mod tests {
-    use super::{Chip, Query, builtin, parse_saved, write_saved};
+    use super::{Chip, Query, builtin, parse_saved, saved_list, write_saved};
     use crate::data::Log;
     use ferrix_lode_core::record::Record;
 
@@ -311,8 +366,19 @@ mod tests {
     #[test]
     fn saved_queries_read_back_what_was_written() {
         let saved = builtin();
-        assert_eq!(parse_saved(&write_saved(&saved)), saved);
-        assert!(parse_saved("bad = priority <= (\n# note\n").is_empty());
+        let file = parse_saved(&write_saved(&saved, &["gpu".to_owned()]));
+        assert_eq!(file.saved, saved);
+        assert_eq!(file.hidden, ["gpu"]);
+        assert!(
+            parse_saved("bad = priority <= (\n# note\n")
+                .saved
+                .is_empty()
+        );
+        // A built-in one hidden stays away; the file's order is kept, the
+        // built-in ones it does not hold first.
+        let file = parse_saved("hidden = gpu\nmine = id = \"x\"\n");
+        let names: Vec<String> = saved_list(&file).into_iter().map(|s| s.name).collect();
+        assert_eq!(names, ["triage", "mine"]);
     }
 
     #[test]

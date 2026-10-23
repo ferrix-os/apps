@@ -136,6 +136,26 @@ pub enum Action {
     Saved(usize),
     /// Keep the query typed as a new saved one.
     NewSaved,
+    /// The name typed for the saved query being named or renamed.
+    SavedName(String),
+    /// Naming or renaming a saved query left.
+    SavedEditCancel,
+    /// Rename this saved query.
+    SavedRename(usize),
+    /// Keep the query shown in this saved query.
+    SavedHere(usize),
+    /// A copy of this saved query, after it.
+    SavedDuplicate(usize),
+    /// Move this saved query up (true) or down.
+    SavedMove(usize, bool),
+    /// Delete this saved query (a built-in one is hidden).
+    SavedDelete(usize),
+    /// Bring the last deleted saved query back.
+    SavedUndo,
+    /// Bring the built-in saved queries back as they came.
+    SavedRestore,
+    /// The toast's own button.
+    ToastAction,
     /// Save the query over the saved one in use.
     Save,
     /// Type into the query.
@@ -220,6 +240,15 @@ pub struct App {
     pub saved: Vec<Saved>,
     /// The saved query in use.
     pub saved_in_use: Option<usize>,
+    /// The built-in saved queries hidden.
+    pub saved_hidden: Vec<String>,
+    /// The saved query being named (`None` inside: a new one) or
+    /// renamed.
+    pub saved_edit: Option<Option<usize>>,
+    /// The saved query deleted last, where it was, to undo.
+    pub saved_undo: Option<(usize, Saved)>,
+    /// The toast's button, when it has one: Undo.
+    pub toast_action: Option<&'static str>,
     /// Where saved queries are kept.
     pub saved_file: Option<PathBuf>,
     /// Whether the query is being typed.
@@ -336,6 +365,10 @@ impl App {
             query: Query::default(),
             saved: crate::query::builtin(),
             saved_in_use: None,
+            saved_hidden: Vec::new(),
+            saved_edit: None,
+            saved_undo: None,
+            toast_action: None,
             saved_file: None,
             editing: false,
             draft: String::new(),
@@ -403,21 +436,20 @@ impl App {
         self.go_to_boot(self.log.boots.len().saturating_sub(1));
     }
 
-    /// Read the saved queries from `path`, keeping the built-in ones that
-    /// it does not name again.
+    /// Read the saved queries from `path`: its list in its order, and
+    /// each built-in one it neither holds nor hides first.
     pub fn load_saved(&mut self, path: PathBuf) {
         if let Ok(text) = std::fs::read_to_string(&path) {
-            for each in crate::query::parse_saved(&text) {
-                match self.saved.iter_mut().find(|known| known.name == each.name) {
-                    Some(known) => *known = each,
-                    None => self.saved.push(each),
-                }
-            }
+            let file = crate::query::parse_saved(&text);
+            self.saved = crate::query::saved_list(&file);
+            self.saved_hidden = file.hidden;
         }
         self.saved_file = Some(path);
     }
 
-    /// Keep the saved queries in their file.
+    /// Keep the saved queries in their file, every one in its order, and
+    /// the built-in ones hidden: written beside it, then renamed over it,
+    /// so a file half written is never read.
     fn store_saved(&mut self) {
         let Some(path) = &self.saved_file else {
             return;
@@ -425,10 +457,97 @@ impl App {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        match std::fs::write(path, crate::query::write_saved(&self.saved)) {
-            Ok(()) => self.toast = Some(format!("saved to {}", path.display())),
-            Err(error) => self.toast = Some(format!("{}: {error}", path.display())),
+        let text = crate::query::write_saved(&self.saved, &self.saved_hidden);
+        let beside = path.with_extension("conf.new");
+        let written = std::fs::write(&beside, text).and_then(|()| std::fs::rename(&beside, path));
+        if let Err(error) = written {
+            self.toast = Some(format!("{}: {error}", path.display()));
+            self.toast_action = None;
         }
+    }
+
+    /// The name typed for the saved query being named (a new one, kept
+    /// with the query shown) or renamed. A built-in one renamed is hidden
+    /// under its old name, so it does not come back beside.
+    fn name_saved(&mut self, typed: &str) {
+        let name = typed.trim().trim_start_matches('@').to_owned();
+        let Some(editing) = self.saved_edit.take() else {
+            return;
+        };
+        if editing
+            .and_then(|index| self.saved.get(index))
+            .is_some_and(|each| each.name == name)
+        {
+            return;
+        }
+        if let Some(why) = self.saved_name_problem(&name, editing) {
+            self.say_toast(why, None);
+            self.saved_edit = Some(editing);
+            return;
+        }
+        let Some(index) = editing else {
+            self.saved.push(Saved {
+                name: name.clone(),
+                text: self.query.text.trim().to_owned(),
+            });
+            self.saved_in_use = Some(self.saved.len() - 1);
+            self.store_saved();
+            self.say_toast(format!("@{name} kept"), None);
+            return;
+        };
+        let Some(each) = self.saved.get_mut(index) else {
+            return;
+        };
+        let old = std::mem::replace(&mut each.name, name.clone());
+        let builtin = crate::query::builtin().iter().any(|b| b.name == old);
+        if builtin && !self.saved_hidden.contains(&old) {
+            self.saved_hidden.push(old.clone());
+        }
+        self.store_saved();
+        self.say_toast(format!("@{old} is @{name} now"), None);
+    }
+
+    /// Saved query `index` up a place, or down.
+    fn move_saved(&mut self, index: usize, up: bool) {
+        let other = if up {
+            index.checked_sub(1)
+        } else {
+            Some(index + 1)
+        };
+        let Some(other) = other.filter(|&other| other < self.saved.len()) else {
+            return;
+        };
+        if index >= self.saved.len() {
+            return;
+        }
+        self.saved.swap(index, other);
+        self.saved_in_use = match self.saved_in_use {
+            Some(at) if at == index => Some(other),
+            Some(at) if at == other => Some(index),
+            kept => kept,
+        };
+        self.store_saved();
+    }
+
+    /// Say `what` in the toast, with `action` as its button.
+    fn say_toast(&mut self, what: String, action: Option<&'static str>) {
+        self.toast = Some(what);
+        self.toast_action = action;
+    }
+
+    /// Why `name` cannot name saved query `except` (another one's name, or
+    /// not a name), if it cannot.
+    fn saved_name_problem(&self, name: &str, except: Option<usize>) -> Option<String> {
+        if !crate::query::valid_saved_name(name) {
+            return Some(format!(
+                "@{name} cannot be a name: letters, digits, - and _, at most 32"
+            ));
+        }
+        self.saved
+            .iter()
+            .enumerate()
+            .any(|(at, each)| each.name == name && Some(at) != except)
+            .then(|| format!("@{name} is a saved query already"))
     }
 
     /// The boot shown.
@@ -1295,19 +1414,97 @@ impl App {
             Action::NewSaved => {
                 let text = self.query.text.trim().to_owned();
                 if text.is_empty() || self.query.error.is_some() {
-                    self.toast = Some("type a query first, then + new keeps it".to_owned());
+                    self.say_toast("type a query first, then + new keeps it".to_owned(), None);
                 } else {
-                    let mut n = 1;
-                    while self.saved.iter().any(|each| each.name == format!("q{n}")) {
+                    self.saved_edit = Some(None);
+                }
+            }
+            Action::SavedName(name) => self.name_saved(&name),
+            Action::SavedEditCancel => self.saved_edit = None,
+            Action::SavedRename(index) => {
+                if index < self.saved.len() {
+                    self.saved_edit = Some(Some(index));
+                }
+            }
+            Action::SavedHere(index) => {
+                let text = self.query.text.trim().to_owned();
+                if text.is_empty() || self.query.error.is_some() {
+                    self.say_toast("type a query first to keep it here".to_owned(), None);
+                } else if let Some(each) = self.saved.get_mut(index) {
+                    each.text = text;
+                    let name = each.name.clone();
+                    self.saved_in_use = Some(index);
+                    self.store_saved();
+                    self.say_toast(format!("@{name} keeps this query now"), None);
+                }
+            }
+            Action::SavedDuplicate(index) => {
+                if let Some(each) = self.saved.get(index).cloned() {
+                    let mut n = 2;
+                    while self
+                        .saved
+                        .iter()
+                        .any(|s| s.name == format!("{}-{n}", each.name))
+                    {
                         n += 1;
                     }
-                    self.saved.push(Saved {
-                        name: format!("q{n}"),
-                        text,
-                    });
-                    self.saved_in_use = Some(self.saved.len() - 1);
+                    self.saved.insert(
+                        index + 1,
+                        Saved {
+                            name: format!("{}-{n}", each.name),
+                            text: each.text,
+                        },
+                    );
+                    if let Some(at) = self.saved_in_use.as_mut()
+                        && *at > index
+                    {
+                        *at += 1;
+                    }
+                    self.saved_edit = Some(Some(index + 1));
                     self.store_saved();
                 }
+            }
+            Action::SavedMove(index, up) => self.move_saved(index, up),
+            Action::SavedDelete(index) => {
+                if index < self.saved.len() {
+                    let gone = self.saved.remove(index);
+                    if crate::query::builtin().iter().any(|b| b.name == gone.name)
+                        && !self.saved_hidden.contains(&gone.name)
+                    {
+                        self.saved_hidden.push(gone.name.clone());
+                    }
+                    self.saved_in_use = match self.saved_in_use {
+                        Some(at) if at == index => None,
+                        Some(at) if at > index => Some(at - 1),
+                        other => other,
+                    };
+                    self.store_saved();
+                    self.say_toast(format!("@{} deleted", gone.name), Some("Undo"));
+                    self.saved_undo = Some((index, gone));
+                }
+            }
+            Action::SavedUndo | Action::ToastAction => {
+                if let Some((index, back)) = self.saved_undo.take() {
+                    self.saved_hidden.retain(|name| *name != back.name);
+                    let name = back.name.clone();
+                    self.saved.insert(index.min(self.saved.len()), back);
+                    self.store_saved();
+                    self.say_toast(format!("@{name} is back"), None);
+                }
+            }
+            Action::SavedRestore => {
+                self.saved_hidden.clear();
+                for (at, builtin) in crate::query::builtin().into_iter().enumerate() {
+                    match self.saved.iter_mut().find(|each| each.name == builtin.name) {
+                        Some(each) => each.text = builtin.text,
+                        None => self.saved.insert(at.min(self.saved.len()), builtin),
+                    }
+                }
+                self.store_saved();
+                self.say_toast(
+                    "the built-in queries are back as they came".to_owned(),
+                    None,
+                );
             }
             Action::Save => {
                 if let Some(index) = self.saved_in_use
@@ -1315,7 +1512,9 @@ impl App {
                     && let Some(saved) = self.saved.get_mut(index)
                 {
                     saved.text = self.query.text.trim().to_owned();
+                    let name = saved.name.clone();
                     self.store_saved();
+                    self.say_toast(format!("@{name} saved"), None);
                 }
             }
             Action::EditQuery => {

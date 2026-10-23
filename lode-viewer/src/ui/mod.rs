@@ -130,6 +130,8 @@ pub struct View {
     shown: show::Shown,
     /// The form's field last given the keys.
     shown_focus: Option<crate::app::FormField>,
+    /// The saved query last being named.
+    shown_saved_edit: Option<Option<usize>>,
 }
 
 impl std::fmt::Debug for View {
@@ -185,6 +187,7 @@ impl View {
             app,
             shown: show::Shown::default(),
             shown_focus: None,
+            shown_saved_edit: None,
         };
         if let Some(dir) = crate::form::ssh_dir().filter(|dir| dir.is_dir()) {
             view.machines
@@ -318,6 +321,13 @@ impl View {
                     if matches!(action, Action::QueryAccept | Action::QueryCancel) {
                         self.blur_query();
                     }
+                    // A name taken or left: the keys go back too.
+                    if matches!(action, Action::SavedName(_) | Action::SavedEditCancel)
+                        && self.app.borrow().saved_edit.is_none()
+                        && let Some(item) = self.ui.active_focus_item()
+                    {
+                        self.ui.set_focus(item, false);
+                    }
                     done.push(action);
                 }
             }
@@ -332,6 +342,38 @@ impl View {
         let app = Rc::clone(&self.app);
         let app = app.borrow();
         show::show(self, &app);
+        // A saved query's name being typed has the keys.
+        if app.saved_edit != self.shown_saved_edit {
+            self.shown_saved_edit = app.saved_edit;
+            if app.saved_edit.is_some() {
+                self.ui.update();
+                self.focus_sidebar_field();
+            }
+        }
+    }
+
+    /// Give the keys to the sidebar's field shown, its text selected.
+    fn focus_sidebar_field(&mut self) {
+        let pages = self.shell.content();
+        let mut stack = vec![self.shell.id()];
+        while let Some(item) = stack.pop() {
+            if item == pages {
+                continue;
+            }
+            let shown = self
+                .ui
+                .common(item)
+                .is_some_and(|common| self.ui.get(common.visible));
+            if !shown {
+                continue;
+            }
+            if self.ui.text_input(item).is_some() {
+                self.ui.force_active_focus(item);
+                self.ui.select_all(item);
+                return;
+            }
+            stack.extend(self.ui.children(item).iter().rev());
+        }
     }
 
     /// One frame of `size` logical pixels at `scale`, drawn whole.
