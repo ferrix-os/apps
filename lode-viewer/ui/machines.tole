@@ -704,6 +704,12 @@ export component MachinesPage : Item {
         anchors.centerIn: parent
         title: "Choose the machine's private key"
         showHidden: true
+        acceptedTypes: "[private]"
+        acceptedLabel: "Private keys"
+        acceptedNoun: "private keys"
+        openLabel: "Use key"
+        placeNames: ["Home", ".ssh", "Downloads", "Documents"]
+        placePaths: ["~", "~/.ssh", "~/Downloads", "~/Documents"]
         onAccepted: page.keyChosen(path)
     }
 }
