@@ -63,6 +63,9 @@ struct Loop {
     dirty: bool,
     /// Whether a field's paste is on its way from the clipboard.
     pasting: bool,
+    /// Whether the table is to follow its newest rows once the state is
+    /// shown: End, or Live.
+    follow_next: bool,
 }
 
 /// Open the window and run until it is closed. Answers the exit status.
@@ -125,6 +128,7 @@ pub fn run(app: App) -> i32 {
         ticks: 0,
         dirty: false,
         pasting: false,
+        follow_next: false,
     };
     let mut up = false;
     while !state.done && !window.is_closed() {
@@ -203,6 +207,12 @@ pub fn run(app: App) -> i32 {
         if state.dirty && !state.done {
             state.dirty = false;
             state.view.show();
+            // After the state's own scroll is shown, so that does not
+            // count as scrolling away from the end.
+            if core::mem::take(&mut state.follow_next) {
+                let ui = &mut state.view.ui;
+                state.view.logs.follow.set(ui, true);
+            }
             if let Err(error) = window.refresh(&mut state.view.ui) {
                 say(&format!("err: a frame could not be drawn: {error}"));
                 return 1;
@@ -226,6 +236,9 @@ impl Loop {
         }
         if matches!(action, Action::QueryAccept) {
             self.say_query();
+        }
+        if matches!(action, Action::Live) {
+            self.follow_next = true;
         }
         self.dirty = true;
     }
@@ -318,7 +331,11 @@ impl Loop {
             "Next" | "Page_Down" => self.app.borrow_mut().scroll_by(view * 0.9),
             "Prior" | "Page_Up" => self.app.borrow_mut().scroll_by(-view * 0.9),
             "Home" => self.app.borrow_mut().scroll = 0.0,
-            "End" => self.app.borrow_mut().scroll_by(f32::MAX / 4.0),
+            "End" => {
+                self.app.borrow_mut().scroll_by(f32::MAX / 4.0);
+                self.follow_next = true;
+                self.dirty = true;
+            }
             "Left" => self.app.borrow_mut().act(&Action::Step(-10)),
             "Right" => self.app.borrow_mut().act(&Action::Step(10)),
             "F2" => {

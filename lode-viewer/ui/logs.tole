@@ -133,6 +133,8 @@ export component LogsPage : Item {
     property model<LogLine> lines
     property int selected: -1
     property alias scroll: table.contentY
+    // Whether the table keeps its newest row in view as records come.
+    property alias follow: table.followEnd
     property real tableHeight
     property painter minimap
     // The record's pane.
@@ -596,6 +598,31 @@ export component LogsPage : Item {
                             }
                         }
                     }
+                }
+            }
+            // Live, scrolled up from the newest records: back to them,
+            // following again.
+            Rectangle {
+                visible: page.live && !table.followEnd && table.contentHeight > table.height
+                x: frame.width - width - 14
+                y: frame.height - height - 12
+                width: followLabel.implicitWidth + 24
+                height: 28
+                radius: 14
+                color: followArea.containsMouse ? Theme.accentOver : Theme.accent
+                Text {
+                    id: followLabel
+                    anchors.centerIn: parent
+                    text: "↓ Follow"
+                    font: Theme.sans(12, 600)
+                    color: Theme.accentInv
+                }
+                MouseArea {
+                    id: followArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: table.followEnd = true
                 }
             }
         }

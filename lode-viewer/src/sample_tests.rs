@@ -433,8 +433,14 @@ fn ctrl_v_is_a_paste_never_the_letter_and_tab_skips_hidden_fields() {
 /// A log of one record a second at these levels, from two sources in
 /// turn so that no two in a row fold.
 fn levels_log(levels: &[u8]) -> Log {
+    Log::new(levels_records(levels, 0))
+}
+
+/// Records of `levels`, numbered on from `from`, a second apart.
+fn levels_records(levels: &[u8], from: usize) -> Vec<ferrix_lode_core::record::Record> {
     let mut text = String::new();
     for (n, level) in levels.iter().enumerate() {
+        let n = n + from;
         text.push_str(&format!(
             "{{\"__REALTIME_TIMESTAMP\":\"{}\",\"__MONOTONIC_TIMESTAMP\":\"{}\",\"__SEQNUM\":\"{}\",\
              \"_BOOT_ID\":\"062359e1029c423c0c0b4c9cf5216a14\",\"PRIORITY\":\"{level}\",\
@@ -443,12 +449,12 @@ fn levels_log(levels: &[u8]) -> Log {
             1_792_776_100_000_000_u64 + n as u64 * 1_000_000,
             n as u64 * 1_000_000,
             n + 1,
-            if n % 2 == 0 { "even" } else { "odd" }
+            if n.is_multiple_of(2) { "even" } else { "odd" }
         ));
     }
     let read = crate::json::read(&text);
     assert_eq!(read.records.len(), levels.len());
-    Log::new(read.records)
+    read.records
 }
 
 /// The colours down the middle of the table's strip, top to bottom, each
@@ -795,4 +801,86 @@ fn saved_queries_are_named_renamed_deleted_undone_and_kept_in_their_file() {
     let again: Vec<String> = again.saved.iter().map(|s| s.name.clone()).collect();
     assert_eq!(again, ["triage", "gpu", "graphics", "msr"]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The table: its `contentY`, how far it can scroll, and whether it
+/// follows its end.
+fn table_state(view: &mut crate::ui::View) -> (f32, f32, bool) {
+    let mut stack = vec![tole::Element::id(&view.logs)];
+    while let Some(item) = stack.pop() {
+        if let (Some(list), Some(common)) = (view.ui.list_view(item), view.ui.common(item)) {
+            let y = view.ui.get(list.flick.content_y);
+            let most = view.ui.get(list.flick.content_height) - view.ui.get(common.height);
+            return (y, most.max(0.0), view.ui.get(list.follow_end));
+        }
+        stack.extend(view.ui.children(item).iter().copied());
+    }
+    panic!("no table");
+}
+
+#[test]
+fn live_at_the_end_the_newest_row_stays_at_the_tables_foot_as_records_come() {
+    // The customer's two: the view jumping past its last row as a record
+    // came, and the view staying put while records came under it.
+    let mut app = App::new(
+        levels_log(&[6; 80]),
+        Origin::File("levels.jsonl".into()),
+        "levels".to_owned(),
+    );
+    app.act(&Action::Zoom(0));
+    app.page = Page::Logs;
+    app.live = true;
+    let mut view = view_of(app, (1440, 1000));
+    let (_, most, follow) = table_state(&mut view);
+    assert!(most > 0.0 && !follow);
+    // The wheel down to the end, over the table.
+    let table = text_at(&mut view, "line 3").expect("a row is shown");
+    view.ui.pointer_move(table.x + 20.0, table.y);
+    for _ in 0..2000 {
+        view.ui.pointer_wheel(1.0);
+    }
+    view.ui.update();
+    view.pull();
+    let (y, most, follow) = table_state(&mut view);
+    assert!((y - most).abs() < 0.01 && follow, "{y} of {most}");
+    // A hundred records a second, shown each 50 ms.
+    let mut next = 80;
+    for _ in 0..40 {
+        let records = levels_records(&[6; 5], next);
+        next += 5;
+        view.pull();
+        let added = view.app.borrow_mut().arrived(records);
+        assert_eq!(added, 5);
+        view.show();
+        view.ui.update();
+        let (y, most, follow) = table_state(&mut view);
+        assert!(follow, "rows coming never stop the following");
+        assert!(
+            (y - most).abs() < 0.01,
+            "the view at {y}, its end at {most}"
+        );
+        let last = format!("line {}", next - 1);
+        let row = text_at(&mut view, &last).unwrap_or_else(|| panic!("{last} is not shown"));
+        let end = text_at(&mut view, "— end of window · following —").expect("the end row");
+        assert!(row.y < end.y && end.y < 1000.0, "{row:?} then {end:?}");
+    }
+    // Scrolled up: no longer following, and records leave the view be;
+    // the Follow button is shown.
+    view.ui.pointer_wheel(-20.0);
+    view.ui.update();
+    view.pull();
+    let (y, _, follow) = table_state(&mut view);
+    assert!(!follow);
+    let records = levels_records(&[6; 5], next);
+    let _ = view.app.borrow_mut().arrived(records);
+    view.show();
+    view.ui.update();
+    assert_eq!(table_state(&mut view).0, y);
+    let follow = text_at(&mut view, "↓ Follow").expect("the Follow button");
+    view.ui.pointer_move(follow.x + 4.0, follow.y + 4.0);
+    view.ui.pointer_press();
+    view.ui.pointer_release();
+    view.ui.update();
+    let (y, most, follow) = table_state(&mut view);
+    assert!(follow && (y - most).abs() < 0.01);
 }
