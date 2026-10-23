@@ -36,14 +36,15 @@ what its `app.toml` says; `cargo xtask apps` lists them.
   <tr>
     <td width="33%"><a href="badapple/"><img src="badapple/screenshot.png" alt="badapple on Ferrix"></a><br><b><a href="badapple/">badapple</a></b></td>
     <td width="33%"><a href="settings/"><img src="settings/screenshot.png" alt="settings on Ferrix"></a><br><b><a href="settings/">settings</a></b></td>
+    <td width="33%"><a href="lode-viewer/"><img src="lode-viewer/screenshot.png" alt="lode-viewer on Ferrix"></a><br><b><a href="lode-viewer/">lode-viewer</a></b></td>
   </tr>
 </table>
 
-*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM): the desktop's clients and foot at main def906ba2 (2026-10-04), the others at 2f067e40f and badapple at fee29d168 (2026-10-03), settings on its branch `settings-app` (2026-10-11).*
+*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM): the desktop's clients and foot at main def906ba2 (2026-10-04), the others at 2f067e40f and badapple at fee29d168 (2026-10-03), settings on its branch `settings-app` (2026-10-11), lode-viewer on its branch `feature/lode-viewer` (2026-10-23).*
 
 - **The desktop's:** `term`, `waybar`, `fuzzel`, `hyprlock`, `hypridle`, which
   every desktop carries.
-- **Ferrix's own:** `badapple`, `ferrofetch`, `settings`, `statd`.
+- **Ferrix's own:** `badapple`, `ferrofetch`, `lode-viewer`, `settings`, `statd`.
 - **Ported onto ferrousli**, Ferrix's C library, with its `tools/ports/`:
   `alsa-lib`, `alsa-utils`, `btop`, `curl`, `foot`, `git`, `sshdt`, `vkgears`.
 

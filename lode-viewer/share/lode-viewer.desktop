@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Logs
+GenericName=Log Viewer
+Comment=lode's log: a boot at a glance, and every record
+Exec=/bin/lode-viewer
+Icon=ferrix-lode
+Terminal=false
+Keywords=log;logs;journal;lode;dmesg;journalctl;
+Categories=System;Monitor;
+StartupWMClass=rocks.magical.lode-viewer

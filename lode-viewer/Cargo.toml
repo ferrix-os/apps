@@ -1,0 +1,42 @@
+[package]
+name = "lode-viewer"
+description = "lode's log viewer: a desktop window over the log, the overview of a boot and its records"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# An app (Ferrix's docs/APPS.md): a workspace of its own, a static Linux
+# program built with std against the target's own musl. It builds inside a
+# Ferrix checkout, where lode's core and the compositor's libraries are
+# beside it.
+[workspace]
+
+[lib]
+name = "lode_viewer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lode-viewer"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+# lode's own records, segment format, summaries and filter language: the
+# store is read and queried with the same code `lode` reads it with.
+ferrix-lode-core = { path = "../../../lib/log/lode" }
+# Fonts, shaping and glyphs.
+compositor-text = { path = "../../system/linux/compositor/text" }
+# The Wayland client: the window, the keyboard, the pointer, the buffers,
+# and the timer Live follows the store on.
+compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
+
+# As the compositor's: overflow checks on everywhere.
+[profile.dev]
+overflow-checks = true
+opt-level = 2
+
+[profile.release]
+overflow-checks = true

@@ -1,0 +1,37 @@
+# lode-viewer
+
+lode's log in a desktop window: a boot at a glance, and every record, read and queried with lode's own core. An app (Ferrix's [docs/APPS.md](https://github.com/ferrix-os/ferrix/blob/main/docs/APPS.md)): `app.toml` says what it installs and how it is built; its licence is `MIT`, and the IBM Plex faces it carries are `OFL-1.1` (`LICENSE-ibm-plex`). The records, their fields and lode's rules are Ferrix's [docs/LOGGING.md](https://github.com/ferrix-os/ferrix/blob/main/docs/LOGGING.md); the look is the customer's design (`Lode App.dc.html`), its palette and faces kept.
+
+![The log viewer on Ferrix: the Logs page after `id=msr` was typed, 13 of 801 records, a run of nine folded into one line](screenshot.png)
+
+*The Logs page after `/`, `id=msr` and Return were typed into it: 13 of the 801 test records, a run of nine alike but for their numbers folded into one line. On Ferrix (x86-64 under KVM, drawn on the CPU), the screen `cargo xtask test-compositor --boot lode-viewer` keeps, 2026-10-23; nothing edited after capture.*
+
+- **Overview**: the boot picker and Live; a time track with the window's brush, the problem before and after, −10s/+10s and zooms, over swim lanes (the kernel, the two most troubled sources, the rest) marked where errors, warnings and held lines were; tiles for errors, warnings, lines a second and lines held, each with its line across the boot; the activity per 10 s (grey info, amber warning, red error) with the boot before beside it on request; the log rate against the limiter; the busiest sources; and the window's lines, warnings and worse first, with the way to all of them in Logs.
+- **Logs**: a query in lode's filter language (`where priority <= warning or id = "hyprix*"`), saved queries (`@triage`, `@gpu`, `+ new`, kept in `~/.config/ferrix/lode/viewer-queries.conf`), chips and the count of what matches; facets with counts for the level (unspecified among them), source, transport and session; the table, where lode's word that the limiter held lines is a line of its own that expands into what it says, a run of lines alike but for their numbers folds into one (lode's own "message repeated" records joining the run they repeat), lode starting or losing records is a marker, and a level a display rule set has its note; a strip of where the problems are; and a record's every field, with ±30 s around it, its source alone, and Copy as JSON or its cursor to the clipboard.
+- **Status**: at the sidebar's foot, whether lode runs, what the store takes, its tier and budget.
+- **Display rules.** A record a lode from before the field-quality landing stored as info, or nobody gave a level, is shown at the level its words say, by lode's own reading of them (`ingest::guess_level`), and says so: "Stored as info; text says “refused”. Shown as warning by a display rule." The filter language and the facets see that level; Copy as JSON gives the record as stored.
+
+```
+lode-viewer                         lode's store (/var/log/journal, /run/log/journal), as the person running it may read it
+lode-viewer FILE.jsonl ...          a JSONL export: lode -o json, or what cargo xtask box-log keeps
+lode-viewer -D DIR                  a store in another directory
+  --page logs --where 'EXPR' --boot -1 --zoom 0 --at 17:22:43 --select SEQNUM --theme dark --live
+lode-viewer FILE.jsonl --render out.png [--size 1440x1000] [--scale 2]
+                                    one frame into a PNG with no compositor: how it is shown on a host
+lode-viewer FILE.jsonl --bench 100000
+                                    the file grown to that many records, each step timed
+```
+
+Keys: `/` types into the query, Return runs it, Escape leaves it; Up and Down (or `j`, `k`) move the selection; Page Up and Down scroll; Left and Right move the window 10 s; `o` and `l` the pages; `t` the palette; Ctrl+Q closes. The wheel scrolls, and over the track it zooms.
+
+**How it is built.** The store is read with lode's own core, `ferrix-lode-core`: the segment format and its scan, the summaries, the records, the filter language, the JSON output. Live follows the newest segments from where the last read stopped, as `lode -f` does. The window is the desktop's own Wayland client runtime, `compositor-toolkit` (an xdg-shell toplevel, shared-memory buffers, the keyboard, the pointer, the clipboard through `ext_data_control`), drawn on the CPU with tiny-skia and `compositor-text`, so it needs no GPU and no C library: a static program of 3.4 MB on x86-64. Every frame is drawn whole from the state; the table draws only the lines in view, so 100,000 records cost a few milliseconds a frame.
+
+```
+cargo xtask check                                             # its fmt, clippy and tests
+cargo xtask test-apps --arch x86_64                           # a boot that runs its [[smoke]] line
+cargo xtask test-compositor --arch x86_64 --boot lode-viewer  # the desktop, the window, a query typed into it
+```
+
+The tests read `testdata/n150-boot-excerpt.jsonl`: 801 records of the N150's first boot under lode, from before lode read levels itself, with its private addresses replaced by documentation ones.
+
+**Not yet**: the design's Timeline, Sources, Crashes (the sidebar's Crashes opens Logs on them), Boots and Rules & alerts pages; dragging the brush's edges (a press or a drag on the track moves the window); Export…; a merged view of several machines.

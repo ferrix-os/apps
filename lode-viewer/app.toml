@@ -1,0 +1,60 @@
+# lode-viewer, an app (docs/APPS.md): lode's log in a desktop window -- a
+# boot's overview, its records with lode's filter language, and lode's
+# state (Ferrix's docs/LOGGING.md).
+
+[package]
+name = "lode-viewer"
+version = "0.1.0"
+description = "lode-viewer: the log in a window, a boot's overview and its records, read and queried with lode's own core"
+license = "MIT AND OFL-1.1"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "lode-viewer"
+to = "bin/lode-viewer"
+mode = "755"
+
+# Its entry in a launcher and its icon: fuzzel lists every `.desktop` file
+# in `usr/share/applications`.
+[[package.files]]
+from = "share/lode-viewer.desktop"
+source = "folder"
+to = "usr/share/applications/lode-viewer.desktop"
+mode = "644"
+
+[[package.files]]
+from = "share/ferrix-lode.svg"
+source = "folder"
+to = "usr/share/icons/hicolor/scalable/apps/ferrix-lode.svg"
+mode = "644"
+
+# The design's faces, IBM Plex Sans and Mono, where the viewer and the
+# fonts the desktop scans find them, and their licence, which a package
+# carrying them must reproduce.
+[[package.files]]
+from = "share/fonts"
+source = "folder"
+tree = true
+to = "usr/share/fonts/ibm-plex"
+
+[[package.files]]
+from = "LICENSE-ibm-plex"
+source = "folder"
+to = "usr/share/licenses/lode-viewer/LICENSE-ibm-plex"
+mode = "644"
+
+[build]
+kind = "cargo"
+
+# In every image a person runs: a desktop has its log.
+[image]
+default = true
+
+[check]
+host-tests = true
+
+[[smoke]]
+run = "lode-viewer --version"
+expect = "lode-viewer 0.1.0"
