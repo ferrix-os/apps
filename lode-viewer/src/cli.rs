@@ -623,8 +623,16 @@ fn pull(target: &str, options: &Options) -> ExitCode {
             said = line;
         }
     }
-    let now = link.now();
+    // Stopped first, and its end waited for: a record kept after the
+    // count was read would be in the store and not in the count.
     link.stop();
+    for _ in 0..40 {
+        if link.now().state == "stopped" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    let now = link.now();
     say(&format!(
         "pull {target}: {} records kept in {}",
         now.records,
