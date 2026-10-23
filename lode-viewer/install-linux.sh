@@ -16,7 +16,10 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 prefix=${PREFIX:-$HOME/.local}
 target=${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/lode-viewer/target}
 
-CARGO_TARGET_DIR=$target cargo build --release --manifest-path "$here/Cargo.toml"
+# rustup takes the toolchain from the directory cargo runs in, not from
+# --manifest-path: build from the app's folder, under the checkout's
+# rust-toolchain.toml, wherever this was started from.
+(cd "$here" && CARGO_TARGET_DIR=$target cargo build --release)
 
 install -Dm755 "$target/release/lode-viewer" "$prefix/bin/lode-viewer"
 mkdir -p "$prefix/share/lode-viewer/fonts"

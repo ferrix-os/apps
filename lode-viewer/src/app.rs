@@ -56,6 +56,14 @@ pub enum Action {
     Theme(Mode),
     /// Open or close the boot menu.
     BootMenu,
+    /// Move the window by the pointer: a press on the header.
+    WindowMove,
+    /// Maximize the window, or give it its own size again.
+    WindowMaximize,
+    /// Minimize the window.
+    WindowMinimize,
+    /// Close the window.
+    WindowClose,
     /// Open or close the machine menu.
     MachineMenu,
     /// Show machine `index`.
@@ -461,6 +469,11 @@ impl App {
             }
             Action::Theme(mode) => self.mode = mode,
             Action::BootMenu => self.boot_menu = !self.boot_menu,
+            // The window's own: the window does them.
+            Action::WindowMove
+            | Action::WindowMaximize
+            | Action::WindowMinimize
+            | Action::WindowClose => {}
             Action::MachineMenu => self.machine_menu = !self.machine_menu,
             Action::Machine(index) => {
                 self.machine_menu = false;

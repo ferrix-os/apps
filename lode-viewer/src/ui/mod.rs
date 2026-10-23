@@ -64,6 +64,9 @@ pub fn paint(app: &App, c: &mut Frame<'_, '_>) {
 fn header(app: &App, c: &mut Frame<'_, '_>, t: &Theme, width: f32) {
     let bar = Rect::new(0.0, 0.0, width, HEADER);
     c.fill(bar, 0.0, t.bg3);
+    // The header moves the window where the compositor draws no title bar
+    // (GNOME's mutter); everything on it is pressed before it.
+    c.hit(bar, Action::WindowMove);
     c.fill(Rect::new(0.0, HEADER - 1.0, width, 1.0), 0.0, t.line);
     let logo = Rect::new(14.0, 11.0, 16.0, 16.0);
     c.fill(logo, 4.0, t.ink);
@@ -85,10 +88,11 @@ fn header(app: &App, c: &mut Frame<'_, '_>, t: &Theme, width: f32) {
         &place,
         (x, 0.0, HEADER),
         t.ink4,
-        Some(width - x - 200.0),
+        Some(width - x - 330.0),
     );
     // Light | Dark.
-    let group = Rect::new(width - 132.0, 8.0, 120.0, 22.0);
+    window_buttons(c, t, width);
+    let group = Rect::new(width - 132.0 - 108.0, 8.0, 120.0, 22.0);
     c.boxed(group, 6.0, t.bg3, t.line3);
     for (index, (label, mode)) in [("Light", Mode::Light), ("Dark", Mode::Dark)]
         .into_iter()
@@ -122,6 +126,33 @@ fn header(app: &App, c: &mut Frame<'_, '_>, t: &Theme, width: f32) {
             None,
         );
         c.hit(half, Action::Theme(mode));
+    }
+}
+
+/// Minimize, maximize and close, as GNOME's own windows draw them.
+fn window_buttons(c: &mut Frame<'_, '_>, t: &Theme, width: f32) {
+    let ink = t.ink3;
+    for (n, action) in [
+        Action::WindowMinimize,
+        Action::WindowMaximize,
+        Action::WindowClose,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let place = Rect::new(width - 104.0 + 34.0 * n as f32, 6.0, 32.0, 26.0);
+        let (cx, cy) = (place.x + 16.0, place.y + 13.0);
+        match action {
+            Action::WindowMinimize => c.fill(Rect::new(cx - 5.0, cy + 3.0, 10.0, 1.5), 0.0, ink),
+            Action::WindowMaximize => {
+                c.outline(Rect::new(cx - 5.0, cy - 5.0, 10.0, 10.0), 1.0, 1.3, ink)
+            }
+            _ => {
+                c.polyline(&[(cx - 5.0, cy - 5.0), (cx + 5.0, cy + 5.0)], 1.4, ink, 0.0);
+                c.polyline(&[(cx + 5.0, cy - 5.0), (cx - 5.0, cy + 5.0)], 1.4, ink, 0.0);
+            }
+        }
+        c.hit(place, action);
     }
 }
 

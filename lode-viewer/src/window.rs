@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use compositor_text::tiny_skia::Pixmap;
 use compositor_toolkit::{
     Client, CursorShape, Event, KeyboardEvent, PointerEvent, SurfaceId, ToplevelOptions,
+    WindowState,
 };
 
 use crate::app::{Action, App, Page};
@@ -251,6 +252,39 @@ struct Window {
     done: bool,
     /// Timer turns so far.
     ticks: u32,
+    /// Whether the window was asked to be maximized.
+    maximized: bool,
+    /// When and where the header was last pressed, for a double click.
+    header_press: Option<(Instant, f32, f32)>,
+    /// The edge the pointer is over, as `xdg_toplevel.resize_edge`; 0 none.
+    edge: u32,
+}
+
+/// How close to the window's edge a press resizes it, in logical pixels.
+const EDGE: f32 = 6.0;
+
+/// The longest gap between the two presses of a double click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
+/// The `xdg_toplevel.resize_edge` at (`x`, `y`) in a window of `size`, 0
+/// for none, and the pointer's shape over it (cursor-shape-v1's numbers).
+fn edge_at(x: f32, y: f32, size: (u32, u32)) -> (u32, CursorShape) {
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    let top = y < EDGE;
+    let bottom = y >= h - EDGE;
+    let left = x < EDGE;
+    let right = x >= w - EDGE;
+    match (top, bottom, left, right) {
+        (true, _, true, _) => (5, CursorShape::Other(29)),
+        (true, _, _, true) => (9, CursorShape::Other(28)),
+        (_, true, true, _) => (6, CursorShape::Other(28)),
+        (_, true, _, true) => (10, CursorShape::Other(29)),
+        (true, ..) => (1, CursorShape::Other(27)),
+        (_, true, ..) => (2, CursorShape::Other(27)),
+        (_, _, true, _) => (4, CursorShape::Other(26)),
+        (_, _, _, true) => (8, CursorShape::Other(26)),
+        _ => (0, CursorShape::Default),
+    }
 }
 
 /// Open the window and run until it is closed. Answers the exit status.
@@ -312,6 +346,9 @@ pub fn run(app: App) -> i32 {
         toast_since: None,
         done: false,
         ticks: 0,
+        maximized: false,
+        header_press: None,
+        edge: 0,
     };
     let mut drawn = false;
     while !window.done {
@@ -538,6 +575,17 @@ impl Window {
         self.dirty = true;
     }
 
+    /// Maximize the window, or give it back its own size.
+    fn toggle_maximized(&mut self, client: &mut Client) {
+        self.maximized = !self.maximized;
+        let state = if self.maximized {
+            WindowState::Maximized
+        } else {
+            WindowState::Restored
+        };
+        client.set_window_state(self.surface, state);
+    }
+
     /// Select the record `by` records on from the selected one.
     fn move_selection(&mut self, by: isize) {
         let records: Vec<usize> = self
@@ -605,6 +653,15 @@ impl Window {
             }
             PointerEvent::Motion { surface, x, y } if surface == self.surface => {
                 self.pointer = (x as f32, y as f32);
+                let (edge, shape) = if self.maximized {
+                    (0, CursorShape::Default)
+                } else {
+                    edge_at(x as f32, y as f32, self.size.unwrap_or((1, 1)))
+                };
+                if edge != self.edge {
+                    self.edge = edge;
+                    client.set_cursor(shape);
+                }
                 if let Some(action) = self.dragging.clone() {
                     self.act(&action, x as f32, y as f32);
                 }
@@ -621,6 +678,40 @@ impl Window {
                 if !pressed {
                     self.dragging = None;
                     return;
+                }
+                if self.edge != 0 {
+                    client.drag_window(self.surface, self.edge);
+                    return;
+                }
+                match self.hit(x, y) {
+                    Some(Action::WindowMove) => {
+                        let double = self.header_press.is_some_and(|(at, px, py)| {
+                            at.elapsed() < DOUBLE_CLICK
+                                && (px - x).abs() < 4.0
+                                && (py - y).abs() < 4.0
+                        });
+                        if double {
+                            self.header_press = None;
+                            self.toggle_maximized(client);
+                        } else {
+                            self.header_press = Some((Instant::now(), x, y));
+                            client.drag_window(self.surface, 0);
+                        }
+                        return;
+                    }
+                    Some(Action::WindowMaximize) => {
+                        self.toggle_maximized(client);
+                        return;
+                    }
+                    Some(Action::WindowMinimize) => {
+                        client.set_window_state(self.surface, WindowState::Minimized);
+                        return;
+                    }
+                    Some(Action::WindowClose) => {
+                        self.done = true;
+                        return;
+                    }
+                    _ => {}
                 }
                 let Some(action) = self.hit(x, y) else {
                     if self.app.editing {
