@@ -135,11 +135,9 @@ fn cpu() -> Option<parse::Cpu> {
     let mut parser = parse::CpuinfoParser::default();
     let mut buffer = [0_u8; 4096];
     let mut held = 0;
-    loop {
-        let Some(rest) = buffer.get_mut(held..).filter(|rest| !rest.is_empty()) else {
-            // A line longer than the buffer: no line /proc/cpuinfo writes.
-            break;
-        };
+    // Ends at the file's end, or at a line longer than the buffer, which no
+    // line /proc/cpuinfo writes is.
+    while let Some(rest) = buffer.get_mut(held..).filter(|rest| !rest.is_empty()) {
         let count = match linux::read(fd, rest) {
             Ok(0) | Err(_) => 0,
             Ok(count) => count,
