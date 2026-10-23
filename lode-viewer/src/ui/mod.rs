@@ -5,6 +5,7 @@
 //! Rust painters of [`paint`]; the table's lines are a model over the log
 //! ([`rows::LinesModel`]), made only for the rows in view.
 
+mod crashes_show;
 mod machines_show;
 pub mod paint;
 pub mod rows;
@@ -116,6 +117,10 @@ pub struct View {
     pub logs: LogsPage,
     /// Machines.
     pub machines: MachinesPage,
+    /// Crashes.
+    pub crashes: CrashesPage,
+    /// The crash screenshot last read.
+    capture: crashes_show::Capture,
     /// The table's lines.
     pub lines: Rc<rows::LinesModel>,
     /// The state it shows.
@@ -144,7 +149,13 @@ impl View {
         let overview = OverviewPage::new(&mut ui, Some(content))?;
         let logs = LogsPage::new(&mut ui, Some(content))?;
         let machines = MachinesPage::new(&mut ui, Some(content))?;
-        for page in [overview.common(), logs.common(), machines.common()] {
+        let crashes = CrashesPage::new(&mut ui, Some(content))?;
+        for page in [
+            overview.common(),
+            logs.common(),
+            machines.common(),
+            crashes.common(),
+        ] {
             let parent = shell.content();
             page.width.bind(&mut ui, move |ui| {
                 ui.common(parent).map_or(0.0, |c| ui.get(c.width))
@@ -168,6 +179,8 @@ impl View {
             overview,
             logs,
             machines,
+            crashes,
+            capture: crashes_show::Capture::default(),
             lines,
             app,
             shown: show::Shown::default(),
@@ -266,6 +279,8 @@ impl View {
                 out.extend(show::logs_action(&self.app.borrow(), signal));
             } else if let Some(signal) = self.machines.signal(each) {
                 out.extend(show::machines_action(&self.app.borrow(), signal));
+            } else if let Some(signal) = self.crashes.signal(each) {
+                out.extend(crashes_show::action(&self.app.borrow(), signal));
             }
         }
         out
@@ -308,6 +323,7 @@ impl View {
             }
         }
         self.show();
+        self.ui.update();
         (done, window)
     }
 

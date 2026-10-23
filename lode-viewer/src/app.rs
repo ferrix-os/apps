@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::data::{Kind, Log};
+use crate::data::Log;
 use crate::lines::{Line, lines, offsets};
 use crate::query::{Chip, Facets, Query, Saved};
 use crate::store::{Status, Store};
@@ -21,6 +21,8 @@ pub enum Page {
     Logs,
     /// The machines followed, and adding one.
     Machines,
+    /// The crashes, grouped.
+    Crashes,
 }
 
 impl Page {
@@ -31,6 +33,7 @@ impl Page {
             "overview" => Some(Page::Overview),
             "logs" => Some(Page::Logs),
             "machines" => Some(Page::Machines),
+            "crashes" => Some(Page::Crashes),
             _ => None,
         }
     }
@@ -53,8 +56,21 @@ pub const ZOOMS: [(&str, u64); 4] = [("30s", 30), ("1m", 60), ("5m", 300), ("boo
 pub enum Action {
     /// Show a page.
     Page(Page),
-    /// The crashes, in Logs.
+    /// The Crashes page.
     Crashes,
+    /// Crashes of every boot (or of the boot shown).
+    CrashScope(bool),
+    /// Only this program's crashes: an index into the programs, 0 every
+    /// program.
+    CrashProgram(usize),
+    /// Only this signal's: an index into the signals, 0 every one.
+    CrashSignal(usize),
+    /// Show this group's crashes.
+    CrashGroup(usize),
+    /// Show this crash of the group.
+    CrashPick(usize),
+    /// The crash shown, in Logs.
+    CrashInLogs,
     /// Switch palette.
     Theme(Mode),
     /// Open or close the boot menu.
@@ -270,6 +286,18 @@ pub struct App {
     pub want_paste: Option<crate::selection::Which>,
     /// The Machines page's scroll.
     pub machines_scroll: f32,
+    /// The Crashes page: every boot's, the program and the signal
+    /// chosen, the group shown (by its program, place and signal) and
+    /// the crash of it shown, newest first.
+    pub crash_all: bool,
+    /// The program chosen.
+    pub crash_program: Option<String>,
+    /// The signal chosen.
+    pub crash_signal: Option<String>,
+    /// The group shown.
+    pub crash_group: Option<(String, String, String)>,
+    /// The crash of it shown, by its place in the group.
+    pub crash_pick: usize,
     /// Whether the record pane names its fields by their raw keys.
     pub raw_names: bool,
     /// How tall the table's view is, for the strip's press and the keys.
@@ -340,6 +368,11 @@ impl App {
             want_paste: None,
             machines_scroll: 0.0,
             raw_names: false,
+            crash_all: false,
+            crash_program: None,
+            crash_signal: None,
+            crash_group: None,
+            crash_pick: 0,
             table_view: 0.0,
             scroll_most: [0.0; 3],
             compare: false,
@@ -1055,12 +1088,53 @@ impl App {
         }
         match action.clone() {
             Action::Page(page) => self.page = page,
-            Action::Crashes => {
-                self.query.chips.retain(|chip| *chip != Chip::Crashes);
-                self.query.chips.push(Chip::Crashes);
-                self.span = 0;
-                self.page = Page::Logs;
-                self.refresh();
+            Action::Crashes => self.page = Page::Crashes,
+            Action::CrashScope(all) => {
+                self.crash_all = all;
+                self.crash_group = None;
+            }
+            Action::CrashProgram(index) => {
+                let (programs, _) = crate::crashes::choices(&self.crash_list());
+                self.crash_program = index
+                    .checked_sub(1)
+                    .and_then(|at| programs.get(at).cloned());
+                self.crash_group = None;
+            }
+            Action::CrashSignal(index) => {
+                let (_, signals) = crate::crashes::choices(&self.crash_list());
+                self.crash_signal = index.checked_sub(1).and_then(|at| signals.get(at).cloned());
+                self.crash_group = None;
+            }
+            Action::CrashGroup(index) => {
+                self.crash_group = self.crash_groups().0.get(index).map(|group| {
+                    (
+                        group.program.clone(),
+                        group.address.clone(),
+                        group.signal.clone(),
+                    )
+                });
+                self.crash_pick = 0;
+            }
+            Action::CrashPick(index) => self.crash_pick = index,
+            Action::CrashInLogs => {
+                if let Some(index) = self.crash_shown().map(|crash| crash.index) {
+                    if let Some(boot) = self
+                        .log
+                        .boots
+                        .iter()
+                        .position(|boot| boot.range.contains(&index))
+                        && boot != self.boot
+                    {
+                        self.go_to_boot(boot);
+                    }
+                    self.span = 60_000_000;
+                    if let Some(at) = self.log.entries.get(index).map(crate::data::Entry::time) {
+                        self.set_cursor(at);
+                    }
+                    self.page = Page::Logs;
+                    self.selected = Some(index);
+                    self.scroll_to(index);
+                }
             }
             Action::Theme(mode) => self.mode = mode,
             Action::BootMenu => self.boot_menu = !self.boot_menu,
@@ -1429,6 +1503,7 @@ impl App {
             Page::Overview => (&mut self.overview_scroll, self.scroll_most[0]),
             Page::Logs => (&mut self.scroll, self.scroll_most[1]),
             Page::Machines => (&mut self.machines_scroll, self.scroll_most[2]),
+            Page::Crashes => return,
         };
         *scroll = (*scroll + by).clamp(0.0, most);
     }
@@ -1497,6 +1572,39 @@ impl App {
         fields
     }
 
+    /// The crashes the Crashes page lists: the boot's, or every boot's.
+    #[must_use]
+    pub fn crash_list(&self) -> Vec<crate::crashes::Crash> {
+        crate::crashes::crashes(&self.log, (!self.crash_all).then_some(self.boot))
+    }
+
+    /// The Crashes page's groups, filtered, and the crashes they are of.
+    #[must_use]
+    pub fn crash_groups(&self) -> (Vec<crate::crashes::Group>, Vec<crate::crashes::Crash>) {
+        let crashes = self.crash_list();
+        let groups = crate::crashes::groups(
+            &crashes,
+            self.crash_program.as_deref(),
+            self.crash_signal.as_deref(),
+        );
+        (groups, crashes)
+    }
+
+    /// The crash the Crashes page shows, if one.
+    #[must_use]
+    pub fn crash_shown(&self) -> Option<crate::crashes::Crash> {
+        let (groups, crashes) = self.crash_groups();
+        let (program, address, signal) = self.crash_group.as_ref()?;
+        let group = groups.iter().find(|group| {
+            group.program == *program && group.address == *address && group.signal == *signal
+        })?;
+        let at = group
+            .crashes
+            .get(self.crash_pick)
+            .or(group.crashes.first())?;
+        crashes.get(*at).cloned()
+    }
+
     /// Whether the query differs from the saved one in use.
     #[must_use]
     pub fn query_edited(&self) -> bool {
@@ -1508,11 +1616,7 @@ impl App {
     /// How many crashes the boot has.
     #[must_use]
     pub fn crashes(&self) -> usize {
-        self.log
-            .of_boot(self.boot)
-            .iter()
-            .filter(|entry| entry.row.kind == Kind::Crash)
-            .count()
+        crate::crashes::crashes(&self.log, Some(self.boot)).len()
     }
 }
 

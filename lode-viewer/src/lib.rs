@@ -12,6 +12,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod crashes;
 pub mod data;
 pub mod form;
 pub mod json;

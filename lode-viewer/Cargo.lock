@@ -100,6 +100,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrix-lode-capture"
+version = "0.1.0"
+
+[[package]]
 name = "ferrix-lode-core"
 version = "0.1.0"
 dependencies = [
@@ -124,6 +128,7 @@ version = "0.1.0"
 dependencies = [
  "compositor-text",
  "compositor-toolkit",
+ "ferrix-lode-capture",
  "ferrix-lode-core",
  "tole",
  "tole-compiler",

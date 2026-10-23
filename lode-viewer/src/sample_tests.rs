@@ -540,3 +540,152 @@ fn the_record_pane_names_its_fields_in_groups_and_copies_them_whole() {
     let _ = click(&mut view, "raw names");
     assert!(text_at(&mut view, "_TRANSPORT").is_some());
 }
+
+/// A JSONL export of records with these fields, one a second, besides
+/// what every record has.
+fn jsonl(records: &[&[(&str, &str)]]) -> String {
+    let mut text = String::new();
+    for (n, fields) in records.iter().enumerate() {
+        text.push_str(&format!(
+            "{{\"__REALTIME_TIMESTAMP\":\"{}\",\"__MONOTONIC_TIMESTAMP\":\"{}\",\"__SEQNUM\":\"{}\",\
+             \"_BOOT_ID\":\"062359e1029c423c0c0b4c9cf5216a14\",\"_HOSTNAME\":\"ferrix\",\"_TRANSPORT\":\"kernel\"",
+            1_792_776_100_000_000_u64 + n as u64 * 1_000_000,
+            n as u64 * 1_000_000,
+            n + 1,
+        ));
+        for (key, value) in *fields {
+            text.push_str(&format!(",\"{key}\":\"{value}\""));
+        }
+        text.push_str("}\n");
+    }
+    text
+}
+
+/// Crashes of three programs, an app's error shown without one, and the
+/// screenshot lode kept of the third crash, in `dir`.
+fn crash_fixture(dir: &std::path::Path) -> std::path::PathBuf {
+    let crash = |program: &'static str,
+                 signal: &'static str,
+                 pc: &'static str|
+     -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("PRIORITY", "3"),
+            ("SYSLOG_IDENTIFIER", "kernel"),
+            ("MESSAGE", "a program ended by a signal"),
+            ("MESSAGE_ID", "5a1d3f9c8e2b4c7d9f0a1b2c3d4e5f60"),
+            ("CRASH_PID", "291"),
+            ("CRASH_COMM", program),
+            ("CRASH_SIGNAL", signal),
+            ("CRASH_PC", pc),
+            ("CRASH_TRAP", "Breakpoint"),
+        ]
+    };
+    let plain = vec![
+        ("PRIORITY", "6"),
+        ("SYSLOG_IDENTIFIER", "hyprix"),
+        ("MESSAGE", "frame drawn"),
+    ];
+    let web = crash("steamwebhelper", "SIGTRAP", "libcef.so+0x1d2e3f");
+    let foot = crash("foot", "SIGSEGV", "0x4012ab");
+    let app = vec![
+        ("PRIORITY", "3"),
+        ("SYSLOG_IDENTIFIER", "wine"),
+        ("FERRIX_EVENT", "app-error"),
+        ("_COMM", "endfield.exe"),
+        ("MESSAGE", "SuspendThread loop failed"),
+    ];
+    let capture = vec![
+        ("PRIORITY", "6"),
+        ("SYSLOG_IDENTIFIER", "lode"),
+        ("MESSAGE", "screenshot of the screen at record 6"),
+        ("CAPTURE_OF", "6"),
+        ("CAPTURE", "stored"),
+        ("CAPTURE_FILE", "captures/shot.qoi"),
+    ];
+    let records: Vec<&[(&str, &str)]> = vec![
+        &plain, &web, &plain, &foot, &app, &web, &capture, &plain, &web, &plain,
+    ];
+    std::fs::create_dir_all(dir.join("captures")).expect("made");
+    // A 4x2 picture, red then blue.
+    let xrgb: Vec<u8> = (0..8)
+        .flat_map(|i| {
+            if i % 2 == 0 {
+                [0, 0, 255, 0]
+            } else {
+                [255, 0, 0, 0]
+            }
+        })
+        .collect();
+    let qoi = ferrix_lode_capture::qoi::encode(4, 2, 16, &xrgb).expect("encoded");
+    std::fs::write(dir.join("captures/shot.qoi"), qoi).expect("written");
+    let path = dir.join("crashes.jsonl");
+    std::fs::write(&path, jsonl(&records)).expect("written");
+    path
+}
+
+#[test]
+fn crashes_are_grouped_newest_first_with_their_screenshot_and_their_log() {
+    let dir = std::env::temp_dir().join(format!("lode-viewer-crashes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = crash_fixture(&dir);
+    let read = crate::json::read(&std::fs::read_to_string(&path).expect("read"));
+    let mut app = App::new(
+        Log::new(read.records),
+        Origin::File(path),
+        "crashes".to_owned(),
+    );
+    assert_eq!(app.crashes(), 5, "the sidebar's count");
+    app.act(&Action::Crashes);
+    let (groups, _) = app.crash_groups();
+    let named: Vec<(&str, usize)> = groups
+        .iter()
+        .map(|g| (g.program.as_str(), g.crashes.len()))
+        .collect();
+    assert_eq!(
+        named,
+        [("steamwebhelper", 3), ("endfield.exe", 1), ("foot", 1)],
+        "newest first"
+    );
+    let mut view = view_of(app, (1440, 1000));
+    assert!(text_at(&mut view, "3×").is_some());
+    assert!(text_at(&mut view, "libcef.so+0x1d2e3f · SIGTRAP · last 17:21:48").is_some());
+    let _ = click(&mut view, "steamwebhelper");
+    assert!(text_at(&mut view, "steamwebhelper · SIGTRAP · 3×").is_some());
+    // The newest is shown: its fields, the log around it, no screenshot.
+    assert!(text_at(&mut view, "Code address").is_some());
+    assert!(text_at(&mut view, "No screenshot was kept of it.").is_some());
+    // The one before has its screenshot.
+    let _ = click(&mut view, "pid 291 · libcef.so+0x1d2e3f · Breakpoint");
+    let _ = view.step();
+    assert_eq!(
+        view.app.borrow().crash_pick,
+        0,
+        "the first row is the newest"
+    );
+    view.app.borrow_mut().crash_pick = 1;
+    view.show();
+    view.ui.update();
+    assert!(text_at(&mut view, "No screenshot was kept of it.").is_none());
+    let frame = view.frame((1440, 1000), 1.0).expect("a frame");
+    let red = (0..frame.width())
+        .flat_map(|x| (0..frame.height()).map(move |y| (x, y)))
+        .filter(|&(x, y)| {
+            let p = frame.pixel(x, y).expect("in it");
+            p.red() == 255 && p.green() == 0 && p.blue() == 0
+        })
+        .count();
+    assert!(
+        red > 1000,
+        "the screenshot is drawn, scaled up: {red} red pixels"
+    );
+    // To look at by hand: LODE_VIEWER_TEST_SHOTS=DIR keeps the frame.
+    if let Some(shots) = std::env::var_os("LODE_VIEWER_TEST_SHOTS") {
+        let png = tole::png::encode(frame.width(), frame.height(), frame.data());
+        let _ = std::fs::write(std::path::Path::new(&shots).join("crashes.png"), png);
+    }
+    // Open in Logs: the record there, selected.
+    let _ = click(&mut view, "Open in Logs");
+    assert_eq!(view.app.borrow().page, Page::Logs);
+    assert!(view.app.borrow().selected.is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}

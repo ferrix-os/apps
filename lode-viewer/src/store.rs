@@ -67,6 +67,12 @@ pub struct Store {
 }
 
 impl Store {
+    /// The directories it reads.
+    #[must_use]
+    pub fn dirs(&self) -> &[PathBuf] {
+        &self.dirs
+    }
+
     /// The system's store: the persistent and the volatile directories, and
     /// the user's own directory in each (`user-<uid>`, §12.1).
     #[must_use]

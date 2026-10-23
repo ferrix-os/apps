@@ -143,6 +143,7 @@ pub(super) fn show(view: &mut View, app: &App) {
         (Page::Overview, view.overview.base.common),
         (Page::Logs, view.logs.base.common),
         (Page::Machines, view.machines.base.common),
+        (Page::Crashes, view.crashes.base.common),
     ] {
         common.visible.set(ui, app.page == page);
     }
@@ -161,6 +162,7 @@ pub(super) fn show(view: &mut View, app: &App) {
             logs(view, app);
         }
         Page::Machines => super::machines_show::show(view, app),
+        Page::Crashes => super::crashes_show::show(view, app),
     }
     let ui = &mut view.ui;
     let (overview, logs, machines) = view.shown.scrolls;
@@ -198,7 +200,7 @@ fn shell(view: &mut View, app: &App) {
         vec![
             nav("Overview", app.page == Page::Overview, 0),
             nav("Logs", app.page == Page::Logs, 0),
-            nav("Crashes", false, crashes),
+            nav("Crashes", app.page == Page::Crashes, crashes),
             nav("Machines", app.page == Page::Machines, 0),
         ],
     );
@@ -670,14 +672,17 @@ fn pane(view: &mut View, app: &App) {
     });
     page.pane_note.set(ui, note.iter().map(s).collect());
     page.raw_names.set(ui, app.raw_names);
+    let rows = field_rows(ui, app, app.selected.unwrap_or_default());
+    page.pane_fields.set(ui, rows);
+}
+
+/// Record `index`'s fields as a pane lists them: each group's heading,
+/// then each field's value wrapped whole, its name on its first line.
+pub(super) fn field_rows(ui: &mut tole::Ui, app: &App, index: usize) -> Vec<FieldRow> {
     let value_font = paint::mono(12.0, 400);
     let mut rows = Vec::new();
     let mut group = None;
-    for (at, (key, value)) in app
-        .record_fields(app.selected.unwrap_or_default())
-        .into_iter()
-        .enumerate()
-    {
+    for (at, (key, value)) in app.record_fields(index).into_iter().enumerate() {
         let known = ferrix_lode_core::fields::name_of(&key);
         let this = known.map_or(ferrix_lode_core::fields::FieldGroup::Other, |f| f.group);
         if group != Some(this) {
@@ -705,7 +710,7 @@ fn pane(view: &mut View, app: &App) {
             });
         }
     }
-    page.pane_fields.set(ui, rows);
+    rows
 }
 
 /// `text` broken into lines no wider than `width` in `face`, at most

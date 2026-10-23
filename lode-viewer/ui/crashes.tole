@@ -1,0 +1,333 @@
+// Crashes: every program the kernel ended or that showed an error,
+// grouped by program, where it failed and how, newest first, filtered by
+// boot, program and signal. A group shows its crashes; a crash its
+// fields, the screenshot lode kept of it, and the log around it.
+import Fx
+import Fx.Controls
+
+struct CrashGroupRow {
+    program: string
+    detail: string
+    count: string
+    appError: bool
+    selected: bool
+}
+
+struct CrashRow {
+    time: string
+    detail: string
+    selected: bool
+}
+
+struct AroundRow {
+    level: int
+    time: string
+    source: string
+    text: string
+    here: bool
+}
+
+export component CrashesPage : Item {
+    id: page
+    property bool allBoots
+    property list<string> programs
+    property int programOn
+    property list<string> signals
+    property int signalOn
+    property string summary
+    // Said when there is nothing to list.
+    property string empty
+    property list<CrashGroupRow> groups
+    property string groupTitle
+    property list<CrashRow> crashes
+    property bool hasCrash
+    property list<FieldRow> fields
+    property painter capture
+    property string captureNote
+    property list<AroundRow> around
+
+    signal scope(bool all)
+    signal program(int index)
+    signal kind(int index)
+    signal group(int index)
+    signal crash(int index)
+    signal openInLogs()
+    signal copyField(int field)
+
+    property real rightX: 36 + 400 + 20
+    property real rightW: page.width - rightX - 36
+
+    // The heading and the filters.
+    Text { x: 36; y: 28; height: 30; text: "Crashes"; font: Theme.sans(18, 600); color: Theme.ink }
+    Boxed {
+        x: 146; y: 31; width: 172; height: 24
+        radius: 5
+        Repeater {
+            model: ["This boot", "All boots"]
+            Item {
+                x: 1 + 85 * index; y: 1
+                width: 85; height: 22
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 3
+                    color: (index == 1) == page.allBoots ? Theme.ink : "transparent"
+                }
+                Text {
+                    width: parent.width; height: 22
+                    horizontalAlignment: Text.AlignHCenter
+                    text: modelData
+                    font: Theme.sans(12)
+                    color: (index == 1) == page.allBoots ? Theme.inv : Theme.ink2
+                }
+                MouseArea { anchors.fill: parent; onClicked: page.scope(index == 1) }
+            }
+        }
+    }
+    ComboBox {
+        x: 334; y: 28; width: 200
+        model: page.programs
+        currentIndex: page.programOn
+        onActivated: page.program(index)
+    }
+    ComboBox {
+        x: 546; y: 28; width: 170
+        model: page.signals
+        currentIndex: page.signalOn
+        onActivated: page.kind(index)
+    }
+    Text {
+        x: page.width - 36 - implicitWidth; y: 28; height: 30
+        text: page.summary
+        font: Theme.sans(12)
+        color: Theme.ink4
+    }
+
+    Text {
+        visible: page.groups.length == 0
+        x: 36; y: 82; height: 24
+        text: page.empty
+        font: Theme.sans(14)
+        color: Theme.ink3
+    }
+
+    // The groups.
+    Flickable {
+        visible: page.groups.length > 0
+        x: 36; y: 82
+        width: 400
+        height: page.height - 82 - 24
+        clip: true
+        contentHeight: 64 * page.groups.length
+        Repeater {
+            model: page.groups
+            Rectangle {
+                y: 64 * index
+                width: 400; height: 58
+                radius: 8
+                color: modelData.selected ? Theme.accentBg : groupArea.containsMouse ? Theme.hover : Theme.bg
+                border.width: 1
+                border.color: modelData.selected ? Theme.accent : Theme.line
+                Dot { cx: 18; cy: 20; r: 4.5; color: modelData.appError ? Theme.amber : Theme.red }
+                Text {
+                    x: 32; y: 9; width: 290; height: 22
+                    elide: Text.ElideRight
+                    text: modelData.program
+                    font: Theme.sans(13.5, 600)
+                    color: Theme.ink
+                }
+                Text {
+                    x: 32; y: 31; width: 356; height: 18
+                    elide: Text.ElideRight
+                    text: modelData.detail
+                    font: Theme.mono(11.5)
+                    color: Theme.ink3
+                }
+                Rectangle {
+                    x: 400 - 12 - width; y: 10
+                    width: countText.implicitWidth + 14
+                    height: 20
+                    radius: 10
+                    color: modelData.appError ? Theme.amber : Theme.red
+                    Text {
+                        id: countText
+                        width: parent.width; height: 20
+                        horizontalAlignment: Text.AlignHCenter
+                        text: modelData.count
+                        font: Theme.mono(11, 600)
+                        color: "#ffffff"
+                    }
+                }
+                MouseArea { id: groupArea; anchors.fill: parent; hoverEnabled: true; onClicked: page.group(index) }
+            }
+        }
+    }
+
+    // A group's crashes, newest first.
+    Item {
+        visible: page.groupTitle != ""
+        x: page.rightX; y: 82
+        width: page.rightW
+        height: page.height - 82 - 24
+
+        Text {
+            width: parent.width - 140; height: 24
+            elide: Text.ElideRight
+            text: page.groupTitle
+            font: Theme.sans(13, 600)
+            color: Theme.ink
+        }
+        PushButton {
+            visible: page.hasCrash
+            x: parent.width - 130; y: -2; width: 130; height: 28
+            text: "Open in Logs"
+            onClicked: page.openInLogs()
+        }
+        Rectangle {
+            y: 30
+            width: parent.width
+            height: 148
+            radius: 8
+            color: Theme.bg
+            border.width: 1
+            border.color: Theme.line
+            clip: true
+            Flickable {
+                x: 1; y: 1
+                width: parent.width - 2
+                height: 146
+                contentHeight: 28 * page.crashes.length
+                Repeater {
+                    model: page.crashes
+                    Rectangle {
+                        y: 28 * index
+                        width: parent.width; height: 28
+                        color: modelData.selected ? Theme.accentBg : crashArea.containsMouse ? Theme.hover : "transparent"
+                        Text { x: 12; height: 28; text: modelData.time; font: Theme.mono(12); color: Theme.ink4 }
+                        Text {
+                            x: 120; width: parent.width - 130; height: 28
+                            elide: Text.ElideRight
+                            text: modelData.detail
+                            font: Theme.mono(12)
+                            color: Theme.ink
+                        }
+                        MouseArea { id: crashArea; anchors.fill: parent; hoverEnabled: true; onClicked: page.crash(index) }
+                    }
+                }
+            }
+        }
+
+        // The crash: its fields and its screenshot.
+        Flickable {
+            visible: page.hasCrash
+            y: 192
+            width: 360
+            height: 250
+            clip: true
+            contentHeight: fieldColumn.height
+            Column {
+                id: fieldColumn
+                Repeater {
+                    model: page.fields
+                    Item {
+                        width: 352
+                        height: modelData.height
+                        Text {
+                            visible: modelData.heading != ""
+                            y: modelData.height - 22
+                            height: 18
+                            text: modelData.heading
+                            font: Theme.sans(11, 600)
+                            color: Theme.ink5
+                        }
+                        Text {
+                            visible: modelData.heading == ""
+                            width: 124; height: 18
+                            elide: Text.ElideRight
+                            text: fieldArea.containsMouse ? modelData.raw : modelData.name
+                            font: fieldArea.containsMouse ? Theme.mono(11) : Theme.sans(12)
+                            color: Theme.ink4
+                        }
+                        Text {
+                            visible: modelData.heading == ""
+                            x: 130; height: 18
+                            text: modelData.text
+                            font: Theme.mono(12)
+                            color: Theme.ink
+                        }
+                        MouseArea {
+                            id: fieldArea
+                            visible: modelData.heading == ""
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: page.copyField(modelData.field)
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            visible: page.hasCrash
+            x: 376; y: 192
+            width: max(parent.width - 376, 0)
+            height: 250
+            radius: 8
+            color: Theme.bg3
+            Canvas { anchors.fill: parent; painter: page.capture }
+            Text {
+                visible: page.captureNote != ""
+                x: 16; width: parent.width - 32; height: 250
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                text: page.captureNote
+                font: Theme.sans(12)
+                color: Theme.ink4
+            }
+        }
+
+        // The log around it.
+        Text {
+            visible: page.hasCrash
+            y: 456; height: 22
+            text: "±30 s around"
+            font: Theme.sans(13, 600)
+            color: Theme.ink
+        }
+        Rectangle {
+            visible: page.hasCrash
+            y: 482
+            width: parent.width
+            height: parent.height - 482
+            radius: 8
+            color: Theme.bg
+            border.width: 1
+            border.color: Theme.line
+            clip: true
+            ListView {
+                x: 1; y: 1
+                width: parent.width - 2
+                height: parent.height - 2
+                model: page.around
+                delegate: Rectangle {
+                    width: parent.width
+                    height: 24
+                    color: modelData.here ? Theme.accentBg : modelData.level <= 3 ? Theme.redBg : modelData.level == 4 ? Theme.amberBg : "transparent"
+                    Text { x: 12; height: 24; text: modelData.time; font: Theme.mono(12); color: Theme.ink4 }
+                    Text {
+                        x: 116; width: 92; height: 24
+                        elide: Text.ElideRight
+                        text: modelData.source
+                        font: Theme.mono(12)
+                        color: Theme.ink
+                    }
+                    Text {
+                        x: 216; width: parent.width - 226; height: 24
+                        elide: Text.ElideRight
+                        text: modelData.text
+                        font: Theme.mono(12)
+                        color: Theme.ink
+                    }
+                }
+            }
+        }
+    }
+}

@@ -27,6 +27,9 @@ bench = false
 # lode's own records, segment format, summaries and filter language: the
 # store is read and queried with the same code `lode` reads it with.
 ferrix-lode-core = { path = "../../../lib/log/lode" }
+# The screenshots lode keeps of a crash, in QOI: read with lode's own
+# decoder.
+ferrix-lode-capture = { path = "../../../lib/proto/lode-capture" }
 # Fonts, shaping and glyphs.
 compositor-text = { path = "../../system/linux/compositor/text" }
 # The Wayland client: the window, the keyboard, the pointer, the buffers,
