@@ -14,6 +14,7 @@ use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use ferrix_lode_core::compress;
 use ferrix_lode_core::record::Record;
 use ferrix_lode_core::segment::{self, Header};
 use ferrix_lode_core::summary::Summary;
@@ -151,7 +152,9 @@ impl Store {
         let mut records = Vec::new();
         self.places.clear();
         for each in &segments {
-            let Ok(bytes) = fs::read(&each.path) else {
+            // A sealed segment may be compressed (§8.2); read, it is the
+            // segment it was, byte for byte.
+            let Ok(bytes) = fs::read(&each.path).map(compress::expand) else {
                 continue;
             };
             let Some(scanned) = segment::scan(&bytes, 0) else {
@@ -260,17 +263,25 @@ fn read_segment(dir: &Path, item: &fs::DirEntry) -> Result<Option<Segment>, ()> 
     }))
 }
 
-/// A segment's header, from its first bytes.
+/// A segment's header, from its first bytes, compressed or not.
 fn header(path: &Path) -> Option<Header> {
     let mut file = fs::File::open(path).ok()?;
     let mut buf = [0_u8; 512];
     let got = file.read(&mut buf).ok()?;
-    Header::decode(buf.get(..got)?).map(|(header, _)| header)
+    compress::header(buf.get(..got)?)
 }
 
-/// A file's bytes from `offset` on.
+/// A segment's bytes from `offset` on, the offset in the segment as it was
+/// written: a compressed one is unpacked whole first, the one being written
+/// is read from there.
 fn read_from(path: &Path, offset: usize) -> Option<Vec<u8>> {
     let mut file = fs::File::open(path).ok()?;
+    let mut magic = [0_u8; 8];
+    let got = file.read(&mut magic).ok()?;
+    if compress::is_compressed(magic.get(..got)?) {
+        let raw = compress::expand(fs::read(path).ok()?);
+        return Some(raw.get(offset..).unwrap_or_default().to_vec());
+    }
     let _ = file.seek(SeekFrom::Start(offset as u64)).ok()?;
     let mut bytes = Vec::new();
     let _ = file.read_to_end(&mut bytes).ok()?;
@@ -336,6 +347,16 @@ mod tests {
         let status = store.status();
         assert_eq!(status.segments, 1);
         assert!(status.used > 0);
+        // Sealed and compressed, as lode leaves it: read as it was.
+        let raw = std::fs::read(&path).expect("read");
+        let packed = ferrix_lode_core::compress::compress(raw).expect("packed");
+        assert!(ferrix_lode_core::compress::is_compressed(&packed));
+        std::fs::write(&path, packed).expect("written");
+        let mut again = Store::at(std::slice::from_ref(&dir));
+        let (records, _) = again.load();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[2].message(), b"three");
+        assert!(again.follow(3).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
