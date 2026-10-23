@@ -44,6 +44,9 @@ pub fn paint(app: &App, c: &mut Frame<'_, '_>) {
     if app.boot_menu {
         boot_menu(app, c, &t);
     }
+    if app.machine_menu {
+        machine_menu(app, c, &t);
+    }
     if let Some(toast) = &app.toast {
         let w = c.width(sans(12.5, 500), toast) + 28.0;
         let place = Rect::new((width - w) / 2.0, height - 46.0, w, 30.0);
@@ -208,6 +211,18 @@ fn sidebar(app: &App, c: &mut Frame<'_, '_>, t: &Theme, bar: Rect) {
     }
     c.fill(Rect::new(14.0, foot, SIDEBAR - 28.0, 1.0), 0.0, t.line);
     let (running, line, tier) = match &app.origin {
+        Origin::Store(_) if !app.machines.is_empty() => {
+            let mib = app.status.used as f32 / 1_048_576.0;
+            (
+                app.live,
+                format!("{} machines · {mib:.0} MiB here", app.machines.len()),
+                if app.live {
+                    "received · following".to_owned()
+                } else {
+                    "received · Live is off".to_owned()
+                },
+            )
+        }
         Origin::Store(_) => {
             let mib = app.status.used as f32 / 1_048_576.0;
             let state = if app.status.running {
@@ -285,7 +300,32 @@ pub(super) fn page_heading(
     title: &str,
 ) -> f32 {
     let y = area.y;
-    let x = area.x + c.text(sans(18.0, 600), title, (area.x, y, 30.0), t.ink, None) + 16.0;
+    let mut x = area.x + c.text(sans(18.0, 600), title, (area.x, y, 30.0), t.ink, None) + 16.0;
+    // The machine, when the viewer holds several (lode-receive's stores).
+    if !app.machines.is_empty() {
+        let name = app
+            .machines
+            .get(app.machine)
+            .map_or("?", |machine| machine.name.as_str());
+        let w = c.width(sans(13.0, 500), name) + 40.0;
+        let picker = Rect::new(x, y + 1.0, w, 28.0);
+        c.boxed(picker, 6.0, t.bg, t.line3);
+        c.dot(picker.x + 12.0, picker.y + 14.0, 3.5, theme::GREEN);
+        let _ = c.text(
+            sans(13.0, 500),
+            name,
+            (picker.x + 20.0, picker.y, picker.h),
+            t.ink,
+            None,
+        );
+        let cx = picker.right() - 12.0;
+        c.polygon(
+            &[(cx - 4.0, y + 13.0), (cx + 4.0, y + 13.0), (cx, y + 18.0)],
+            t.ink,
+        );
+        c.hit(picker, Action::MachineMenu);
+        x = picker.right() + 8.0;
+    }
     let (from, to) = app
         .boot()
         .map_or((0, 0), |boot| (boot.first_us, boot.last_us));
@@ -337,7 +377,7 @@ pub(super) fn page_heading(
 
 /// The boots, to pick one.
 fn boot_menu(app: &App, c: &mut Frame<'_, '_>, t: &Theme) {
-    let x = SIDEBAR + MARGIN + 80.0;
+    let x = SIDEBAR + MARGIN + if app.machines.is_empty() { 80.0 } else { 220.0 };
     let y = HEADER + 28.0 + 34.0;
     let count = app.log.boots.len();
     let place = Rect::new(x, y, 420.0, 12.0 + 32.0 * count.min(12) as f32);
@@ -379,6 +419,46 @@ fn boot_menu(app: &App, c: &mut Frame<'_, '_>, t: &Theme) {
             Some(line.w - 86.0),
         );
         c.hit(line, Action::Boot(index));
+    }
+}
+
+/// The machines, to pick one.
+fn machine_menu(app: &App, c: &mut Frame<'_, '_>, t: &Theme) {
+    let x = SIDEBAR + MARGIN + 80.0;
+    let y = HEADER + 28.0 + 34.0;
+    let count = app.machines.len().min(12);
+    let place = Rect::new(x, y, 380.0, 12.0 + 32.0 * count as f32);
+    c.fill(
+        Rect::new(place.x + 2.0, place.y + 3.0, place.w, place.h),
+        8.0,
+        t.fill,
+    );
+    c.boxed(place, 8.0, t.bg, t.line3);
+    for (row, machine) in app.machines.iter().take(12).enumerate() {
+        let line = Rect::new(
+            place.x + 6.0,
+            place.y + 6.0 + 32.0 * row as f32,
+            place.w - 12.0,
+            32.0,
+        );
+        if row == app.machine {
+            c.fill(line, 5.0, t.hover);
+        }
+        let _ = c.text(
+            sans(13.0, 500),
+            &machine.name,
+            (line.x + 10.0, line.y, line.h),
+            t.ink,
+            Some(150.0),
+        );
+        let _ = c.text(
+            mono(12.0, 400),
+            &machine.note,
+            (line.x + 170.0, line.y, line.h),
+            t.ink4,
+            Some(line.w - 180.0),
+        );
+        c.hit(line, Action::Machine(row));
     }
 }
 

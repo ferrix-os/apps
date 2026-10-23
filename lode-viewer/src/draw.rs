@@ -134,9 +134,21 @@ impl Text {
     #[must_use]
     pub fn load() -> Self {
         let mut fonts = Fonts::system();
+        // Installed on a Linux desktop beside the program: `<prefix>/bin`
+        // and `<prefix>/share/lode-viewer/fonts`.
+        let beside = std::env::current_exe().ok().and_then(|exe| {
+            let prefix = exe.parent()?.parent()?.to_path_buf();
+            Some(
+                prefix
+                    .join("share/lode-viewer/fonts")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        });
         for dir in [
             std::env::var("LODE_VIEWER_FONTS").ok(),
             Some("/usr/share/fonts/ibm-plex".to_owned()),
+            beside,
             Some(concat!(env!("CARGO_MANIFEST_DIR"), "/share/fonts").to_owned()),
         ]
         .into_iter()

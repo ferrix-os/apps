@@ -4,6 +4,9 @@
 //! lode-viewer                       lode's store, in a window
 //! lode-viewer FILE.jsonl ...        a JSONL export (lode -o json, xtask box-log)
 //! lode-viewer -D DIR ...            a store in another directory (lode -D)
+//! lode-viewer --machines DIR        each directory in DIR a machine's store (lode-receive's)
+//! lode-viewer --import FILE.jsonl --into DIR
+//!                                   write a JSONL export as a store, and exit
 //!   --page overview|logs            the page it opens on
 //!   --theme light|dark              the palette
 //!   --boot N                        the boot, as lode -b counts: 0 the last, -1 the one before
@@ -33,6 +36,10 @@ usage: lode-viewer [FILE.jsonl ...] [-D DIR ...] [options]
 
   FILE.jsonl        read a JSONL export (lode -o json, cargo xtask box-log) instead of the store
   -D DIR            read lode's store in DIR (default /var/log/journal and /run/log/journal)
+  --machines DIR    each directory in DIR is one machine's store, as lode-receive keeps them;
+                    without a store or a file, ~/.local/share/ferrix/lode-receive (LODE_RECEIVE_DIR)
+  --import FILE.jsonl --into DIR
+                    write a JSONL export (a box log) into DIR as lode's store, and exit
   --page NAME       open on overview or logs
   --theme NAME      light or dark
   --boot N          the boot, as lode -b counts it: 0 the last, -1 the one before
@@ -55,6 +62,12 @@ pub struct Options {
     pub files: Vec<PathBuf>,
     /// Store directories.
     pub dirs: Vec<PathBuf>,
+    /// A directory of machines' stores.
+    pub machines: Option<PathBuf>,
+    /// Where `--import` writes.
+    pub into: Option<PathBuf>,
+    /// `--import`.
+    pub import: bool,
     /// The page.
     pub page: Option<Page>,
     /// The palette.
@@ -85,7 +98,7 @@ pub struct Options {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Asked {
     /// Run.
-    Run(Options),
+    Run(Box<Options>),
     /// `--version`.
     Version,
     /// `--help`.
@@ -115,6 +128,12 @@ pub fn parse(arguments: &[String]) -> Asked {
                 "--version" | "-V" => return Err("version".to_owned()),
                 "--help" | "-h" => return Err("help".to_owned()),
                 "-D" | "--directory" => options.dirs.push(PathBuf::from(value("a directory")?)),
+                "--machines" => options.machines = Some(PathBuf::from(value("a directory")?)),
+                "--import" => {
+                    options.import = true;
+                    options.files.push(PathBuf::from(value("a JSONL file")?));
+                }
+                "--into" => options.into = Some(PathBuf::from(value("a directory")?)),
                 "--page" => {
                     let name = value("a page")?;
                     options.page = Some(
@@ -182,7 +201,7 @@ pub fn parse(arguments: &[String]) -> Asked {
             Err(why) => return Asked::Refused(why),
         }
     }
-    Asked::Run(options)
+    Asked::Run(Box::new(options))
 }
 
 /// `HH:MM:SS` as seconds into the day.
@@ -202,6 +221,46 @@ pub fn say(text: &str) {
 #[must_use]
 pub fn open(options: &Options) -> App {
     let mut notices = Vec::new();
+    // Several machines' stores: asked for, or, when nothing else is, the
+    // receiver's root where it has any and this machine has no store.
+    let root = options.machines.clone().or_else(|| {
+        if !options.files.is_empty() || !options.dirs.is_empty() {
+            return None;
+        }
+        let root = receive_root()?;
+        let none_here = Store::system().status().segments == 0;
+        (none_here && !crate::store::machines(&root).is_empty()).then_some(root)
+    });
+    if let Some(root) = root {
+        let machines = crate::store::machines(&root);
+        say(&format!(
+            "{} machines in {}",
+            machines.len(),
+            root.display()
+        ));
+        let mut app = App::new(
+            Log::default(),
+            Origin::File(root.clone()),
+            "no machine".to_owned(),
+        );
+        if machines.is_empty() {
+            app.notices.push(format!(
+                "{}: no machine has sent its log here yet",
+                root.display()
+            ));
+        }
+        app.machines = machines;
+        app.machines_root = Some(root.clone());
+        app.open_machine(0);
+        // What arrives from the machines is followed from the start.
+        app.live = matches!(app.origin, Origin::Store(_));
+        say(&format!(
+            "read {} records of {}",
+            app.log.entries.len(),
+            app.origin_name
+        ));
+        return settle(app, options);
+    }
     let (log, origin, name) = if options.files.is_empty() {
         let mut store = if options.dirs.is_empty() {
             Store::system()
@@ -248,6 +307,26 @@ pub fn open(options: &Options) -> App {
     };
     let mut app = App::new(log, origin, name);
     app.notices = notices;
+    settle(app, options)
+}
+
+/// Where lode-receive keeps the machines that send to it:
+/// `LODE_RECEIVE_DIR`, else `~/.local/share/ferrix/lode-receive`.
+#[must_use]
+pub fn receive_root() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("LODE_RECEIVE_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+        })?;
+    Some(data.join("ferrix/lode-receive"))
+}
+
+/// The state the options ask for, on a viewer whose records are read.
+fn settle(mut app: App, options: &Options) -> App {
     if let Some(home) = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
@@ -310,6 +389,9 @@ pub fn main() -> ExitCode {
             if let Some(count) = options.bench {
                 return bench(&options, count);
             }
+            if options.import {
+                return import(&options);
+            }
             let app = open(&options);
             let status = match &options.render {
                 Some(out) => crate::window::render(app, out, options.size, options.scale),
@@ -329,6 +411,38 @@ pub fn main() -> ExitCode {
             say(&format!("err: {why}"));
             eprint!("{USAGE}");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// `--import FILE --into DIR`: the files' records written as a store.
+fn import(options: &Options) -> ExitCode {
+    let Some(into) = &options.into else {
+        say("err: --import needs --into DIR");
+        return ExitCode::from(2);
+    };
+    let mut records = Vec::new();
+    for file in &options.files {
+        match std::fs::read_to_string(file) {
+            Ok(text) => records.extend(crate::json::read(&text).records),
+            Err(error) => {
+                say(&format!("err: {}: {error}", file.display()));
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    match crate::store::import(&records, into) {
+        Ok(boots) => {
+            say(&format!(
+                "wrote {} records in {boots} segments to {}",
+                records.len(),
+                into.display()
+            ));
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            say(&format!("err: {}: {error}", into.display()));
+            ExitCode::FAILURE
         }
     }
 }

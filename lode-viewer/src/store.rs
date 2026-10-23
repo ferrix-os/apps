@@ -90,8 +90,9 @@ impl Store {
         let mut refused = Vec::new();
         let mut dirs: Vec<PathBuf> = Vec::new();
         for dir in &self.dirs {
-            dirs.push(dir.clone());
-            dirs.extend(user_dirs(dir));
+            // The store itself, a user's directories in it (§12.1), and a
+            // machine's store as lode-receive lays it out below.
+            segment_dirs(dir, 2, &mut dirs);
         }
         for dir in dirs {
             let listing = match fs::read_dir(&dir) {
@@ -218,20 +219,147 @@ impl Store {
     }
 }
 
-/// A user's own directories in `dir`: `user-<uid>` (`docs/LOGGING.md`
-/// §12.1).
-fn user_dirs(dir: &Path) -> Vec<PathBuf> {
-    fs::read_dir(dir)
-        .map(|listing| {
-            listing
-                .flatten()
-                .filter(|item| {
-                    item.file_name().to_string_lossy().starts_with("user-") && item.path().is_dir()
-                })
-                .map(|item| item.path())
-                .collect()
+/// One machine's store among several: what `lode-receive` keeps for each
+/// machine that sends to it, a store of its own in a directory of its own,
+/// `<root>/<machine-id>/` (32 hex digits) or `<root>/host-<hostname>/`,
+/// with a `machine` file of `hostname=` and `last_seen=` lines beside the
+/// segments. A dot-name (`.receive/`, the receiver's cursors) is no
+/// machine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Machine {
+    /// Its label: the host's name and a short id, `n150 · 062359e1`.
+    pub name: String,
+    /// Its store.
+    pub dir: PathBuf,
+    /// What it holds, in a few words: segments and size.
+    pub note: String,
+}
+
+/// The machines under `root`: each directory there that holds segments,
+/// itself or in a directory below it (`journal/`, a user's), by name.
+#[must_use]
+pub fn machines(root: &Path) -> Vec<Machine> {
+    let Ok(listing) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut found: Vec<Machine> = listing
+        .flatten()
+        .filter(|item| !item.file_name().to_string_lossy().starts_with('.'))
+        .filter(|item| item.path().is_dir())
+        .filter(|item| holds_segments(&item.path(), 2))
+        .map(|item| {
+            let status = Store::at(&[item.path()]).status();
+            let dir_name = item.file_name().to_string_lossy().into_owned();
+            let said = fs::read_to_string(item.path().join("machine")).unwrap_or_default();
+            let field = |key: &str| {
+                said.lines()
+                    .find_map(|line| line.strip_prefix(key).map(str::trim))
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            };
+            let hostname = field("hostname=");
+            let name = match (&hostname, dir_name.strip_prefix("host-")) {
+                (_, Some(host)) => hostname.clone().unwrap_or_else(|| host.to_owned()),
+                (Some(host), None) => {
+                    format!("{host} · {}", dir_name.get(..8).unwrap_or(&dir_name))
+                }
+                (None, None) => dir_name.clone(),
+            };
+            let seen = field("last_seen=").map_or_else(String::new, |at| format!(" · seen {at}"));
+            Machine {
+                name,
+                dir: item.path(),
+                note: format!(
+                    "{} segment{} · {:.1} MiB{seen}",
+                    status.segments,
+                    if status.segments == 1 { "" } else { "s" },
+                    status.used as f64 / 1_048_576.0
+                ),
+            }
         })
-        .unwrap_or_default()
+        .collect();
+    found.sort_by(|a, b| a.dir.cmp(&b.dir));
+    found
+}
+
+/// Whether `dir`, or a directory up to `depth` below it, holds a segment.
+fn holds_segments(dir: &Path, depth: usize) -> bool {
+    let Ok(listing) = fs::read_dir(dir) else {
+        return false;
+    };
+    listing.flatten().any(|item| {
+        let path = item.path();
+        if path.is_dir() {
+            depth > 0 && holds_segments(&path, depth - 1)
+        } else {
+            segment::is_segment_name(&item.file_name().to_string_lossy())
+        }
+    })
+}
+
+/// Every directory of segments in `dir`: itself and the directories below
+/// it that hold any, two deep.
+fn segment_dirs(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    out.push(dir.to_path_buf());
+    if depth == 0 {
+        return;
+    }
+    if let Ok(listing) = fs::read_dir(dir) {
+        let mut below: Vec<PathBuf> = listing
+            .flatten()
+            .map(|item| item.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        below.sort();
+        for path in below {
+            segment_dirs(&path, depth - 1, out);
+        }
+    }
+}
+
+/// Write `records` into `dir` as lode's store: one segment a boot, each
+/// with its summary, as sealed segments lie -- how a JSONL export (a box
+/// log) becomes a store the viewer, and `lode -D`, read. Answers how many
+/// segments were written.
+///
+/// # Errors
+///
+/// A directory or a file that cannot be written.
+pub fn import(records: &[Record], dir: &Path) -> std::io::Result<usize> {
+    fs::create_dir_all(dir)?;
+    let mut boots: Vec<[u8; 16]> = Vec::new();
+    for record in records {
+        if !boots.contains(&record.boot_id) {
+            boots.push(record.boot_id);
+        }
+    }
+    for boot in &boots {
+        let mut mine: Vec<Record> = records
+            .iter()
+            .filter(|record| record.boot_id == *boot)
+            .cloned()
+            .collect();
+        mine.sort_by_key(|record| record.seqnum);
+        let Some(first) = mine.first() else {
+            continue;
+        };
+        let header = Header {
+            boot_id: *boot,
+            machine_id: [0; 16],
+            first_seqnum: first.seqnum,
+            created_us: first.realtime_us,
+            host: first.host.to_string(),
+        };
+        let mut bytes = header.encode();
+        for record in &mine {
+            segment::encode_record(record, &mut bytes);
+        }
+        let name = segment::file_name("system", boot, first.seqnum);
+        fs::write(dir.join(&name), bytes)?;
+        let summary = ferrix_lode_core::summary::Summary::of(&mine).encode();
+        fs::write(dir.join(format!("{name}.sum")), summary)?;
+    }
+    Ok(boots.len())
 }
 
 /// The segment `item` of `dir` is, `None` when it is no segment, or an
@@ -315,6 +443,51 @@ mod tests {
         record.seqnum = seq;
         record.push("MESSAGE", message.as_bytes());
         record
+    }
+
+    #[test]
+    fn an_export_imported_is_a_store_and_each_machine_one_of_several() {
+        let root =
+            std::env::temp_dir().join(format!("lode-viewer-machines-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut records = vec![record(1, "one"), record(2, "two")];
+        records[1].boot_id = [9; 16];
+        assert_eq!(
+            super::import(&records, &root.join("n150/journal")).expect("written"),
+            2
+        );
+        assert_eq!(
+            super::import(&records[..1], &root.join("host-pixel7")).expect("written"),
+            1
+        );
+        let id = root.join("062359e1029c423c0c0b4c9cf5216a14");
+        assert_eq!(super::import(&records[..1], &id).expect("written"), 1);
+        std::fs::write(
+            id.join("machine"),
+            "hostname=n150-box\nlast_seen=2026-10-23T18:00:00Z\n",
+        )
+        .expect("written");
+        std::fs::create_dir_all(root.join("empty")).expect("a directory");
+        assert_eq!(
+            super::import(&records[..1], &root.join(".receive")).expect("written"),
+            1
+        );
+        let machines = super::machines(&root);
+        let names: Vec<&str> = machines
+            .iter()
+            .map(|machine| machine.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["n150-box · 062359e1", "pixel7", "n150"]);
+        assert!(
+            machines[0].note.ends_with("seen 2026-10-23T18:00:00Z"),
+            "{}",
+            machines[0].note
+        );
+        let (read, refused) = Store::at(&[machines[2].dir.clone()]).load();
+        assert!(refused.is_empty());
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[1].boot_id, [9; 16]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

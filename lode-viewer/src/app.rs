@@ -56,6 +56,10 @@ pub enum Action {
     Theme(Mode),
     /// Open or close the boot menu.
     BootMenu,
+    /// Open or close the machine menu.
+    MachineMenu,
+    /// Show machine `index`.
+    Machine(usize),
     /// Show boot `index`.
     Boot(usize),
     /// Turn Live on.
@@ -171,6 +175,15 @@ pub struct App {
     pub overview_scroll: f32,
     /// Whether the boot menu is open.
     pub boot_menu: bool,
+    /// The machines whose stores are kept side by side (lode-receive's),
+    /// when the viewer was opened on several.
+    pub machines: Vec<crate::store::Machine>,
+    /// The machine shown, in [`App::machines`].
+    pub machine: usize,
+    /// Whether the machine menu is open.
+    pub machine_menu: bool,
+    /// The receiver's root the machines were found in.
+    pub machines_root: Option<std::path::PathBuf>,
     /// Whether the boot before is drawn beside this one.
     pub compare: bool,
     /// What the last copy put on the clipboard, for the window to offer.
@@ -216,12 +229,36 @@ impl App {
             scroll: 0.0,
             overview_scroll: 0.0,
             boot_menu: false,
+            machines: Vec::new(),
+            machine: 0,
+            machine_menu: false,
+            machines_root: None,
             compare: false,
             clipboard: None,
             toast: None,
         };
         app.go_to_boot(boot);
         app
+    }
+
+    /// Show machine `index` of [`App::machines`]: its store read, its last
+    /// boot in the window, Live kept as it was.
+    pub fn open_machine(&mut self, index: usize) {
+        let Some(machine) = self.machines.get(index).cloned() else {
+            return;
+        };
+        let mut store = Store::at(std::slice::from_ref(&machine.dir));
+        let (records, refused) = store.load();
+        self.notices = refused;
+        self.status = store.status();
+        self.log = Log::new(records);
+        self.origin = Origin::Store(store);
+        self.origin_name.clone_from(&machine.name);
+        self.machine = index;
+        self.expanded.clear();
+        self.selected = None;
+        self.scroll = 0.0;
+        self.go_to_boot(self.log.boots.len().saturating_sub(1));
     }
 
     /// Read the saved queries from `path`, keeping the built-in ones that
@@ -373,6 +410,25 @@ impl App {
         added
     }
 
+    /// Look again for the machines under the receiver's root: one that
+    /// began sending since appears, and the one shown stays shown.
+    pub fn rescan_machines(&mut self, root: &std::path::Path) -> bool {
+        let found = crate::store::machines(root);
+        if found.len() == self.machines.len() {
+            self.machines = found;
+            return false;
+        }
+        let shown = self
+            .machines
+            .get(self.machine)
+            .map(|machine| machine.dir.clone());
+        self.machine = shown
+            .and_then(|dir| found.iter().position(|machine| machine.dir == dir))
+            .unwrap_or(0);
+        self.machines = found;
+        true
+    }
+
     /// Follow the store once: what it has that is new.
     pub fn follow(&mut self) -> usize {
         let Origin::Store(store) = &mut self.origin else {
@@ -391,6 +447,9 @@ impl App {
         if !matches!(action, Action::BootMenu | Action::Boot(_)) {
             self.boot_menu = false;
         }
+        if !matches!(action, Action::MachineMenu | Action::Machine(_)) {
+            self.machine_menu = false;
+        }
         match action.clone() {
             Action::Page(page) => self.page = page,
             Action::Crashes => {
@@ -402,6 +461,11 @@ impl App {
             }
             Action::Theme(mode) => self.mode = mode,
             Action::BootMenu => self.boot_menu = !self.boot_menu,
+            Action::MachineMenu => self.machine_menu = !self.machine_menu,
+            Action::Machine(index) => {
+                self.machine_menu = false;
+                self.open_machine(index);
+            }
             Action::Boot(index) => self.go_to_boot(index),
             Action::Live => {
                 if matches!(self.origin, Origin::Store(_)) {

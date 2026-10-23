@@ -249,6 +249,8 @@ struct Window {
     toast_since: Option<Instant>,
     /// Whether the window should close.
     done: bool,
+    /// Timer turns so far.
+    ticks: u32,
 }
 
 /// Open the window and run until it is closed. Answers the exit status.
@@ -258,6 +260,14 @@ pub fn run(app: App) -> i32 {
         Ok(client) => client,
         Err(error) => {
             say(&format!("err: no compositor to open a window on: {error}"));
+            if std::env::var_os("WAYLAND_DISPLAY").is_none()
+                && std::env::var_os("DISPLAY").is_some()
+            {
+                say(
+                    "err: this is an X11 session, and lode-viewer speaks Wayland only: log in to a \
+                     Wayland session (GNOME, Plasma, Hyprland, sway), or draw a frame with --render",
+                );
+            }
             return 1;
         }
     };
@@ -301,6 +311,7 @@ pub fn run(app: App) -> i32 {
         dirty: false,
         toast_since: None,
         done: false,
+        ticks: 0,
     };
     let mut drawn = false;
     while !window.done {
@@ -381,6 +392,14 @@ pub fn run(app: App) -> i32 {
 impl Window {
     /// The timer: follow the store when Live, and take a stale toast down.
     fn tick(&mut self) {
+        self.ticks = self.ticks.wrapping_add(1);
+        if self.ticks.is_multiple_of(10)
+            && let Some(root) = self.app.machines_root.clone()
+            && self.app.rescan_machines(&root)
+        {
+            say(&format!("{} machines now", self.app.machines.len()));
+            self.dirty = true;
+        }
         if self.app.live {
             let added = self.app.follow();
             if added > 0 {

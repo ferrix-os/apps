@@ -166,3 +166,56 @@ fn a_frame_of_each_page_is_drawn_in_each_palette() {
         }
     }
 }
+
+#[test]
+fn machines_received_are_picked_one_at_a_time_and_followed() {
+    let root = std::env::temp_dir().join(format!("lode-viewer-received-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let read = crate::json::read(SAMPLE);
+    let (early, late) = read.records.split_at(400);
+    let n150 = root.join("062359e1029c423c0c0b4c9cf5216a14");
+    assert_eq!(crate::store::import(early, &n150).expect("written"), 1);
+    std::fs::write(n150.join("machine"), "hostname=n150\n").expect("written");
+    assert_eq!(
+        crate::store::import(&late[..10], &root.join("host-pixel7")).expect("written"),
+        1
+    );
+    let mut app = App::new(
+        Log::default(),
+        Origin::File(root.clone()),
+        "none".to_owned(),
+    );
+    app.machines = crate::store::machines(&root);
+    app.machines_root = Some(root.clone());
+    app.open_machine(0);
+    assert_eq!(app.origin_name, "n150 · 062359e1");
+    assert_eq!(app.log.entries.len(), 400);
+    app.act(&Action::Machine(1), 0.0);
+    assert_eq!(app.origin_name, "pixel7");
+    assert_eq!(app.log.entries.len(), 10);
+    // Back on the box, the rest of its log arrives in a segment still being
+    // written (no summary yet), and Live takes it.
+    app.act(&Action::Machine(0), 0.0);
+    app.live = true;
+    let incoming = root.join("incoming");
+    assert_eq!(crate::store::import(late, &incoming).expect("written"), 1);
+    for item in std::fs::read_dir(&incoming).expect("listed").flatten() {
+        let name = item.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".fxj") {
+            std::fs::rename(item.path(), n150.join(name)).expect("moved");
+        }
+    }
+    std::fs::remove_dir_all(&incoming).expect("removed");
+    assert_eq!(app.follow(), late.len());
+    assert_eq!(app.log.entries.len(), 801);
+    // A machine that begins sending appears.
+    assert!(!app.rescan_machines(&root));
+    assert_eq!(
+        crate::store::import(&late[..1], &root.join("host-third")).expect("written"),
+        1
+    );
+    assert!(app.rescan_machines(&root));
+    assert_eq!(app.machines.len(), 3);
+    assert_eq!(app.machine, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}

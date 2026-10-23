@@ -22,6 +22,10 @@ lode-viewer FILE.jsonl --bench 100000
                                     the file grown to that many records, each step timed
 ```
 
+**On a Linux desktop** (nazuna's): `bash src/user/apps/lode-viewer/install-linux.sh` in a Ferrix checkout builds it for the host and installs it into `~/.local` (`PREFIX` for elsewhere): the program in `bin/`, the fonts in `share/lode-viewer/fonts/`, the icon, and "Logs" in the launcher. It speaks Wayland only, so it needs a Wayland session -- GNOME (mutter), KDE Plasma, Hyprland or sway; it opened on nazuna's GNOME session. On an X11-only desktop it says so and stops; `--render` still draws a frame there.
+
+**Several machines.** With no store of lode's on the machine and no file named, it opens the machines `lode-receive` keeps under `~/.local/share/ferrix/lode-receive` (`LODE_RECEIVE_DIR`, or `--machines DIR`): each directory there (`<machine-id>/`, or `host-<hostname>/`; dot-names skipped) is one machine's store, labelled from its `machine` file (`hostname=`, `last_seen=`). A machine picker beside the boot picker switches between them, Live follows the one shown from the start, and a machine that begins sending appears within ten seconds. `lode-viewer --import FILE.jsonl --into DIR` writes an export (a box log) as such a store, a segment a boot with its summary.
+
 Keys: `/` types into the query, Return runs it, Escape leaves it; Up and Down (or `j`, `k`) move the selection; Page Up and Down scroll; Left and Right move the window 10 s; `o` and `l` the pages; `t` the palette; Ctrl+Q closes. The wheel scrolls, and over the track it zooms.
 
 **How it is built.** The store is read with lode's own core, `ferrix-lode-core`: the segment format and its scan, the summaries, the records, the filter language, the JSON output. Live follows the newest segments from where the last read stopped, as `lode -f` does. The window is the desktop's own Wayland client runtime, `compositor-toolkit` (an xdg-shell toplevel, shared-memory buffers, the keyboard, the pointer, the clipboard through `ext_data_control`), drawn on the CPU with tiny-skia and `compositor-text`, so it needs no GPU and no C library: a static program of 3.4 MB on x86-64. Every frame is drawn whole from the state; the table draws only the lines in view, so 100,000 records cost a few milliseconds a frame.
@@ -34,4 +38,4 @@ cargo xtask test-compositor --arch x86_64 --boot lode-viewer  # the desktop, the
 
 The tests read `testdata/n150-boot-excerpt.jsonl`: 801 records of the N150's first boot under lode, from before lode read levels itself, with its private addresses replaced by documentation ones.
 
-**Not yet**: the design's Timeline, Sources, Crashes (the sidebar's Crashes opens Logs on them), Boots and Rules & alerts pages; dragging the brush's edges (a press or a drag on the track moves the window); Export…; a merged view of several machines.
+**Not yet**: the design's Timeline, Sources, Crashes (the sidebar's Crashes opens Logs on them), Boots and Rules & alerts pages; dragging the brush's edges (a press or a drag on the track moves the window); Export…; a merged view of several machines (they are shown one at a time); moving the window by its own header where a compositor draws no title bar.
