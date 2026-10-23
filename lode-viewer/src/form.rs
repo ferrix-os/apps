@@ -471,9 +471,19 @@ pub fn key_path(name: &str) -> Option<PathBuf> {
 ///
 /// What the file system said.
 pub fn keep_key(name: &str, text: &str) -> Result<PathBuf, String> {
+    let path = key_path(name).ok_or("no home directory to keep the key in")?;
+    keep_key_at(&path, text)
+}
+
+/// Keep pasted `text` as a key at `path`, as [`keep_key`] does.
+///
+/// # Errors
+///
+/// What the file system said.
+pub fn keep_key_at(path: &Path, text: &str) -> Result<PathBuf, String> {
     use std::io::Write as _;
     use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-    let path = key_path(name).ok_or("no home directory to keep the key in")?;
+    let path = path.to_path_buf();
     let dir = path.parent().ok_or("no directory for the key")?;
     std::fs::create_dir_all(dir).map_err(|why| format!("{}: {why}", dir.display()))?;
     let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
@@ -678,11 +688,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
         let home = std::env::temp_dir().join(format!("lode-form-key-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        // SAFETY of the test: no other test here reads XDG_CONFIG_HOME.
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", &home) };
-        let path =
-            super::keep_key("n150", "-----BEGIN K-----\r\nAAAA\r\n-----END K-----").expect("kept");
-        unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+        let path = super::keep_key_at(
+            &home.join("ferrix/lode/keys/n150"),
+            "-----BEGIN K-----\r\nAAAA\r\n-----END K-----",
+        )
+        .expect("kept");
         assert_eq!(path, home.join("ferrix/lode/keys/n150"));
         let mode = std::fs::metadata(&path)
             .expect("there")
