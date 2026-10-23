@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+GenericName=File Manager
+Comment=Folders and files: two panes, folder sizes, archives, tags and a trash
+Exec=/bin/shelf %U
+Icon=ferrix-shelf
+Terminal=false
+MimeType=inode/directory;
+Keywords=files;folders;explorer;file manager;trash;shelf;
+Categories=System;FileTools;FileManager;
+StartupWMClass=rocks.magical.shelf

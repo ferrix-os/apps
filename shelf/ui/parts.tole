@@ -1,0 +1,547 @@
+// The pieces shelf's window is made of: its rows, a pane, the small
+// buttons and marks (drawn, not glyphs: a face may not have them).
+import Fx
+import Fx.Controls
+
+// One thing a pane lists, as the program hands it over.
+struct FileRow {
+    name: string
+    badge: string
+    kind: string
+    kindLabel: string
+    sizeText: string
+    // A folder's size against its largest neighbour's, 0 to 1; -1 none.
+    bar: real
+    modified: string
+    selected: bool
+    primary: bool
+    dim: bool
+    // A picture's path, for its thumbnail; "" for none.
+    image: string
+    isDir: bool
+    tagCount: int
+    tag1: color
+    tag2: color
+    tag3: color
+}
+
+struct Crumb {
+    name: string
+}
+
+// An arrow, drawn: `dir` 0 left, 1 up, 2 right, 3 down.
+component Arrow : Shape {
+    id: arrow
+    property int dir: 1
+    property color ink: Theme.ink2
+    width: 16; height: 16
+    ShapePath {
+        strokeColor: arrow.ink
+        strokeWidth: 1.6
+        startX: arrow.dir == 0 ? 13 : arrow.dir == 2 ? 3 : 8
+        startY: arrow.dir == 1 ? 13 : arrow.dir == 3 ? 3 : 8
+        PathLine { x: arrow.dir == 0 ? 3 : arrow.dir == 2 ? 13 : 8; y: arrow.dir == 1 ? 3 : arrow.dir == 3 ? 13 : 8 }
+    }
+    ShapePath {
+        strokeColor: arrow.ink
+        strokeWidth: 1.6
+        startX: arrow.dir == 0 ? 7 : arrow.dir == 2 ? 9 : 4
+        startY: arrow.dir == 1 ? 7 : arrow.dir == 3 ? 9 : 4
+        PathLine { x: arrow.dir == 0 ? 3 : arrow.dir == 2 ? 13 : 8; y: arrow.dir == 1 ? 3 : arrow.dir == 3 ? 13 : 8 }
+        PathLine { x: arrow.dir == 0 ? 7 : arrow.dir == 2 ? 9 : 12; y: arrow.dir == 1 ? 7 : arrow.dir == 3 ? 9 : 12 }
+    }
+}
+
+// A cross, drawn.
+component Cross : Shape {
+    id: cross
+    property color ink: Theme.ink4
+    property real size: 10
+    width: size; height: size
+    ShapePath { strokeColor: cross.ink; strokeWidth: 1.4; startX: 0; startY: 0; PathLine { x: cross.size; y: cross.size } }
+    ShapePath { strokeColor: cross.ink; strokeWidth: 1.4; startX: cross.size; startY: 0; PathLine { x: 0; y: cross.size } }
+}
+
+// A small square button in a toolbar: what it shows is its child.
+component ToolButton : Rectangle {
+    id: tool
+    property bool on: false
+    property bool hovered: area.containsMouse
+    default property alias content: holder
+    signal clicked()
+    width: 32; height: 32
+    radius: 6
+    opacity: enabled ? 1 : 0.4
+    color: on ? Theme.accentOver : hovered ? Theme.hover : "transparent"
+    Item {
+        id: holder
+        anchors.centerIn: parent
+        width: 16; height: 16
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: tool.clicked()
+    }
+}
+
+// A chip of the filter row: its name, or what it is set to.
+component FilterChip : Rectangle {
+    id: chip
+    property string label
+    property string value
+    signal clicked()
+    width: text.implicitWidth + 34
+    height: 28
+    radius: 14
+    color: value != "" ? Theme.accentOver : area.containsMouse ? Theme.hover : "transparent"
+    border.width: 1
+    border.color: value != "" ? Theme.accent : Theme.line3
+    Text {
+        id: text
+        x: 12
+        height: parent.height
+        text: chip.value != "" ? chip.value : chip.label
+        font: Theme.sans(12, chip.value != "" ? 500 : 400)
+        color: chip.value != "" ? Theme.accent : Theme.ink2
+    }
+    // A chevron.
+    Shape {
+        x: chip.width - 19; y: 12
+        ShapePath {
+            strokeColor: chip.value != "" ? Theme.accent : Theme.ink4
+            strokeWidth: 1.4
+            startX: 0; startY: 0
+            PathLine { x: 4; y: 4 }
+            PathLine { x: 8; y: 0 }
+        }
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: chip.clicked()
+    }
+}
+
+// A line of a menu with a tick when it is on.
+component CheckItem : Rectangle {
+    id: item
+    property string text
+    property bool on: false
+    signal triggered()
+    width: parent.width
+    height: 30
+    radius: 4
+    color: area.containsMouse ? Theme.hover : "transparent"
+    Rectangle {
+        x: 8; y: 8
+        width: 14; height: 14
+        radius: 4
+        color: item.on ? Theme.accent : "transparent"
+        border.width: item.on ? 0 : 1
+        border.color: Theme.ink4
+        Shape {
+            visible: item.on
+            ShapePath {
+                strokeColor: Theme.onAccent
+                strokeWidth: 1.8
+                startX: 3.5; startY: 7.5
+                PathLine { x: 6; y: 10 }
+                PathLine { x: 10.5; y: 4 }
+            }
+        }
+    }
+    Text {
+        x: 32
+        height: parent.height
+        text: item.text
+        font: Theme.sans(13)
+        color: Theme.ink
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: item.triggered()
+    }
+}
+
+// A button in the preview's actions.
+component ActionButton : Rectangle {
+    id: button
+    property string text
+    property bool main: false
+    property bool danger: false
+    signal clicked()
+    height: 32
+    radius: 7
+    opacity: enabled ? 1 : 0.4
+    color: main ? (area.containsMouse ? alpha(Theme.accent, 0.85) : Theme.accent) : area.containsMouse ? Theme.hover : "transparent"
+    border.width: main ? 0 : 1
+    border.color: danger ? alpha(Theme.redInk, 0.6) : Theme.line3
+    Text {
+        anchors.centerIn: parent
+        width: parent.width - 12
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+        text: button.text
+        font: Theme.sans(12, button.main ? 600 : 500)
+        color: button.main ? Theme.onAccent : button.danger ? Theme.redInk : Theme.ink
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: button.clicked()
+    }
+}
+
+// One pane: where it is, its rows as a list or a grid, its count.
+export component PaneView : Rectangle {
+    id: pane
+    property bool focused: false
+    property bool dual: false
+    property bool grid: false
+    // The wide list, with Kind and Modified: one pane and no preview.
+    property bool wide: false
+    property bool compact: false
+    property list<FileRow> rows
+    property list<Crumb> crumbs
+    property string countText
+    property string emptyText
+    property string errorText
+    property string sortColumn: "name"
+    property bool ascending: true
+    property real rowHeight: compact ? 30 : 40
+    signal rowClicked(int index)
+    signal rowActivated(int index)
+    signal crumbClicked(int index)
+    signal upClicked()
+    signal closeClicked()
+    signal sortBy(string column)
+    signal pressed()
+
+    color: "transparent"
+    border.width: focused && dual ? 1 : 0
+    border.color: Theme.accent
+    clip: true
+
+    function arrow(column: string, sort: string, up: bool): string {
+        return column == sort ? (up ? " ↑" : " ↓") : ""
+    }
+
+    // A press anywhere gives it the keys.
+    MouseArea {
+        anchors.fill: parent
+        onPressed: pane.pressed()
+    }
+
+    // Where it is.
+    Rectangle {
+        x: 10; y: 8
+        width: pane.width - 20 - (pane.dual ? 30 : 0)
+        height: 36
+        radius: 8
+        color: Theme.bg2
+        border.width: 1
+        border.color: pane.focused && pane.dual ? alpha(Theme.accent, 0.6) : Theme.line
+        clip: true
+        ToolButton {
+            x: 4; y: 2
+            onClicked: pane.upClicked()
+            Arrow { dir: 1 }
+        }
+        Row {
+            x: 40
+            height: 36
+            spacing: 2
+            Repeater {
+                model: pane.crumbs
+                delegate: Row {
+                    height: 36
+                    spacing: 2
+                    Text {
+                        visible: index > 0
+                        height: 36
+                        text: "/"
+                        font: Theme.sans(13)
+                        color: Theme.ink5
+                    }
+                    Rectangle {
+                        y: 6
+                        width: crumb.implicitWidth + 10
+                        height: 24
+                        radius: 5
+                        color: crumbArea.containsMouse ? Theme.hover : "transparent"
+                        Text {
+                            id: crumb
+                            x: 5
+                            height: 24
+                            text: modelData.name
+                            font: Theme.sans(13, index == pane.crumbs.length - 1 ? 500 : 400)
+                            color: index == pane.crumbs.length - 1 ? Theme.ink : Theme.ink4
+                        }
+                        MouseArea {
+                            id: crumbArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: pane.crumbClicked(index)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ToolButton {
+        visible: pane.dual
+        x: pane.width - 40; y: 10
+        onClicked: pane.closeClicked()
+        Cross { x: 3; y: 3 }
+    }
+
+    // The list's head: the columns, the sort.
+    Item {
+        visible: !pane.grid
+        x: 0; y: 52
+        width: pane.width
+        height: 30
+        Text {
+            x: 18
+            height: 30
+            text: "Name${pane.arrow("name", pane.sortColumn, pane.ascending)}"
+            font: Theme.sans(12)
+            color: pane.sortColumn == "name" ? Theme.ink2 : Theme.ink4
+            MouseArea { anchors.fill: parent; onClicked: pane.sortBy("name") }
+        }
+        Text {
+            visible: pane.wide
+            x: pane.width - 352
+            width: 110
+            height: 30
+            text: "Kind${pane.arrow("kind", pane.sortColumn, pane.ascending)}"
+            font: Theme.sans(12)
+            color: pane.sortColumn == "kind" ? Theme.ink2 : Theme.ink4
+            MouseArea { anchors.fill: parent; onClicked: pane.sortBy("kind") }
+        }
+        Text {
+            x: pane.width - (pane.wide ? 232 : 112)
+            width: 90
+            height: 30
+            horizontalAlignment: Text.AlignRight
+            text: "Size${pane.arrow("size", pane.sortColumn, pane.ascending)}"
+            font: Theme.sans(12)
+            color: pane.sortColumn == "size" ? Theme.ink2 : Theme.ink4
+            MouseArea { anchors.fill: parent; onClicked: pane.sortBy("size") }
+        }
+        Text {
+            visible: pane.wide
+            x: pane.width - 122
+            width: 100
+            height: 30
+            horizontalAlignment: Text.AlignRight
+            text: "Modified${pane.arrow("modified", pane.sortColumn, pane.ascending)}"
+            font: Theme.sans(12)
+            color: pane.sortColumn == "modified" ? Theme.ink2 : Theme.ink4
+            MouseArea { anchors.fill: parent; onClicked: pane.sortBy("modified") }
+        }
+        Rectangle { y: 29; width: parent.width; height: 1; color: Theme.line2 }
+    }
+
+    ListView {
+        id: list
+        visible: !pane.grid
+        x: 6; y: 86
+        width: pane.width - 12
+        height: pane.height - 86 - 28
+        model: pane.rows
+        delegate: Rectangle {
+            width: list.width
+            height: pane.rowHeight
+            radius: 7
+            color: modelData.selected ? Theme.accentOver : rowArea.containsMouse ? Theme.hover : "transparent"
+            opacity: modelData.dim && !modelData.selected ? 0.6 : 1
+            FileIcon {
+                x: 10; y: (pane.rowHeight - 18) / 2
+                visible: modelData.image == ""
+                kind: modelData.kind
+                text: modelData.badge
+            }
+            Image {
+                x: 10; y: (pane.rowHeight - 18) / 2
+                width: 24; height: 18
+                visible: modelData.image != ""
+                source: modelData.image
+                fillMode: Image.PreserveAspectCrop
+            }
+            Row {
+                x: 44
+                height: pane.rowHeight
+                spacing: 8
+                Text {
+                    id: name
+                    height: pane.rowHeight
+                    width: min(implicitWidth, list.width - (pane.wide ? 400 : 160) - modelData.tagCount * 10)
+                    elide: Text.ElideRight
+                    text: modelData.name
+                    font: Theme.sans(13, modelData.isDir ? 500 : 400)
+                    color: modelData.selected ? Theme.ink : Theme.ink2
+                }
+                Row {
+                    visible: modelData.tagCount > 0
+                    y: (pane.rowHeight - 7) / 2
+                    spacing: 3
+                    Rectangle { visible: modelData.tagCount > 0; width: 7; height: 7; radius: 3.5; color: modelData.tag1 }
+                    Rectangle { visible: modelData.tagCount > 1; width: 7; height: 7; radius: 3.5; color: modelData.tag2 }
+                    Rectangle { visible: modelData.tagCount > 2; width: 7; height: 7; radius: 3.5; color: modelData.tag3 }
+                }
+            }
+            Text {
+                visible: pane.wide
+                x: list.width - 346
+                width: 110
+                height: pane.rowHeight
+                elide: Text.ElideRight
+                text: modelData.kindLabel
+                font: Theme.sans(12)
+                color: Theme.ink4
+            }
+            Text {
+                x: list.width - (pane.wide ? 226 : 106)
+                width: 90
+                height: pane.rowHeight
+                horizontalAlignment: Text.AlignRight
+                text: modelData.sizeText
+                font: Theme.sans(12)
+                color: Theme.ink4
+            }
+            Rectangle {
+                visible: modelData.bar >= 0
+                x: list.width - (pane.wide ? 226 : 106) + 90 - 84
+                y: pane.rowHeight - 7
+                width: 84
+                height: 3
+                radius: 1.5
+                color: Theme.line2
+                Rectangle {
+                    width: max(3, 84 * modelData.bar)
+                    height: 3
+                    radius: 1.5
+                    color: Theme.accent
+                }
+            }
+            Text {
+                visible: pane.wide
+                x: list.width - 116
+                width: 100
+                height: pane.rowHeight
+                horizontalAlignment: Text.AlignRight
+                text: modelData.modified
+                font: Theme.sans(12)
+                color: Theme.ink4
+            }
+            MouseArea {
+                id: rowArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: pane.rowClicked(index)
+                onDoubleClicked: pane.rowActivated(index)
+            }
+        }
+    }
+    ScrollBar {
+        visible: !pane.grid && list.contentHeight > list.height
+        x: pane.width - 10; y: 86
+        height: list.height
+        size: list.contentHeight > 0 ? list.height / list.contentHeight : 1
+        position: list.contentHeight > 0 ? list.contentY / list.contentHeight : 0
+        onMoved: list.contentY = position * list.contentHeight
+    }
+
+    Flickable {
+        id: grid
+        visible: pane.grid
+        x: 10; y: 56
+        width: pane.width - 20
+        height: pane.height - 56 - 28
+        contentHeight: tiles.implicitHeight
+        clip: true
+        Flow {
+            id: tiles
+            width: grid.width
+            spacing: 8
+            Repeater {
+                model: pane.rows
+                delegate: Rectangle {
+                    width: 120
+                    height: 116
+                    radius: 9
+                    color: modelData.selected ? Theme.accentOver : tile.containsMouse ? Theme.hover : "transparent"
+                    opacity: modelData.dim && !modelData.selected ? 0.6 : 1
+                    FileIcon {
+                        x: 32; y: 14
+                        width: 56; height: 44
+                        radius: 8
+                        fontSize: 12
+                        visible: modelData.image == ""
+                        kind: modelData.kind
+                        text: modelData.badge
+                    }
+                    Image {
+                        x: 12; y: 8
+                        width: 96; height: 64
+                        visible: modelData.image != ""
+                        source: modelData.image
+                        fillMode: Image.PreserveAspectCrop
+                    }
+                    Text {
+                        x: 6; y: 76
+                        width: 108
+                        height: 18
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignHCenter
+                        text: modelData.name
+                        font: Theme.sans(12, 500)
+                        color: Theme.ink
+                    }
+                    Text {
+                        x: 6; y: 94
+                        width: 108
+                        height: 14
+                        horizontalAlignment: Text.AlignHCenter
+                        text: modelData.sizeText
+                        font: Theme.sans(11)
+                        color: Theme.ink4
+                    }
+                    MouseArea {
+                        id: tile
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: pane.rowClicked(index)
+                        onDoubleClicked: pane.rowActivated(index)
+                    }
+                }
+            }
+        }
+    }
+
+    Text {
+        x: 20; y: 100
+        width: pane.width - 40
+        visible: pane.rows.length == 0
+        elide: Text.ElideRight
+        text: pane.errorText != "" ? pane.errorText : pane.emptyText
+        font: Theme.sans(13)
+        color: pane.errorText != "" ? Theme.redInk : Theme.ink4
+    }
+    Text {
+        anchors.right: parent.right
+        anchors.rightMargin: 18
+        y: pane.height - 26
+        height: 20
+        text: pane.countText
+        font: Theme.sans(12)
+        color: Theme.ink5
+    }
+}

@@ -1,0 +1,1161 @@
+// shelf's window, after the customer's "File Explorer v2" design: tabs;
+// the tools (list, grid, two panes; back, up, forward; the search and its
+// modes; the settings); the filter chips; the sidebar (Quick access,
+// places with their sizes, tags, the trash, the disk); one pane or two;
+// the preview with tags and actions; the status line; and the dialogs.
+// The program hands everything over as properties and hears every press
+// as a signal of this root.
+import Fx
+import Fx.Controls
+
+struct TabRow {
+    label: string
+    badge: string
+    active: bool
+}
+
+// A line of the sidebar.
+struct Side {
+    name: string
+    badge: string
+    kind: string
+    detail: string
+    active: bool
+    dot: color
+}
+
+struct Seg {
+    frac: real
+    color: color
+    label: string
+    size: string
+}
+
+struct Meta {
+    k: string
+    v: string
+}
+
+struct TagChip {
+    name: string
+    dot: color
+    on: bool
+}
+
+struct BulkRow {
+    old: string
+    renamed: string
+    bad: bool
+}
+
+export component Shelf : Rectangle {
+    id: shelf
+
+    // The tabs and the tools.
+    property list<TabRow> tabs
+    property bool grid: false
+    property bool dual: false
+    property bool canBack: false
+    property bool canForward: false
+    property int searchMode: 0
+    property string searchError
+    property string chipKind
+    property string chipDate
+    property string chipSize
+    property string chipTag
+    property list<string> tagNames
+    property bool showHidden: false
+    property bool foldersFirst: true
+    property bool previewOn: true
+    property bool extensions: true
+    property bool folderSizes: true
+    property bool compact: false
+
+    // The sidebar.
+    property list<Side> quick
+    property list<Side> places
+    property list<Side> tagRows
+    property string trashDetail
+    property bool trashActive: false
+    property string diskText
+    property list<Seg> disk
+
+    // The panes.
+    property int focus: 0
+    property string sortColumn: "name"
+    property bool ascending: true
+    property list<FileRow> rows0
+    property list<Crumb> crumbs0
+    property string count0
+    property string empty0
+    property string error0
+    property list<FileRow> rows1
+    property list<Crumb> crumbs1
+    property string count1
+    property string empty1
+    property string error1
+
+    // The preview.
+    property bool previewShown: false
+    property string pvName
+    property string pvKind
+    property string pvBadge
+    property string pvKindName
+    property string pvImage
+    property string pvText
+    property bool pvTextDim: false
+    property list<Meta> pvMeta
+    property list<TagChip> pvTags
+    property bool pvMulti: false
+    property bool pvPinned: false
+    property bool pvCanChange: false
+    property bool pvCanTransfer: false
+    property bool pvCanExtract: false
+    property bool pvInTrash: false
+    property bool pvIsDir: false
+
+    // The foot, and a word said for a moment.
+    property string statusText
+    property string selectionText
+    property string toast
+
+    // The dialog: 0 none, 1 a question, 2 a new name, 3 several new
+    // names, 4 a new folder.
+    property int dialog: 0
+    property string dlgTitle
+    property string dlgBody
+    property list<string> dlgNames
+    property string dlgOk
+    property bool dlgDanger: false
+    property string dlgProblem
+    property bool bulkFormat: true
+    property list<BulkRow> bulkRows
+
+    signal tabClicked(int index)
+    signal tabClosed(int index)
+    signal newTab()
+    signal gridPicked(bool on)
+    signal dualToggled()
+    signal back()
+    signal forward()
+    signal up(int pane)
+    signal queryEdited(string text)
+    signal modePicked(int mode)
+    signal chipPicked(string which, int choice)
+    signal chipsCleared()
+    signal settingToggled(string name)
+    signal sortBy(string column)
+    signal rowClicked(int pane, int index)
+    signal rowActivated(int pane, int index)
+    signal crumbClicked(int pane, int index)
+    signal paneFocused(int pane)
+    signal paneClosed(int pane)
+    signal placeClicked(int index)
+    signal quickClicked(int index)
+    signal tagClicked(int index)
+    signal trashClicked()
+    signal act(string name)
+    signal tagToggled(string tag)
+    signal tagAdded(string tag)
+    signal dialogText(string which, string text)
+    signal bulkPicked(bool format)
+    signal dialogOk()
+    signal dialogCancel()
+
+    width: 1240
+    height: 800
+    color: Theme.bg
+
+    property real top: 136
+    property real foot: 34
+    property real side: 220
+    property real previewWidth: previewShown ? 300 : 0
+    property real paneWidth: dual ? (width - side - previewWidth) / 2 : width - side - previewWidth
+
+    // Tabs.
+    Rectangle {
+        width: shelf.width
+        height: 44
+        color: Theme.bg2
+        Rectangle { y: 43; width: parent.width; height: 1; color: Theme.line }
+        Row {
+            x: 10; y: 8
+            spacing: 2
+            Repeater {
+                model: shelf.tabs
+                delegate: Rectangle {
+                    width: 220
+                    height: 36
+                    radius: 9
+                    color: modelData.active ? Theme.bg : tabArea.containsMouse ? Theme.hover : "transparent"
+                    border.width: modelData.active ? 1 : 0
+                    border.color: Theme.line
+                    MouseArea {
+                        id: tabArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: shelf.tabClicked(index)
+                    }
+                    FileIcon {
+                        x: 12; y: 10
+                        width: 22; height: 16
+                        fontSize: 7.5
+                        kind: "folder"
+                        text: modelData.badge
+                    }
+                    Text {
+                        x: 42
+                        width: 140
+                        height: 36
+                        elide: Text.ElideRight
+                        text: modelData.label
+                        font: Theme.sans(13, modelData.active ? 500 : 400)
+                        color: modelData.active ? Theme.ink : Theme.ink3
+                    }
+                    ToolButton {
+                        visible: shelf.tabs.length > 1
+                        x: 188; y: 6
+                        width: 24; height: 24
+                        onClicked: shelf.tabClosed(index)
+                        Cross { x: 4; y: 4; size: 8 }
+                    }
+                }
+            }
+            ToolButton {
+                y: 2
+                onClicked: shelf.newTab()
+                Shape {
+                    ShapePath { strokeColor: Theme.ink3; strokeWidth: 1.6; startX: 8; startY: 2; PathLine { x: 8; y: 14 } }
+                    ShapePath { strokeColor: Theme.ink3; strokeWidth: 1.6; startX: 2; startY: 8; PathLine { x: 14; y: 8 } }
+                }
+            }
+        }
+    }
+
+    // Tools.
+    Rectangle {
+        x: 14; y: 54
+        width: 108; height: 36
+        radius: 8
+        color: Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        Row {
+            x: 2; y: 2
+            spacing: 2
+            ToolButton {
+                on: !shelf.grid
+                onClicked: shelf.gridPicked(false)
+                Repeater {
+                    model: 3
+                    delegate: Item {
+                        y: 3 + index * 4
+                        width: 16; height: 2
+                        Rectangle { width: 2; height: 2; radius: 0.5; color: !shelf.grid ? Theme.accent : Theme.ink4 }
+                        Rectangle { x: 4; width: 11; height: 2; radius: 1; color: !shelf.grid ? Theme.accent : Theme.ink4 }
+                    }
+                }
+            }
+            ToolButton {
+                on: shelf.grid
+                onClicked: shelf.gridPicked(true)
+                Grid {
+                    x: 2; y: 2
+                    columns: 2
+                    spacing: 2
+                    Repeater {
+                        model: 4
+                        delegate: Rectangle { width: 5; height: 5; radius: 1.2; color: shelf.grid ? Theme.accent : Theme.ink4 }
+                    }
+                }
+            }
+            ToolButton {
+                on: shelf.dual
+                onClicked: shelf.dualToggled()
+                Rectangle {
+                    x: 1; y: 2
+                    width: 14; height: 12
+                    radius: 2.5
+                    color: "transparent"
+                    border.width: 1.4
+                    border.color: shelf.dual ? Theme.accent : Theme.ink4
+                    Rectangle { x: 6.3; width: 1.4; height: 12; color: shelf.dual ? Theme.accent : Theme.ink4 }
+                }
+            }
+        }
+    }
+    Rectangle {
+        x: 130; y: 54
+        width: 108; height: 36
+        radius: 8
+        color: Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        Row {
+            x: 2; y: 2
+            spacing: 2
+            ToolButton { enabled: shelf.canBack; onClicked: shelf.back(); Arrow { dir: 0 } }
+            ToolButton { onClicked: shelf.up(shelf.focus); Arrow { dir: 1 } }
+            ToolButton { enabled: shelf.canForward; onClicked: shelf.forward(); Arrow { dir: 2 } }
+        }
+    }
+    ToolButton {
+        x: 246; y: 56
+        onClicked: shelf.act("new-folder")
+        Rectangle {
+            y: 3
+            width: 16; height: 11
+            radius: 2
+            color: "transparent"
+            border.width: 1.4
+            border.color: Theme.ink3
+        }
+        Shape {
+            ShapePath { strokeColor: Theme.ink3; strokeWidth: 1.4; startX: 8; startY: 6; PathLine { x: 8; y: 12 } }
+            ShapePath { strokeColor: Theme.ink3; strokeWidth: 1.4; startX: 5; startY: 9; PathLine { x: 11; y: 9 } }
+        }
+    }
+
+    // The search, and its modes.
+    Rectangle {
+        id: searchBox
+        x: shelf.width - 14 - 44 - 290; y: 54
+        width: 290; height: 36
+        radius: 8
+        color: shelf.searchError != "" ? Theme.redBg : Theme.bg2
+        border.width: search.activeFocus ? 2 : 1
+        border.color: shelf.searchError != "" ? Theme.redInk : search.activeFocus ? Theme.accent : Theme.line
+        TextInput {
+            id: search
+            x: 12
+            width: parent.width - 52
+            height: 36
+            activeFocusOnTab: true
+            font: Theme.sans(13)
+            color: shelf.searchError != "" ? Theme.redInk : Theme.ink
+            cursorColor: Theme.ink
+            selectionColor: alpha(Theme.accent, 0.3)
+            onTextEdited: shelf.queryEdited(search.text)
+        }
+        Text {
+            x: 12
+            height: 36
+            visible: search.text == ""
+            text: shelf.searchMode == 1 ? "*.png | [image]" : shelf.searchMode == 2 ? "^id_.*$" : "Filter by name"
+            font: Theme.sans(13)
+            color: Theme.ink5
+        }
+        Rectangle {
+            x: parent.width - 36; y: 6
+            width: 28; height: 24
+            radius: 5
+            color: shelf.searchMode != 0 ? Theme.accentOver : modeArea.containsMouse ? Theme.hover : "transparent"
+            Text {
+                anchors.centerIn: parent
+                text: shelf.searchMode == 1 ? "*" : shelf.searchMode == 2 ? ".*" : "Aa"
+                font: Theme.sans(11, 700)
+                color: shelf.searchMode != 0 ? Theme.accent : Theme.ink4
+            }
+            MouseArea {
+                id: modeArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: modes.open()
+            }
+        }
+        Menu {
+            id: modes
+            x: parent.width - 260; y: 40
+            width: 260
+            Repeater {
+                model: ["Basic", "Advanced", "Regex"]
+                delegate: Rectangle {
+                    width: 252
+                    height: 44
+                    radius: 5
+                    color: index == shelf.searchMode ? Theme.accentOver : modeItem.containsMouse ? Theme.hover : "transparent"
+                    Text { x: 10; y: 6; text: modelData; font: Theme.sans(13, 500); color: Theme.ink }
+                    Text {
+                        x: 10; y: 24
+                        text: index == 0 ? "Name contains the text" : index == 1 ? "*.png, my?.txt, [image] | *.txt" : "A regular expression, ^id_.*$"
+                        font: Theme.sans(11)
+                        color: Theme.ink4
+                    }
+                    MouseArea {
+                        id: modeItem
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: shelf.modePicked(index)
+                    }
+                }
+            }
+        }
+    }
+    ToolButton {
+        x: shelf.width - 14 - 36; y: 54
+        width: 36; height: 36
+        onClicked: settingsMenu.open()
+        // Sliders: three lines, each with its knob.
+        Repeater {
+            model: 3
+            delegate: Item {
+                y: 2 + index * 5
+                width: 16; height: 3
+                Rectangle { y: 0.8; width: 16; height: 1.4; radius: 0.7; color: Theme.ink3 }
+                Rectangle {
+                    x: index == 1 ? 9 : index == 2 ? 5 : 2
+                    y: -1
+                    width: 5; height: 5
+                    radius: 2.5
+                    color: Theme.bg
+                    border.width: 1.4
+                    border.color: Theme.ink3
+                }
+            }
+        }
+    }
+    Menu {
+        id: settingsMenu
+        x: shelf.width - 14 - 230; y: 94
+        width: 230
+        CheckItem { text: "Show hidden files"; on: shelf.showHidden; onTriggered: shelf.settingToggled("hidden") }
+        CheckItem { text: "Folders first"; on: shelf.foldersFirst; onTriggered: shelf.settingToggled("folders-first") }
+        CheckItem { text: "Preview pane"; on: shelf.previewOn; onTriggered: shelf.settingToggled("preview") }
+        CheckItem { text: "File extensions"; on: shelf.extensions; onTriggered: shelf.settingToggled("extensions") }
+        CheckItem { text: "Folder sizes"; on: shelf.folderSizes; onTriggered: shelf.settingToggled("folder-sizes") }
+        CheckItem { text: "Compact rows"; on: shelf.compact; onTriggered: shelf.settingToggled("compact") }
+        CheckItem { text: "Dark theme"; on: Theme.dark; onTriggered: shelf.settingToggled("dark") }
+    }
+
+    // The chips.
+    Row {
+        x: 14; y: 98
+        spacing: 8
+        FilterChip { label: "Kind"; value: shelf.chipKind; onClicked: kindMenu.open() }
+        FilterChip { label: "Modified"; value: shelf.chipDate; onClicked: dateMenu.open() }
+        FilterChip { label: "Size"; value: shelf.chipSize; onClicked: sizeMenu.open() }
+        FilterChip { label: "Tag"; value: shelf.chipTag; onClicked: tagMenu.open() }
+        Text {
+            visible: shelf.chipKind != "" || shelf.chipDate != "" || shelf.chipSize != "" || shelf.chipTag != ""
+            height: 28
+            text: "Clear"
+            font: Theme.sans(12, 500)
+            color: Theme.accent
+            MouseArea { anchors.fill: parent; onClicked: shelf.chipsCleared() }
+        }
+    }
+    Menu {
+        id: kindMenu
+        x: 14; y: 130
+        MenuItem { text: "Any kind"; onTriggered: shelf.chipPicked("kind", -1) }
+        MenuSeparator { }
+        Repeater {
+            model: ["Folders", "Images", "Keys", "Documents", "Archives", "Videos"]
+            delegate: MenuItem { text: modelData; onTriggered: shelf.chipPicked("kind", index) }
+        }
+    }
+    Menu {
+        id: dateMenu
+        x: 80; y: 130
+        MenuItem { text: "Any time"; onTriggered: shelf.chipPicked("date", -1) }
+        MenuSeparator { }
+        Repeater {
+            model: ["Today", "Past week", "Past month", "Older"]
+            delegate: MenuItem { text: modelData; onTriggered: shelf.chipPicked("date", index) }
+        }
+    }
+    Menu {
+        id: sizeMenu
+        x: 170; y: 130
+        MenuItem { text: "Any size"; onTriggered: shelf.chipPicked("size", -1) }
+        MenuSeparator { }
+        Repeater {
+            model: ["Under 100 KB", "100 KB – 10 MB", "Over 10 MB"]
+            delegate: MenuItem { text: modelData; onTriggered: shelf.chipPicked("size", index) }
+        }
+    }
+    Menu {
+        id: tagMenu
+        x: 240; y: 130
+        MenuItem { text: "Any tag"; onTriggered: shelf.chipPicked("tag", -1) }
+        MenuSeparator { }
+        Repeater {
+            model: shelf.tagNames
+            delegate: MenuItem { text: modelData; onTriggered: shelf.chipPicked("tag", index) }
+        }
+    }
+    Text {
+        anchors.right: parent.right
+        anchors.rightMargin: 18
+        y: 98
+        height: 28
+        text: "Search syntax"
+        font: Theme.sans(12)
+        color: helpArea.containsMouse ? Theme.ink2 : Theme.ink4
+        MouseArea {
+            id: helpArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: help.open()
+        }
+    }
+    Popup {
+        id: help
+        x: shelf.width - 14 - 380; y: 130
+        width: 380
+        height: 200
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Rectangle {
+            anchors.fill: parent
+            radius: 10
+            color: Theme.bg
+            border.width: 1
+            border.color: Theme.line3
+        }
+        Text { x: 16; y: 12; text: "Searching names"; font: Theme.sans(13, 600); color: Theme.ink }
+        Grid {
+            x: 16; y: 40
+            columns: 2
+            columnSpacing: 18
+            rowSpacing: 7
+            Text { text: "Aa"; font: Theme.mono(12); color: Theme.ink }
+            Text { text: "Basic: the name contains the text"; font: Theme.sans(12); color: Theme.ink3 }
+            Text { text: "*.png"; font: Theme.mono(12); color: Theme.ink }
+            Text { text: "Advanced: any text, then .png"; font: Theme.sans(12); color: Theme.ink3 }
+            Text { text: "my?.txt"; font: Theme.mono(12); color: Theme.ink }
+            Text { text: "? matches one character"; font: Theme.sans(12); color: Theme.ink3 }
+            Text { text: "a | b"; font: Theme.mono(12); color: Theme.ink }
+            Text { text: "either (or a comma)"; font: Theme.sans(12); color: Theme.ink3 }
+            Text { text: "[kind]"; font: Theme.mono(12); color: Theme.ink }
+            Text { text: "image, private, public, text, archive, video, folder"; font: Theme.sans(12); color: Theme.ink3 }
+            Text { text: "^id_.*$"; font: Theme.mono(12); color: Theme.ink }
+            Text { text: "Regex: found in the name, case aside"; font: Theme.sans(12); color: Theme.ink3 }
+        }
+    }
+    Rectangle { y: shelf.top - 1; width: shelf.width; height: 1; color: Theme.line }
+
+    // The sidebar.
+    Rectangle {
+        x: 0; y: shelf.top
+        width: shelf.side
+        height: shelf.height - shelf.top - shelf.foot
+        color: Theme.bg2
+        clip: true
+        Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.line }
+        Flickable {
+            id: sideFlick
+            x: 0; y: 0
+            width: parent.width - 1
+            height: parent.height - 130
+            contentHeight: sideColumn.implicitHeight + 20
+            clip: true
+            Column {
+                id: sideColumn
+                x: 10; y: 12
+                width: shelf.side - 20
+                spacing: 2
+                Text { visible: shelf.quick.length > 0; x: 10; height: 26; text: "QUICK ACCESS"; font: Theme.sans(11, 600); color: Theme.ink4 }
+                Repeater {
+                    model: shelf.quick
+                    delegate: Rectangle {
+                        width: shelf.side - 20
+                        height: 30
+                        radius: 7
+                        color: modelData.active ? Theme.accentOver : quickArea.containsMouse ? Theme.hover : "transparent"
+                        FileIcon { x: 10; y: 7; width: 22; height: 16; fontSize: 7; kind: modelData.kind; text: modelData.badge }
+                        Text {
+                            x: 40
+                            width: parent.width - 50
+                            height: 30
+                            elide: Text.ElideRight
+                            text: modelData.name
+                            font: Theme.sans(13)
+                            color: Theme.ink
+                        }
+                        MouseArea { id: quickArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.quickClicked(index) }
+                    }
+                }
+                Item { width: 1; height: 8 }
+                Text { x: 10; height: 26; text: "PLACES"; font: Theme.sans(11, 600); color: Theme.ink4 }
+                Repeater {
+                    model: shelf.places
+                    delegate: Rectangle {
+                        width: shelf.side - 20
+                        height: 30
+                        radius: 7
+                        color: modelData.active ? Theme.accentOver : placeArea.containsMouse ? Theme.hover : "transparent"
+                        Text {
+                            x: 10
+                            width: parent.width - 90
+                            height: 30
+                            elide: Text.ElideRight
+                            text: modelData.name
+                            font: Theme.sans(13, modelData.active ? 500 : 400)
+                            color: Theme.ink
+                        }
+                        Text {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 10
+                            height: 30
+                            text: modelData.detail
+                            font: Theme.sans(11)
+                            color: Theme.ink5
+                        }
+                        MouseArea { id: placeArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.placeClicked(index) }
+                    }
+                }
+                Rectangle {
+                    width: shelf.side - 20
+                    height: 30
+                    radius: 7
+                    color: shelf.trashActive ? Theme.accentOver : trashArea.containsMouse ? Theme.hover : "transparent"
+                    Text { x: 10; height: 30; text: "Trash"; font: Theme.sans(13, shelf.trashActive ? 500 : 400); color: Theme.ink }
+                    Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        height: 30
+                        text: shelf.trashDetail
+                        font: Theme.sans(11)
+                        color: Theme.ink5
+                    }
+                    MouseArea { id: trashArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.trashClicked() }
+                }
+                Item { visible: shelf.tagRows.length > 0; width: 1; height: 8 }
+                Text { visible: shelf.tagRows.length > 0; x: 10; height: 26; text: "TAGS"; font: Theme.sans(11, 600); color: Theme.ink4 }
+                Repeater {
+                    model: shelf.tagRows
+                    delegate: Rectangle {
+                        width: shelf.side - 20
+                        height: 30
+                        radius: 7
+                        color: modelData.active ? Theme.accentOver : tagArea.containsMouse ? Theme.hover : "transparent"
+                        Rectangle { x: 12; y: 11; width: 8; height: 8; radius: 4; color: modelData.dot }
+                        Text { x: 30; height: 30; text: modelData.name; font: Theme.sans(13); color: Theme.ink }
+                        Text {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 10
+                            height: 30
+                            text: modelData.detail
+                            font: Theme.sans(11)
+                            color: Theme.ink5
+                        }
+                        MouseArea { id: tagArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.tagClicked(index) }
+                    }
+                }
+            }
+        }
+        // The disk.
+        Rectangle { y: parent.height - 130; width: parent.width - 1; height: 1; color: Theme.line }
+        Item {
+            x: 20
+            y: parent.height - 112
+            width: shelf.side - 40
+            height: 104
+            Text { y: 0; text: "Local disk"; font: Theme.sans(12, 500); color: Theme.ink2 }
+            Text {
+                anchors.right: parent.right
+                y: 0
+                text: shelf.diskText
+                font: Theme.sans(11)
+                color: Theme.ink4
+            }
+            Rectangle {
+                y: 22
+                width: parent.width
+                height: 6
+                radius: 3
+                color: Theme.line
+                clip: true
+                Row {
+                    Repeater {
+                        model: shelf.disk
+                        delegate: Rectangle { width: (shelf.side - 40) * modelData.frac; height: 6; color: modelData.color }
+                    }
+                }
+            }
+            Column {
+                y: 36
+                width: parent.width
+                spacing: 2
+                Repeater {
+                    model: shelf.disk
+                    delegate: Item {
+                        width: shelf.side - 40
+                        height: 16
+                        Rectangle { y: 5; width: 7; height: 7; radius: 2; color: modelData.color }
+                        Text { x: 14; height: 16; text: modelData.label; font: Theme.sans(11); color: Theme.ink4 }
+                        Text { anchors.right: parent.right; height: 16; text: modelData.size; font: Theme.sans(11); color: Theme.ink4 }
+                    }
+                }
+            }
+        }
+    }
+
+    // The panes.
+    PaneView {
+        x: shelf.side; y: shelf.top
+        width: shelf.paneWidth
+        height: shelf.height - shelf.top - shelf.foot
+        focused: shelf.focus == 0
+        dual: shelf.dual
+        grid: shelf.grid
+        wide: !shelf.dual && !shelf.previewShown
+        compact: shelf.compact
+        rows: shelf.rows0
+        crumbs: shelf.crumbs0
+        countText: shelf.count0
+        emptyText: shelf.empty0
+        errorText: shelf.error0
+        sortColumn: shelf.sortColumn
+        ascending: shelf.ascending
+        onRowClicked: shelf.rowClicked(0, index)
+        onRowActivated: shelf.rowActivated(0, index)
+        onCrumbClicked: shelf.crumbClicked(0, index)
+        onUpClicked: shelf.up(0)
+        onCloseClicked: shelf.paneClosed(0)
+        onSortBy: shelf.sortBy(column)
+        onPressed: shelf.paneFocused(0)
+    }
+    Rectangle {
+        visible: shelf.dual
+        x: shelf.side + shelf.paneWidth; y: shelf.top
+        width: 1
+        height: shelf.height - shelf.top - shelf.foot
+        color: Theme.line
+    }
+    PaneView {
+        visible: shelf.dual
+        x: shelf.side + shelf.paneWidth + 1; y: shelf.top
+        width: shelf.paneWidth - 1
+        height: shelf.height - shelf.top - shelf.foot
+        focused: shelf.focus == 1
+        dual: true
+        grid: shelf.grid
+        wide: false
+        compact: shelf.compact
+        rows: shelf.rows1
+        crumbs: shelf.crumbs1
+        countText: shelf.count1
+        emptyText: shelf.empty1
+        errorText: shelf.error1
+        sortColumn: shelf.sortColumn
+        ascending: shelf.ascending
+        onRowClicked: shelf.rowClicked(1, index)
+        onRowActivated: shelf.rowActivated(1, index)
+        onCrumbClicked: shelf.crumbClicked(1, index)
+        onUpClicked: shelf.up(1)
+        onCloseClicked: shelf.paneClosed(1)
+        onSortBy: shelf.sortBy(column)
+        onPressed: shelf.paneFocused(1)
+    }
+
+    // The preview.
+    Rectangle {
+        visible: shelf.previewShown
+        x: shelf.width - shelf.previewWidth; y: shelf.top
+        width: shelf.previewWidth
+        height: shelf.height - shelf.top - shelf.foot
+        color: Theme.bg
+        clip: true
+        Rectangle { width: 1; height: parent.height; color: Theme.line }
+        FileIcon {
+            x: 18; y: 16
+            width: 40; height: 34
+            radius: 7
+            fontSize: 10
+            kind: shelf.pvKindName
+            text: shelf.pvBadge
+        }
+        Text {
+            x: 68; y: 14
+            width: 214
+            height: 20
+            elide: Text.ElideRight
+            text: shelf.pvName
+            font: Theme.sans(14, 600)
+            color: Theme.ink
+        }
+        Text { x: 68; y: 34; text: shelf.pvKind; font: Theme.sans(12); color: Theme.ink4 }
+        Image {
+            x: 1; y: 62
+            width: 299; height: 200
+            visible: shelf.pvImage != ""
+            source: shelf.pvImage
+            fillMode: Image.PreserveAspectCrop
+        }
+        Rectangle {
+            x: 14; y: 62
+            width: 272; height: 150
+            visible: shelf.pvImage == ""
+            radius: 8
+            color: Theme.bg2
+            border.width: 1
+            border.color: Theme.line
+            clip: true
+            TextEdit {
+                x: 10; y: 8
+                width: 252
+                readOnly: true
+                wrapMode: TextEdit.NoWrap
+                text: shelf.pvText
+                font: Theme.mono(11)
+                color: shelf.pvTextDim ? Theme.ink4 : Theme.ink3
+            }
+        }
+        Column {
+            x: 18
+            y: shelf.pvImage != "" ? 276 : 226
+            width: 264
+            spacing: 8
+            Text { visible: shelf.pvCanChange; text: "TAGS"; font: Theme.sans(11, 600); color: Theme.ink4 }
+            Flow {
+                visible: shelf.pvCanChange
+                width: 264
+                spacing: 6
+                Repeater {
+                    model: shelf.pvTags
+                    delegate: Rectangle {
+                        width: tagName.implicitWidth + 30
+                        height: 26
+                        radius: 13
+                        color: modelData.on ? Theme.accentOver : tagChipArea.containsMouse ? Theme.hover : "transparent"
+                        border.width: 1
+                        border.color: modelData.on ? Theme.accent : Theme.line3
+                        Rectangle { x: 10; y: 9; width: 8; height: 8; radius: 4; color: modelData.dot }
+                        Text {
+                            id: tagName
+                            x: 22
+                            height: 26
+                            text: modelData.name
+                            font: Theme.sans(12, modelData.on ? 500 : 400)
+                            color: Theme.ink
+                        }
+                        MouseArea { id: tagChipArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.tagToggled(modelData.name) }
+                    }
+                }
+                TextField {
+                    id: newTag
+                    width: 96
+                    height: 26
+                    placeholderText: "+ tag"
+                    font: Theme.sans(12)
+                    onAccepted: { shelf.tagAdded(newTag.text); newTag.text = "" }
+                }
+            }
+            Item { width: 1; height: 4 }
+            Repeater {
+                model: shelf.pvMeta
+                delegate: Item {
+                    width: 264
+                    height: 18
+                    Text { text: modelData.k; font: Theme.sans(12); color: Theme.ink4 }
+                    Text {
+                        anchors.right: parent.right
+                        width: 180
+                        horizontalAlignment: Text.AlignRight
+                        elide: Text.ElideRight
+                        text: modelData.v
+                        font: Theme.sans(12)
+                        color: Theme.ink
+                    }
+                }
+            }
+            Item { width: 1; height: 6 }
+            Flow {
+                width: 264
+                spacing: 8
+                ActionButton {
+                    visible: !shelf.pvMulti && !shelf.pvInTrash && (shelf.pvCanChange || shelf.pvIsDir)
+                    width: 128
+                    main: true
+                    text: "Open"
+                    onClicked: shelf.act("open")
+                }
+                ActionButton {
+                    visible: !shelf.pvMulti && shelf.pvCanChange
+                    width: 128
+                    text: shelf.pvPinned ? "Unpin" : "Pin to Quick access"
+                    onClicked: shelf.act("pin")
+                }
+                ActionButton {
+                    visible: shelf.pvCanChange
+                    width: 128
+                    text: shelf.pvMulti ? "Rename all…" : "Rename…"
+                    onClicked: shelf.act("rename")
+                }
+                ActionButton {
+                    visible: shelf.pvCanTransfer
+                    width: 128
+                    text: shelf.focus == 0 ? "Copy to right →" : "← Copy to left"
+                    onClicked: shelf.act("copy")
+                }
+                ActionButton {
+                    visible: shelf.pvCanTransfer
+                    width: 128
+                    text: shelf.focus == 0 ? "Move to right →" : "← Move to left"
+                    onClicked: shelf.act("move")
+                }
+                ActionButton {
+                    visible: shelf.pvCanExtract
+                    width: 128
+                    text: "Extract here"
+                    onClicked: shelf.act("extract")
+                }
+                ActionButton {
+                    visible: shelf.pvCanChange
+                    width: 128
+                    danger: true
+                    text: "Move to Trash"
+                    onClicked: shelf.act("trash")
+                }
+                ActionButton {
+                    visible: shelf.pvInTrash
+                    width: 128
+                    main: true
+                    text: "Restore"
+                    onClicked: shelf.act("restore")
+                }
+                ActionButton {
+                    visible: shelf.pvInTrash
+                    width: 128
+                    danger: true
+                    text: "Delete for good…"
+                    onClicked: shelf.act("delete")
+                }
+            }
+        }
+    }
+
+    // The foot.
+    Rectangle {
+        y: shelf.height - shelf.foot
+        width: shelf.width
+        height: shelf.foot
+        color: Theme.bg2
+        Rectangle { width: parent.width; height: 1; color: Theme.line }
+        Row {
+            x: 16
+            height: shelf.foot
+            spacing: 14
+            Text { height: shelf.foot; text: shelf.statusText; font: Theme.sans(12); color: Theme.ink4 }
+            Text { visible: shelf.selectionText != ""; height: shelf.foot; text: shelf.selectionText; font: Theme.sans(12, 500); color: Theme.ink2 }
+            Text {
+                visible: shelf.selectionText != ""
+                height: shelf.foot
+                text: "Clear"
+                font: Theme.sans(12, 500)
+                color: Theme.accent
+                MouseArea { anchors.fill: parent; onClicked: shelf.act("clear") }
+            }
+            Text {
+                visible: shelf.trashActive
+                height: shelf.foot
+                text: "Empty trash…"
+                font: Theme.sans(12, 500)
+                color: Theme.redInk
+                MouseArea { anchors.fill: parent; onClicked: shelf.act("empty") }
+            }
+        }
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 16
+            height: shelf.foot
+            text: shelf.dual ? "Tab switch pane · Shift/Ctrl click multi-select · F2 rename · Del trash" : "Shift/Ctrl click multi-select · F2 rename · Del trash · Ctrl+T tab"
+            font: Theme.sans(12)
+            color: Theme.ink5
+        }
+    }
+
+    // A word for a moment.
+    Rectangle {
+        visible: shelf.toast != ""
+        x: (shelf.width - width) / 2
+        y: shelf.height - shelf.foot - 54
+        width: toastText.implicitWidth + 32
+        height: 36
+        radius: 18
+        color: Theme.ink
+        Text {
+            id: toastText
+            anchors.centerIn: parent
+            text: shelf.toast
+            font: Theme.sans(13, 500)
+            color: Theme.inv
+        }
+    }
+
+    // The dialogs.
+    Popup {
+        id: dialogBox
+        modal: true
+        closePolicy: Popup.NoAutoClose
+        x: (shelf.width - width) / 2
+        y: 150
+        width: 500
+        height: shelf.dialog == 3 ? 470 : shelf.dialog == 1 ? 150 + min(shelf.dlgNames.length, 6) * 22 : 190
+        Keys.onEscapePressed: shelf.dialogCancel()
+        Keys.onReturnPressed: shelf.dialogOk()
+        Rectangle {
+            anchors.fill: parent
+            radius: 14
+            color: Theme.bg
+            border.width: 1
+            border.color: Theme.line3
+        }
+        Text {
+            x: 22; y: 18
+            width: 456
+            elide: Text.ElideRight
+            text: shelf.dlgTitle
+            font: Theme.sans(16, 600)
+            color: Theme.ink
+        }
+        Text {
+            visible: shelf.dialog == 1
+            x: 22; y: 48
+            width: 456
+            elide: Text.ElideRight
+            text: shelf.dlgBody
+            font: Theme.sans(13)
+            color: Theme.ink3
+        }
+        Column {
+            visible: shelf.dialog == 1
+            x: 22; y: 76
+            spacing: 4
+            Repeater {
+                model: shelf.dlgNames
+                delegate: Text {
+                    visible: index < 6
+                    width: 456
+                    elide: Text.ElideRight
+                    text: index == 5 ? "… and ${shelf.dlgNames.length - 5} more" : modelData
+                    font: Theme.sans(12)
+                    color: Theme.ink2
+                }
+            }
+        }
+        // One new name, or a new folder's.
+        TextField {
+            id: nameField
+            visible: shelf.dialog == 2 || shelf.dialog == 4
+            x: 22; y: 58
+            width: 456
+            height: 34
+            placeholderText: "New name"
+            onTextEdited: shelf.dialogText("name", nameField.text)
+            onAccepted: shelf.dialogOk()
+        }
+        // Several: replace a text, or number them.
+        Row {
+            visible: shelf.dialog == 3
+            x: 22; y: 54
+            spacing: 2
+            Repeater {
+                model: ["Number them", "Replace text"]
+                delegate: Rectangle {
+                    width: modeText.implicitWidth + 24
+                    height: 28
+                    radius: 6
+                    color: (index == 0) == shelf.bulkFormat ? Theme.accentOver : bulkModeArea.containsMouse ? Theme.hover : "transparent"
+                    Text {
+                        id: modeText
+                        anchors.centerIn: parent
+                        text: modelData
+                        font: Theme.sans(12, 500)
+                        color: (index == 0) == shelf.bulkFormat ? Theme.accent : Theme.ink3
+                    }
+                    MouseArea { id: bulkModeArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.bulkPicked(index == 0) }
+                }
+            }
+        }
+        TextField {
+            id: baseField
+            visible: shelf.dialog == 3 && shelf.bulkFormat
+            x: 22; y: 92
+            width: 300
+            height: 32
+            placeholderText: "Name"
+            onTextEdited: shelf.dialogText("base", baseField.text)
+        }
+        TextField {
+            id: startField
+            visible: shelf.dialog == 3 && shelf.bulkFormat
+            x: 330; y: 92
+            width: 148
+            height: 32
+            placeholderText: "Start at"
+            onTextEdited: shelf.dialogText("start", startField.text)
+        }
+        TextField {
+            id: findField
+            visible: shelf.dialog == 3 && !shelf.bulkFormat
+            x: 22; y: 92
+            width: 224
+            height: 32
+            placeholderText: "Find"
+            onTextEdited: shelf.dialogText("find", findField.text)
+        }
+        TextField {
+            id: withField
+            visible: shelf.dialog == 3 && !shelf.bulkFormat
+            x: 254; y: 92
+            width: 224
+            height: 32
+            placeholderText: "Replace with"
+            onTextEdited: shelf.dialogText("with", withField.text)
+        }
+        Rectangle {
+            visible: shelf.dialog == 3
+            x: 22; y: 134
+            width: 456; height: 254
+            radius: 8
+            color: Theme.bg2
+            border.width: 1
+            border.color: Theme.line
+            clip: true
+            ListView {
+                id: bulkList
+                x: 1; y: 4
+                width: 454; height: 246
+                model: shelf.bulkRows
+                delegate: Item {
+                    width: 454
+                    height: 26
+                    Text { x: 12; width: 190; height: 26; elide: Text.ElideRight; text: modelData.old; font: Theme.sans(12); color: Theme.ink4 }
+                    Arrow { x: 208; y: 5; dir: 2; ink: Theme.ink5 }
+                    Text {
+                        x: 232; width: 210; height: 26
+                        elide: Text.ElideRight
+                        text: modelData.renamed
+                        font: Theme.sans(12, 500)
+                        color: modelData.bad ? Theme.redInk : Theme.ink
+                    }
+                }
+            }
+        }
+        Text {
+            x: 22
+            y: dialogBox.height - 44
+            width: 250
+            height: 30
+            elide: Text.ElideRight
+            text: shelf.dlgProblem
+            font: Theme.sans(12)
+            color: Theme.redInk
+        }
+        Row {
+            anchors.right: parent.right
+            anchors.rightMargin: 22
+            y: dialogBox.height - 50
+            spacing: 10
+            Button { text: "Cancel"; onClicked: shelf.dialogCancel() }
+            Button {
+                text: shelf.dlgOk
+                highlighted: true
+                enabled: shelf.dlgProblem == ""
+                onClicked: shelf.dialogOk()
+            }
+        }
+    }
+}

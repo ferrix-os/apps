@@ -1,0 +1,45 @@
+# shelf, an app (docs/APPS.md): Ferrix's file manager, after the
+# customer's "File Explorer v2" design -- tabs, two panes, folder sizes,
+# archives read in place, tags, quick access, bulk rename and a trash.
+
+[package]
+name = "shelf"
+version = "0.1.0"
+description = "shelf: the file manager -- tabs, two panes, folder sizes, archives, tags, bulk rename and a trash"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "shelf"
+to = "bin/shelf"
+mode = "755"
+
+# Its entry in a launcher and its icon: fuzzel lists every `.desktop` file
+# in `usr/share/applications`.
+[[package.files]]
+from = "share/shelf.desktop"
+source = "folder"
+to = "usr/share/applications/shelf.desktop"
+mode = "644"
+
+[[package.files]]
+from = "share/ferrix-shelf.svg"
+source = "folder"
+to = "usr/share/icons/hicolor/scalable/apps/ferrix-shelf.svg"
+mode = "644"
+
+[build]
+kind = "cargo"
+
+# In every image a person runs: a desktop has its files.
+[image]
+default = true
+
+[check]
+host-tests = true
+
+[[smoke]]
+run = "shelf --version"
+expect = "shelf 0.1.0"
