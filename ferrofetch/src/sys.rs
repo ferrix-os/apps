@@ -1,4 +1,5 @@
-//! The Linux calls the runtime has no function for, made by number.
+//! The Linux calls the runtime has no function for, made by number, and the
+//! one instruction the program asks the processor itself.
 //!
 //! An app changes nothing outside its folder (`docs/APPS.md` §4), so the
 //! three calls this program needs beyond `read`, `write` and `close` are
@@ -46,4 +47,23 @@ pub(crate) fn uname(names: &mut [u8; ferrofetch::parse::UTSNAME]) -> bool {
     // SAFETY: `names` is borrowed exclusively for the call and is exactly a
     // `struct new_utsname`'s size, which is all the kernel writes.
     unsafe { linux::call(numbers::UNAME, [at, 0, 0, 0, 0, 0]) }.is_ok()
+}
+
+/// The processor's highest rate in MHz, where it names one: `CPUID` leaf
+/// 0x16's `EBX`, which fastfetch reads where cpufreq has nothing. Zero, or
+/// a leaf the processor does not have, is no answer: a hypervisor often
+/// leaves it empty.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn cpuid_max_mhz() -> Option<u32> {
+    use core::arch::x86_64::__cpuid;
+    if __cpuid(0).eax < 0x16 {
+        return None;
+    }
+    Some(__cpuid(0x16).ebx & 0xFFFF).filter(|&mhz| mhz != 0)
+}
+
+/// No `CPUID` here.
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) const fn cpuid_max_mhz() -> Option<u32> {
+    None
 }

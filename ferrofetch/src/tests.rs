@@ -32,6 +32,7 @@ fn guest() -> Facts {
         cpu: Some(Cpu {
             count: 4,
             khz: Some(2_995_198),
+            ..Cpu::default()
         }),
         memory: Some(Memory {
             total_kib: 2 * 1024 * 1024,
@@ -81,6 +82,7 @@ fn a_fact_not_found_has_no_line() {
         cpu: Some(Cpu {
             count: 2,
             khz: None,
+            ..Cpu::default()
         }),
         ..Facts::default()
     };
@@ -237,6 +239,7 @@ fn cpuinfo_counts_processors_and_reads_the_first_rate() {
         Cpu {
             count: 2,
             khz: Some(2_995_198),
+            ..Cpu::default()
         }
     );
     let arm = "processor\t: 0\nCPU architecture: 8\n\nprocessor\t: 1\nCPU architecture: 8\n\n";
@@ -245,12 +248,114 @@ fn cpuinfo_counts_processors_and_reads_the_first_rate() {
         Cpu {
             count: 2,
             khz: None,
+            ..Cpu::default()
         }
     );
     assert_eq!(
         parse::cpuinfo("processor\t: 0\ncpu MHz\t\t: 3000\n").khz,
         Some(3_000_000)
     );
+}
+
+/// The N150's first block, as its Linux printed it (2026-10-16), flags cut.
+const N150: &str = "processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\n\
+                    model\t\t: 190\nmodel name\t: Intel(R) N150\nstepping\t: 0\n\
+                    microcode\t: 0x1a\ncpu MHz\t\t: 1300.028\ncache size\t: 6144 KB\n\
+                    flags\t\t: fpu vme de pse tsc msr\n\n";
+
+#[test]
+fn the_model_is_named_as_neofetch_names_it() {
+    let clean = |name| parse::clean_model_name(name);
+    assert_eq!(clean("Intel(R) N150").as_str(), "Intel N150");
+    assert_eq!(
+        clean("Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz").as_str(),
+        "Intel Core i7-8700"
+    );
+    assert_eq!(
+        clean("AMD Ryzen 9 9900X 12-Core Processor").as_str(),
+        "AMD Ryzen 9 9900X"
+    );
+    assert_eq!(
+        clean("AMD Ryzen 7 7840U w/ Radeon 780M Graphics").as_str(),
+        "AMD Ryzen 7 7840U"
+    );
+    assert_eq!(
+        clean("AMD Ryzen 5 5600G with Radeon Graphics").as_str(),
+        "AMD Ryzen 5 5600G"
+    );
+    assert_eq!(
+        clean("Intel(R) Pentium(R) CPU G4560 @ 3.50GHz").as_str(),
+        "Intel Pentium G4560"
+    );
+    assert_eq!(
+        clean("QEMU Virtual CPU version 2.5+").as_str(),
+        "QEMU Virtual version 2.5+"
+    );
+    assert_eq!(
+        clean("Intel Core Processor (Skylake)").as_str(),
+        "Intel Core (Skylake)"
+    );
+    assert_eq!(
+        clean("AMD Phenom(tm) II X4 Quad-Core").as_str(),
+        "AMD Phenom II X4"
+    );
+    assert!(clean("CPU").is_empty());
+}
+
+#[test]
+fn the_n150s_line_has_its_model_and_its_top_rate() {
+    let mut cpu = parse::cpuinfo(&N150.repeat(4));
+    assert_eq!(cpu.count, 4);
+    assert_eq!(cpu.model.as_str(), "Intel N150");
+    let facts = |cpu| Facts {
+        host: Text::from("ferrix"),
+        machine: Text::from("x86_64"),
+        cpu: Some(cpu),
+        ..Facts::default()
+    };
+    // Without a top rate, the first `cpu MHz`.
+    assert_eq!(
+        rendered(&facts(cpu), PLAIN).as_str(),
+        "ferrix\n------\nCPU: Intel N150 (4) @ 1.30 GHz\n"
+    );
+    // With one, from cpufreq or `CPUID` leaf 0x16, that.
+    cpu.max_khz = parse::cpufreq_khz("3600000\n");
+    assert_eq!(
+        rendered(&facts(cpu), PLAIN).as_str(),
+        "ferrix\n------\nCPU: Intel N150 (4) @ 3.60 GHz\n"
+    );
+    assert_eq!(parse::cpufreq_khz("0\n"), None);
+    assert_eq!(parse::cpufreq_khz("fast"), None);
+}
+
+#[test]
+fn an_arm_machine_is_named_by_its_cores() {
+    let mut parser = parse::CpuinfoParser::default();
+    for (n, part) in [(0, "0xd05"), (1, "0xd05"), (2, "0xd41"), (3, "0xd44")] {
+        for line in arm_block(n, part).as_str().lines() {
+            parser.line(line);
+        }
+    }
+    let cpu = parser.finish();
+    assert_eq!(cpu.count, 4);
+    assert_eq!(cpu.model.as_str(), "Cortex-A55 + Cortex-A78 + Cortex-X1");
+    let a72 = parse::cpuinfo(
+        "processor\t: 0\nBogoMIPS\t: 125.00\nFeatures\t: fp asimd\nCPU implementer\t: 0x41\n\
+         CPU architecture: 8\nCPU variant\t: 0x0\nCPU part\t: 0xd08\nCPU revision\t: 3\n\n",
+    );
+    assert_eq!(a72.model.as_str(), "Cortex-A72");
+    // Another implementer's part is not guessed at.
+    assert_eq!(parse::arm_core(0x51, 0xD08), None);
+}
+
+/// One Arm block, as the kernel writes it, to the lines the parser reads.
+fn arm_block(n: u32, part: &str) -> Text<160> {
+    let mut text = Text::new();
+    let _fits = core::fmt::Write::write_fmt(
+        &mut text,
+        format_args!("processor\t: {n}\nCPU implementer\t: 0x41\nCPU part\t: {part}\n\n"),
+    );
+    text
 }
 
 #[test]

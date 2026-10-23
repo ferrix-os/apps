@@ -97,7 +97,8 @@ enum Value<'a> {
     Count(u64),
     /// Seconds, as days, hours and minutes.
     Uptime(u64),
-    /// The processors, and the machine they are.
+    /// The processors, and the machine they are, named where they have no
+    /// name of their own.
     Cpu(Cpu, &'a str),
     /// A display's size.
     Size(u32, u32),
@@ -282,11 +283,16 @@ impl fmt::Display for Value<'_> {
             Value::Count(count) => write!(f, "{count}"),
             Value::Uptime(seconds) => uptime(f, seconds),
             Value::Cpu(cpu, machine) => {
-                if !machine.is_empty() {
-                    write!(f, "{machine} ")?;
+                let name = if cpu.model.is_empty() {
+                    machine
+                } else {
+                    cpu.model.as_str()
+                };
+                if !name.is_empty() {
+                    write!(f, "{name} ")?;
                 }
                 write!(f, "({})", cpu.count)?;
-                match cpu.khz {
+                match cpu.max_khz.or(cpu.khz) {
                     Some(khz) => write!(
                         f,
                         " @ {}.{:02} GHz",

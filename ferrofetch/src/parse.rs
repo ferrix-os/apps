@@ -107,33 +107,201 @@ pub fn loadavg(text: &str) -> Option<Loadavg<'_>> {
 }
 
 /// What `/proc/cpuinfo` says of the processors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Cpu {
     /// The online processors: one `processor` line each.
     pub count: u32,
     /// The first processor's `cpu MHz`, in kHz, where the kernel knows it:
     /// only on x86-64, and only when its counter is the TSC.
     pub khz: Option<u64>,
+    /// The processor's name, cleaned as neofetch cleans it: the first
+    /// `model name` on x86-64, the cores' part names on Arm.
+    pub model: crate::Text<64>,
+    /// The highest rate the processor runs at, in kHz, from cpufreq or the
+    /// processor itself, which the line prefers to `cpu MHz`, as fastfetch
+    /// and neofetch do: the program fills it, not `/proc/cpuinfo`.
+    pub max_khz: Option<u64>,
 }
 
-/// `/proc/cpuinfo`: how many processors, and how fast the first says it is.
-#[must_use]
-pub fn cpuinfo(text: &str) -> Cpu {
-    let mut cpu = Cpu {
-        count: 0,
-        khz: None,
-    };
-    for line in text.lines() {
+/// The most kinds of core [`CpuinfoParser`] names: a phone's three.
+const MAX_KINDS: usize = 3;
+
+/// `/proc/cpuinfo`, a line at a time, so that a machine with more
+/// processors than a buffer holds is still counted whole.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CpuinfoParser {
+    /// What the lines so far said.
+    cpu: Cpu,
+    /// The block's `CPU implementer`, until its `CPU part`.
+    implementer: Option<u32>,
+    /// The kinds of Arm core seen, in order: implementer and part.
+    kinds: [Option<(u32, u32)>; MAX_KINDS],
+}
+
+impl CpuinfoParser {
+    /// Take one line, without its newline.
+    pub fn line(&mut self, line: &str) {
         let Some((key, value)) = line.split_once(':') else {
-            continue;
+            return;
         };
+        let value = value.trim();
         match key.trim_end() {
-            "processor" => cpu.count = cpu.count.saturating_add(1),
-            "cpu MHz" if cpu.khz.is_none() => cpu.khz = megahertz_as_khz(value.trim()),
+            "processor" => self.cpu.count = self.cpu.count.saturating_add(1),
+            "cpu MHz" if self.cpu.khz.is_none() => self.cpu.khz = megahertz_as_khz(value),
+            "model name" if self.cpu.model.is_empty() => self.cpu.model = clean_model_name(value),
+            "CPU implementer" => self.implementer = hex(value),
+            "CPU part" => {
+                if let (Some(implementer), Some(part)) = (self.implementer, hex(value)) {
+                    let kind = Some((implementer, part));
+                    if !self.kinds.contains(&kind)
+                        && let Some(slot) = self.kinds.iter_mut().find(|slot| slot.is_none())
+                    {
+                        *slot = kind;
+                    }
+                }
+            }
             _ => {}
         }
     }
-    cpu
+
+    /// What the lines said.
+    #[must_use]
+    pub fn finish(self) -> Cpu {
+        let mut cpu = self.cpu;
+        if cpu.model.is_empty() {
+            for (implementer, part) in self.kinds.iter().flatten() {
+                let Some(name) = arm_core(*implementer, *part) else {
+                    continue;
+                };
+                if !cpu.model.is_empty() {
+                    cpu.model.push(" + ");
+                }
+                cpu.model.push(name);
+            }
+        }
+        cpu
+    }
+}
+
+/// `/proc/cpuinfo` whole: how many processors, what they are and how fast
+/// the first says it is.
+#[must_use]
+pub fn cpuinfo(text: &str) -> Cpu {
+    let mut parser = CpuinfoParser::default();
+    text.lines().for_each(|line| parser.line(line));
+    parser.finish()
+}
+
+/// `0x41` as a number.
+fn hex(text: &str) -> Option<u32> {
+    u32::from_str_radix(text.strip_prefix("0x")?, 16).ok()
+}
+
+/// The words a processor's name is better without, as neofetch and fastfetch
+/// drop them: what every name says, and the core count the line gives anyway.
+const DROPPED_WORDS: [&str; 8] = [
+    "CPU",
+    "Processor",
+    "FPU",
+    "APU",
+    "Dual-Core",
+    "Quad-Core",
+    "Six-Core",
+    "Eight-Core",
+];
+
+/// A `model name` as a fetch tool shows it: `Intel(R) Core(TM) i7-8700 CPU @
+/// 3.20GHz` is `Intel Core i7-8700`, `AMD Ryzen 9 9900X 12-Core Processor`
+/// is `AMD Ryzen 9 9900X`. Cut at the `@` of a rate (the line adds its own),
+/// and at AMD's "with Radeon Graphics"; without the `(R)` and `(TM)` marks;
+/// without the words [`DROPPED_WORDS`] names or a `<n>-Core`.
+#[must_use]
+pub fn clean_model_name(name: &str) -> crate::Text<64> {
+    let name = name.split('@').next().unwrap_or_default();
+    let mut out = crate::Text::new();
+    let mut words = name.split_ascii_whitespace().peekable();
+    while let Some(word) = words.next() {
+        if matches!(word, "with" | "w/") && words.peek() == Some(&"Radeon") {
+            break;
+        }
+        let mut bare = crate::Text::<64>::new();
+        let mut rest = word;
+        while !rest.is_empty() {
+            let mark = ["(R)", "(r)", "(TM)", "(tm)"]
+                .iter()
+                .find_map(|mark| rest.find(mark).map(|at| (at, mark.len())));
+            let Some((at, len)) = mark else {
+                bare.push(rest);
+                break;
+            };
+            bare.push(rest.get(..at).unwrap_or_default());
+            rest = rest.get(at + len..).unwrap_or_default();
+        }
+        let bare = bare.as_str();
+        let counted = bare
+            .strip_suffix("-Core")
+            .is_some_and(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()));
+        if bare.is_empty() || counted || DROPPED_WORDS.contains(&bare) {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(" ");
+        }
+        out.push(bare);
+    }
+    out
+}
+
+/// An Arm core's name from `CPU implementer` and `CPU part`, for the parts
+/// Ferrix's machines and QEMU have, as Linux's `arch/arm64/include/asm/cputype.h`
+/// and `arch/arm/include/asm/cputype.h` number them.
+#[must_use]
+pub fn arm_core(implementer: u32, part: u32) -> Option<&'static str> {
+    if implementer != 0x41 {
+        return None;
+    }
+    Some(match part {
+        0xC07 => "Cortex-A7",
+        0xC08 => "Cortex-A8",
+        0xC09 => "Cortex-A9",
+        0xC0D => "Cortex-A12",
+        0xC0E => "Cortex-A17",
+        0xC0F => "Cortex-A15",
+        0xD03 => "Cortex-A53",
+        0xD04 => "Cortex-A35",
+        0xD05 => "Cortex-A55",
+        0xD07 => "Cortex-A57",
+        0xD08 => "Cortex-A72",
+        0xD09 => "Cortex-A73",
+        0xD0A => "Cortex-A75",
+        0xD0B => "Cortex-A76",
+        0xD0C => "Neoverse-N1",
+        0xD0D => "Cortex-A77",
+        0xD40 => "Neoverse-V1",
+        0xD41 => "Cortex-A78",
+        0xD44 => "Cortex-X1",
+        0xD46 => "Cortex-A510",
+        0xD47 => "Cortex-A710",
+        0xD48 => "Cortex-X2",
+        0xD49 => "Neoverse-N2",
+        0xD4D => "Cortex-A715",
+        0xD0E => "Cortex-A76AE",
+        0xD42 => "Cortex-A78AE",
+        0xD4B => "Cortex-A78C",
+        0xD4C => "Cortex-X1C",
+        0xD4E => "Cortex-X3",
+        0xD4F => "Neoverse-V2",
+        0xD80 => "Cortex-A520",
+        0xD81 => "Cortex-A720",
+        0xD82 => "Cortex-X4",
+        _ => return None,
+    })
+}
+
+/// A cpufreq file's rate, `3600000\n` in kHz.
+#[must_use]
+pub fn cpufreq_khz(text: &str) -> Option<u64> {
+    text.trim().parse().ok().filter(|&khz| khz > 0)
 }
 
 /// `2995.198` as kHz: whole megahertz and up to three places after the point.

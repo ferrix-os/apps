@@ -119,12 +119,64 @@ fn gather() -> Facts {
         let _cut = write!(facts.load, "{one} {five} {fifteen}");
     }
     ancestry(&mut facts);
-    let mut cpuinfo = [0_u8; 16 * 1024];
-    facts.cpu = read_str(b"/proc/cpuinfo\0", &mut cpuinfo).map(parse::cpuinfo);
+    facts.cpu = cpu();
     facts.displays = displays();
     let mut meminfo = [0_u8; 2048];
     facts.memory = read_str(b"/proc/meminfo\0", &mut meminfo).and_then(parse::meminfo);
     facts
+}
+
+/// The processors: `/proc/cpuinfo`, read a piece at a time so that every
+/// block is counted however many there are, and the highest rate, as
+/// fastfetch finds it: cpufreq's `cpuinfo_max_freq` (neofetch's choice
+/// too), or on x86-64 the processor's own word for it, `CPUID` leaf 0x16.
+fn cpu() -> Option<parse::Cpu> {
+    let fd = sys::open(b"/proc/cpuinfo\0")?;
+    let mut parser = parse::CpuinfoParser::default();
+    let mut buffer = [0_u8; 4096];
+    let mut held = 0;
+    loop {
+        let Some(rest) = buffer.get_mut(held..).filter(|rest| !rest.is_empty()) else {
+            // A line longer than the buffer: no line /proc/cpuinfo writes.
+            break;
+        };
+        let count = match linux::read(fd, rest) {
+            Ok(0) | Err(_) => 0,
+            Ok(count) => count,
+        };
+        let filled = held + count;
+        let text = buffer.get(..filled).unwrap_or_default();
+        let whole = if count == 0 {
+            filled
+        } else {
+            text.iter()
+                .rposition(|&byte| byte == b'\n')
+                .map_or(0, |at| at + 1)
+        };
+        let lines = text
+            .get(..whole)
+            .and_then(|lines| core::str::from_utf8(lines).ok());
+        lines
+            .unwrap_or_default()
+            .lines()
+            .for_each(|line| parser.line(line));
+        buffer.copy_within(whole..filled, 0);
+        held = filled - whole;
+        if count == 0 {
+            break;
+        }
+    }
+    let _closed = linux::close(fd);
+    let mut cpu = parser.finish();
+    let mut text = [0_u8; 32];
+    cpu.max_khz = [
+        &b"/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq\0"[..],
+        b"/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq\0",
+    ]
+    .iter()
+    .find_map(|path| read_str(path, &mut text).and_then(parse::cpufreq_khz))
+    .or_else(|| sys::cpuid_max_mhz().map(|mhz| u64::from(mhz) * 1000));
+    Some(cpu)
 }
 
 /// The host, the system and the kernel, from `uname`.
