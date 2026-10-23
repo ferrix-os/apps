@@ -321,6 +321,8 @@ fn set(state: &Arc<Mutex<LinkState>>, change: impl FnOnce(&mut LinkState)) {
 fn follow(remote: &Remote, root: &Path, state: &Arc<Mutex<LinkState>>, stop: &Arc<Mutex<bool>>) {
     let stopped = || stop.lock().map_or(true, |stop| *stop);
     let mut writer = StoreWriter::new(root, &remote.name);
+    let resumed = writer.dir.clone();
+    set(state, |state| state.dir = resumed);
     while !stopped() {
         let cursor = writer.cursor();
         set(state, |state| state.state = "connecting".to_owned());
