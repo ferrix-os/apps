@@ -10,6 +10,8 @@ pub mod paint;
 pub mod rows;
 mod show;
 
+pub use show::level_label;
+
 use std::path::Path;
 use std::rc::Rc;
 

@@ -34,9 +34,16 @@ struct ChipItem {
     label: string
 }
 
+// A line of the record pane's fields: a group's heading, or a line of a
+// field's value, the field's name on its first.
 struct FieldRow {
+    heading: string
     name: string
-    value: string
+    raw: string
+    text: string
+    // The field, by its place among the record's, for a copy.
+    field: int
+    height: real
 }
 
 // One list of the facets: its title, its rows, and how many more.
@@ -136,7 +143,8 @@ export component LogsPage : Item {
     property list<string> paneMessage
     property list<string> paneNote
     property list<FieldRow> paneFields
-    property bool paneMore
+    // Fields named by their raw keys, as lode stores them.
+    property bool rawNames
 
     signal machineMenu()
     signal bootMenu()
@@ -166,6 +174,8 @@ export component LogsPage : Item {
     signal onlySource()
     signal copyJson()
     signal copyCursor()
+    signal copyField(int field)
+    signal toggleRawNames()
 
     function levelInk(level: int): color {
         return level <= 3 ? Theme.redInk : level == 4 ? Theme.amberInk : level == 5 ? Theme.accent : level == 8 ? Theme.ink4 : Theme.ink2
@@ -634,67 +644,110 @@ export component LogsPage : Item {
             Text { x: 9; height: 30; text: "×"; font: Theme.sans(18); color: Theme.ink3 }
             MouseArea { anchors.fill: parent; onClicked: page.closePane() }
         }
-        Column {
-            x: 26
-            y: 66
-            Rectangle {
-                width: 340
-                height: 14 + 20 * page.paneMessage.length
-                radius: 6
-                color: Theme.bg3
-                Column {
-                    x: 12; y: 7
-                    Repeater {
-                        model: page.paneMessage
-                        Text { height: 20; text: modelData; font: Theme.mono(13); color: Theme.ink }
-                    }
-                }
-            }
-            Item { width: 1; height: 14 }
-            Rectangle {
-                visible: page.paneNote.length > 0
-                width: 340
-                height: 10 + 18 * page.paneNote.length
-                radius: 5
-                color: Theme.amberBg
-                border.width: 1
-                border.color: Theme.amberLine
-                Column {
-                    x: 10; y: 5
-                    Repeater {
-                        model: page.paneNote
-                        Text { height: 18; text: modelData; font: Theme.sans(12); color: Theme.amberInk }
-                    }
-                }
-            }
-            Item { visible: page.paneNote.length > 0; width: 1; height: 12 }
-            Repeater {
-                model: page.paneFields
-                Item {
-                    width: 340
-                    height: 20
-                    Text {
-                        width: 124; height: 20
-                        elide: Text.ElideRight
-                        text: modelData.name
-                        font: Theme.mono(12)
-                        color: Theme.ink4
-                    }
-                    Text {
-                        x: 130; width: 210; height: 20
-                        elide: Text.ElideRight
-                        text: modelData.value
-                        font: Theme.mono(12)
-                        color: Theme.ink
-                    }
-                }
-            }
+        // The names' toggle: as a person reads them, or as lode keeps them.
+        Item {
+            x: 392 - 56 - width; y: 28
+            width: rawText.implicitWidth + 8
+            height: 22
             Text {
-                visible: page.paneMore
-                height: 20
-                text: "… more fields: Copy as JSON"
-                font: Theme.sans(12)
-                color: Theme.ink4
+                id: rawText
+                x: 4; height: 22
+                text: page.rawNames ? "names" : "raw names"
+                font: Theme.sans(11.5)
+                color: Theme.accent
+            }
+            MouseArea { anchors.fill: parent; onClicked: page.toggleRawNames() }
+        }
+        // Everything said of it, scrolled when it is more than the pane
+        // holds: nothing is cut.
+        Flickable {
+            id: fields
+            y: 66
+            width: 392
+            height: pane.height - 66 - 120
+            clip: true
+            contentHeight: paneColumn.height + 8
+            Column {
+                id: paneColumn
+                x: 26
+                Rectangle {
+                    width: 340
+                    height: 14 + 20 * page.paneMessage.length
+                    radius: 6
+                    color: Theme.bg3
+                    Column {
+                        x: 12; y: 7
+                        Repeater {
+                            model: page.paneMessage
+                            Text { height: 20; text: modelData; font: Theme.mono(13); color: Theme.ink }
+                        }
+                    }
+                }
+                Item { width: 1; height: 14 }
+                Rectangle {
+                    visible: page.paneNote.length > 0
+                    width: 340
+                    height: 10 + 18 * page.paneNote.length
+                    radius: 5
+                    color: Theme.amberBg
+                    border.width: 1
+                    border.color: Theme.amberLine
+                    Column {
+                        x: 10; y: 5
+                        Repeater {
+                            model: page.paneNote
+                            Text { height: 18; text: modelData; font: Theme.sans(12); color: Theme.amberInk }
+                        }
+                    }
+                }
+                Item { visible: page.paneNote.length > 0; width: 1; height: 12 }
+                Repeater {
+                    model: page.paneFields
+                    Item {
+                        id: fieldRow
+                        width: 340
+                        height: modelData.height
+                        Text {
+                            visible: modelData.heading != ""
+                            y: modelData.height - 22
+                            height: 18
+                            text: modelData.heading
+                            font: Theme.sans(11, 600)
+                            color: Theme.ink5
+                        }
+                        Rectangle {
+                            visible: modelData.heading == "" && fieldArea.containsMouse
+                            x: -6; width: 352; height: 18
+                            radius: 3
+                            color: Theme.hover
+                        }
+                        Text {
+                            visible: modelData.heading == ""
+                            width: 124; height: 18
+                            elide: Text.ElideRight
+                            // Hovered, a field says its raw key.
+                            text: page.rawNames || fieldArea.containsMouse ? modelData.raw : modelData.name
+                            font: page.rawNames || fieldArea.containsMouse ? Theme.mono(11) : Theme.sans(12)
+                            color: Theme.ink4
+                        }
+                        Text {
+                            visible: modelData.heading == ""
+                            x: 130; height: 18
+                            text: modelData.text
+                            font: Theme.mono(12)
+                            color: Theme.ink
+                        }
+                        // A press copies the field's whole value.
+                        MouseArea {
+                            id: fieldArea
+                            visible: modelData.heading == ""
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: page.copyField(modelData.field)
+                        }
+                    }
+                }
             }
         }
         PushButton {

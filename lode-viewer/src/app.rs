@@ -156,6 +156,12 @@ pub enum Action {
     CopyJson(usize),
     /// Copy a record's cursor.
     CopyCursor(usize),
+    /// Copy one field's whole value of the selected record, by its place
+    /// among [`App::record_fields`].
+    CopyField(usize),
+    /// Name the record pane's fields by their raw keys, or as a person
+    /// reads them.
+    RawNames,
     /// The window's records in Logs.
     WindowInLogs,
     /// Show the boot before beside this one.
@@ -264,6 +270,8 @@ pub struct App {
     pub want_paste: Option<crate::selection::Which>,
     /// The Machines page's scroll.
     pub machines_scroll: f32,
+    /// Whether the record pane names its fields by their raw keys.
+    pub raw_names: bool,
     /// How tall the table's view is, for the strip's press and the keys.
     pub table_view: f32,
     /// How far each page can scroll: the Overview, the table, Machines.
@@ -331,6 +339,7 @@ impl App {
             reach: Vec::new(),
             want_paste: None,
             machines_scroll: 0.0,
+            raw_names: false,
             table_view: 0.0,
             scroll_most: [0.0; 3],
             compare: false,
@@ -1314,6 +1323,19 @@ impl App {
                     self.toast = Some("cursor copied".to_owned());
                 }
             }
+            Action::CopyField(field) => {
+                let fields = self
+                    .selected
+                    .map(|index| self.record_fields(index))
+                    .unwrap_or_default();
+                if let Some((key, value)) = fields.into_iter().nth(field) {
+                    let name = ferrix_lode_core::fields::name_of(&key)
+                        .map_or(key.clone(), |f| f.name.to_owned());
+                    self.clipboard = Some(value);
+                    self.toast = Some(format!("{name} copied"));
+                }
+            }
+            Action::RawNames => self.raw_names = !self.raw_names,
             Action::WindowInLogs => {
                 self.page = Page::Logs;
                 self.refresh();
@@ -1409,6 +1431,70 @@ impl App {
             Page::Machines => (&mut self.machines_scroll, self.scroll_most[2]),
         };
         *scroll = (*scroll + by).clamp(0.0, most);
+    }
+
+    /// Record `index`'s fields as the record pane lists them, by their
+    /// raw keys: its level, what it carries (its message left to the
+    /// pane's own box), then lode's own -- its time, host, boot, sequence
+    /// and cursor -- each in its group's place
+    /// (`ferrix_lode_core::fields`), whole.
+    #[must_use]
+    pub fn record_fields(&self, index: usize) -> Vec<(String, String)> {
+        let Some(entry) = self.log.entries.get(index) else {
+            return Vec::new();
+        };
+        let mut fields: Vec<(String, String)> = vec![(
+            "PRIORITY".to_owned(),
+            crate::ui::level_label(entry.stored_level()),
+        )];
+        for field in &entry.record.fields {
+            if field.name == "MESSAGE" {
+                continue;
+            }
+            let value = match std::str::from_utf8(&field.value) {
+                Ok(text) => text.to_owned(),
+                Err(_) => format!("[{} bytes of binary data]", field.value.len()),
+            };
+            fields.push((field.name.clone(), value));
+        }
+        let mut boot = String::new();
+        ferrix_lode_core::segment::push_hex(&mut boot, &entry.record.boot_id);
+        let civil = ferrix_lode_core::time::Civil::at(entry.time(), entry.record.utc_offset_s);
+        fields.push((
+            "__REALTIME_TIMESTAMP".to_owned(),
+            format!(
+                "{:04}-{:02}-{:02} {} {}",
+                civil.year,
+                civil.month,
+                civil.day,
+                clock_ms(entry.time(), entry.record.utc_offset_s),
+                civil.offset()
+            ),
+        ));
+        fields.push((
+            "__MONOTONIC_TIMESTAMP".to_owned(),
+            format!("{:.6} s", entry.record.monotonic_us as f64 / 1e6),
+        ));
+        fields.push(("_HOSTNAME".to_owned(), entry.record.host.to_string()));
+        fields.push(("_BOOT_ID".to_owned(), boot));
+        fields.push(("__SEQNUM".to_owned(), entry.record.seqnum.to_string()));
+        fields.push((
+            "__CURSOR".to_owned(),
+            ferrix_lode_core::cursor::of(&entry.record),
+        ));
+        // By group, then the table's order; unknown keys last, by name.
+        fields.sort_by(|a, b| {
+            let key = |name: &str| {
+                let known = ferrix_lode_core::fields::name_of(name);
+                (
+                    known.map_or(ferrix_lode_core::fields::FieldGroup::Other, |f| f.group),
+                    ferrix_lode_core::fields::order_of(name),
+                    name.to_owned(),
+                )
+            };
+            key(&a.0).cmp(&key(&b.0))
+        });
+        fields
     }
 
     /// Whether the query differs from the saved one in use.

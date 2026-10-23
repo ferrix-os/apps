@@ -496,3 +496,47 @@ fn an_error_a_warning_and_an_error_are_three_touching_blocks() {
     let runs = strip_runs(&levels);
     assert_eq!(runs, ".RAR.", "three blocks, touching: {runs}");
 }
+
+#[test]
+fn the_record_pane_names_its_fields_in_groups_and_copies_them_whole() {
+    let mut app = App::new(
+        log(),
+        Origin::File("sample.jsonl".into()),
+        "sample".to_owned(),
+    );
+    app.act(&Action::Zoom(0));
+    app.page = Page::Logs;
+    let index = app
+        .log
+        .entries
+        .iter()
+        .position(|entry| entry.record.seqnum == 317)
+        .expect("record 317");
+    app.act(&Action::Select(index));
+    let mut view = view_of(app, (1440, 1000));
+    for shown in [
+        "ORIGIN",
+        "STORAGE",
+        "Program",
+        "Transport",
+        "Cursor",
+        "Boot",
+    ] {
+        assert!(text_at(&mut view, shown).is_some(), "{shown} is shown");
+    }
+    assert!(
+        text_at(&mut view, "_TRANSPORT").is_none(),
+        "raw keys are not"
+    );
+    // The boot's id is whole, over two lines, not cut with an ellipsis.
+    assert!(text_at(&mut view, "062359e1029c423c0c0b4c9cf5216a").is_some());
+    // A press on a field copies its whole value.
+    let _ = click(&mut view, "Boot");
+    assert_eq!(
+        view.app.borrow_mut().clipboard.take().as_deref(),
+        Some("062359e1029c423c0c0b4c9cf5216a14")
+    );
+    // Raw names: as lode keeps them.
+    let _ = click(&mut view, "raw names");
+    assert!(text_at(&mut view, "_TRANSPORT").is_some());
+}

@@ -655,8 +655,8 @@ fn pane(view: &mut View, app: &App) {
         .set(ui, s(format!("Record {}", group(entry.record.seqnum))));
     let face = paint::mono(13.0, 400);
     let message = entry.message().into_owned();
-    let wrapped = wrap(ui, &face, &message, 340.0 - 24.0, 8);
-    let mut y = 28.0 + 38.0 + 14.0 + 20.0 * wrapped.len() as f32 + 14.0;
+    // The whole message: the pane scrolls when it is long.
+    let wrapped = wrap(ui, &face, &message, 340.0 - 24.0, usize::MAX);
     page.pane_message.set(ui, wrapped.iter().map(s).collect());
     let note = entry.row.note.map_or_else(Vec::new, |note| {
         let text = format!(
@@ -668,70 +668,44 @@ fn pane(view: &mut View, app: &App) {
         // Measured in the message's face, as the pane always measured it.
         wrap(ui, &paint::mono(13.0, 400), &text, 340.0 - 20.0, 3)
     });
-    if !note.is_empty() {
-        y += 10.0 + 18.0 * note.len() as f32 + 12.0;
-    }
     page.pane_note.set(ui, note.iter().map(s).collect());
-    let mut fields: Vec<(String, String)> =
-        vec![("PRIORITY".to_owned(), level_label(entry.stored_level()))];
-    for field in &entry.record.fields {
-        if field.name == "MESSAGE" {
-            continue;
+    page.raw_names.set(ui, app.raw_names);
+    let value_font = paint::mono(12.0, 400);
+    let mut rows = Vec::new();
+    let mut group = None;
+    for (at, (key, value)) in app
+        .record_fields(app.selected.unwrap_or_default())
+        .into_iter()
+        .enumerate()
+    {
+        let known = ferrix_lode_core::fields::name_of(&key);
+        let this = known.map_or(ferrix_lode_core::fields::FieldGroup::Other, |f| f.group);
+        if group != Some(this) {
+            group = Some(this);
+            rows.push(FieldRow {
+                heading: s(this.title().to_uppercase()),
+                height: if rows.is_empty() { 22.0 } else { 34.0 },
+                ..FieldRow::default()
+            });
         }
-        let value = match std::str::from_utf8(&field.value) {
-            Ok(text) => text.replace('\n', " \\n "),
-            Err(_) => format!("[{} bytes of binary data]", field.value.len()),
-        };
-        fields.push((field.name.clone(), value));
+        let lines = super::wrap_with(&value, 210.0, |line| ui.text_width(&value_font, line));
+        let count = lines.len();
+        for (n, line) in lines.into_iter().enumerate() {
+            rows.push(FieldRow {
+                heading: s(""),
+                name: s(if n == 0 {
+                    known.map_or(key.as_str(), |f| f.name)
+                } else {
+                    ""
+                }),
+                raw: s(if n == 0 { key.as_str() } else { "" }),
+                text: s(line),
+                field: i32::try_from(at).unwrap_or(-1),
+                height: if n + 1 == count { 20.0 } else { 18.0 },
+            });
+        }
     }
-    let mut boot = String::new();
-    ferrix_lode_core::segment::push_hex(&mut boot, &entry.record.boot_id);
-    let civil = ferrix_lode_core::time::Civil::at(entry.time(), entry.record.utc_offset_s);
-    fields.push((
-        "__REALTIME".to_owned(),
-        format!(
-            "{:04}-{:02}-{:02} {} {}",
-            civil.year,
-            civil.month,
-            civil.day,
-            clock_ms(entry.time(), entry.record.utc_offset_s),
-            civil.offset()
-        ),
-    ));
-    fields.push((
-        "__MONOTONIC".to_owned(),
-        format!("{:.6} s", entry.record.monotonic_us as f64 / 1e6),
-    ));
-    fields.push(("_HOSTNAME".to_owned(), entry.record.host.to_string()));
-    fields.push(("_BOOT_ID".to_owned(), boot));
-    fields.push(("__SEQNUM".to_owned(), entry.record.seqnum.to_string()));
-    fields.push((
-        "__CURSOR".to_owned(),
-        ferrix_lode_core::cursor::of(&entry.record),
-    ));
-    let height = view.shell.base.common.height.get(&mut view.ui) - super::HEADER;
-    let bottom = height - 120.0;
-    let fit = fields
-        .iter()
-        .take_while(|_| {
-            let fits = y + 20.0 <= bottom;
-            y += 20.0;
-            fits
-        })
-        .count();
-    let ui = &mut view.ui;
-    page.pane_more.set(ui, fit < fields.len());
-    page.pane_fields.set(
-        ui,
-        fields
-            .into_iter()
-            .take(fit)
-            .map(|(name, value)| FieldRow {
-                name: s(name),
-                value: s(value),
-            })
-            .collect(),
-    );
+    page.pane_fields.set(ui, rows);
 }
 
 /// `text` broken into lines no wider than `width` in `face`, at most
@@ -899,6 +873,8 @@ pub(super) fn logs_action(app: &App, signal: LogsPageSignal) -> Vec<Action> {
         LogsPageSignal::CopyJson => {
             return app.selected.map(Action::CopyJson).into_iter().collect();
         }
+        LogsPageSignal::CopyField(field) => Action::CopyField(index(field)),
+        LogsPageSignal::ToggleRawNames => Action::RawNames,
         LogsPageSignal::CopyCursor => {
             return app.selected.map(Action::CopyCursor).into_iter().collect();
         }
