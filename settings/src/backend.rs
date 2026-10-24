@@ -47,6 +47,12 @@ pub struct Monitor {
 pub trait System {
     /// What `settings.conf` holds: each key and its value.
     fn settings(&mut self) -> BTreeMap<String, String>;
+    /// What hyprix has in force for each of `keys` -- the theme's, the
+    /// person's configuration's or `settings.conf`'s, whichever won --
+    /// as the pages compare it. Empty where hyprix cannot be asked.
+    fn options(&mut self, _keys: &[&str]) -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
     /// Set `key` to `value`, kept and applied: `Err` with hyprix's words
     /// when it refuses.
     fn set(&mut self, key: &str, value: &str) -> Result<(), String>;
@@ -114,7 +120,70 @@ impl Desktop {
     }
 }
 
+/// The options the pages show, asked of hyprix as they are in force.
+pub const OPTION_KEYS: &[&str] = &[
+    "general:gaps_in",
+    "general:gaps_out",
+    "general:border_size",
+    "general:layout",
+    "decoration:rounding",
+    "decoration:inactive_opacity",
+    "decoration:blur:enabled",
+    "decoration:shadow:enabled",
+    "animations:enabled",
+    "hyprix:titlebars",
+    "hyprix:own_frames",
+    "hyprix:blur_in_software",
+    "input:follow_mouse",
+    "input:repeat_rate",
+    "input:repeat_delay",
+    "misc:lock_grace",
+];
+
+/// `hyprctl --batch` of a `getoption` for each of `keys`: each answer is a
+/// `TYPE: VALUE` line and a `set:` line, or `no such option`. The value as
+/// the pages compare it: a number without trailing zeros, a gap's first
+/// side, a word as it is.
+#[must_use]
+pub fn parse_options(keys: &[&str], text: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+    for key in keys {
+        let Some(line) = lines.next() else { break };
+        if line.trim() == "no such option" {
+            continue;
+        }
+        let _set = lines.next();
+        let Some((kind, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        let value = match kind.trim() {
+            "custom type" => value.split_whitespace().next().unwrap_or("").to_owned(),
+            "float" => {
+                let trimmed = value.trim_end_matches('0').trim_end_matches('.');
+                if trimmed.is_empty() {
+                    "0".to_owned()
+                } else {
+                    trimmed.to_owned()
+                }
+            }
+            _ => value.to_owned(),
+        };
+        let _ = out.insert((*key).to_owned(), value);
+    }
+    out
+}
+
 impl System for Desktop {
+    fn options(&mut self, keys: &[&str]) -> BTreeMap<String, String> {
+        let batch: Vec<String> = keys.iter().map(|key| format!("getoption {key}")).collect();
+        match Self::hyprctl(&["--batch", &batch.join(" ; ")]) {
+            Ok(text) => parse_options(keys, &text),
+            Err(_) => BTreeMap::new(),
+        }
+    }
+
     fn settings(&mut self) -> BTreeMap<String, String> {
         let Ok(text) = Self::hyprctl(&["settings", "-j"]) else {
             return BTreeMap::new();

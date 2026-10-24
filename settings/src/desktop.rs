@@ -374,7 +374,44 @@ impl State {
             Key::Setting("animations:enabled"),
             self.on("animations:enabled"),
         ));
+        self.say_what_cannot_show(&mut rows);
         rows
+    }
+
+    /// Where a row cannot show its change under what is in force, it says
+    /// so under its title rather than seeming to do nothing: spacing with a
+    /// floating layout, corners, borders and shadow round windows that
+    /// draw their own frame, and blur on a screen drawn without a GPU.
+    fn say_what_cannot_show(&self, rows: &mut [Line]) {
+        let floating = self.value("general:layout") == "floating";
+        let own_frames = self.on("hyprix:own_frames");
+        let no_soft_blur = self
+            .values
+            .get("hyprix:blur_in_software")
+            .map(String::as_str)
+            == Some("0");
+        for row in rows.iter_mut() {
+            let note = match row.key {
+                Key::Spacing | Key::Setting("general:gaps_in" | "general:gaps_out") if floating => {
+                    "Spacing is for tiled windows; Windows ▸ Layout is Floating."
+                }
+                Key::Corners
+                | Key::Setting(
+                    "decoration:rounding" | "general:border_size" | "decoration:shadow:enabled",
+                ) if own_frames => {
+                    "Windows that draw their own frame keep their own corners, border and shadow."
+                }
+                Key::SeeThrough | Key::Setting("decoration:blur:enabled") if no_soft_blur => {
+                    "Blur shows only on a screen drawn with a GPU."
+                }
+                _ => continue,
+            };
+            if row.desc.is_empty() {
+                note.clone_into(&mut row.desc);
+            } else {
+                row.desc = format!("{} {note}", row.desc);
+            }
+        }
     }
 
     /// Windows: the layout, title bars, focus.
@@ -1016,5 +1053,73 @@ mod tests {
         state.idle = hand;
         let lock = row(&state, &Key::Idle("lock"));
         assert_eq!(state.pick(&lock, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod in_force_tests {
+    use crate::backend::parse_options;
+    use crate::pages::{Key, Page, State};
+
+    /// hyprctl's `getoption` answers, one a key, read as the pages compare
+    /// them.
+    #[test]
+    fn options_in_force_are_read_from_getoption() {
+        let keys = [
+            "general:gaps_in",
+            "general:layout",
+            "decoration:inactive_opacity",
+            "nothing",
+            "decoration:rounding",
+        ];
+        let text = "custom type: 0 0 0 0\nset: true\nstr: floating\nset: true\nfloat: 0.900000\nset: true\nno such option\nint: 8\nset: true\n";
+        let got = parse_options(&keys, text);
+        assert_eq!(got.get("general:gaps_in").map(String::as_str), Some("0"));
+        assert_eq!(
+            got.get("general:layout").map(String::as_str),
+            Some("floating")
+        );
+        assert_eq!(
+            got.get("decoration:inactive_opacity").map(String::as_str),
+            Some("0.9")
+        );
+        assert_eq!(
+            got.get("decoration:rounding").map(String::as_str),
+            Some("8")
+        );
+        assert!(!got.contains_key("nothing"));
+    }
+
+    /// Under Yoru (floating, own frames, no blur in software) the rows say
+    /// why a change cannot show; and the pages show what is in force.
+    #[test]
+    fn rows_say_what_cannot_show_under_yoru() {
+        let mut state = State::new(Page::Appearance);
+        for (k, v) in [
+            ("general:layout", "floating"),
+            ("hyprix:own_frames", "1"),
+            ("hyprix:blur_in_software", "0"),
+            ("decoration:rounding", "8"),
+            ("hyprix:titlebars", "1"),
+        ] {
+            let _ = state.values.insert(k.to_owned(), v.to_owned());
+        }
+        let rows = state.desktop_rows();
+        let note = |key: &Key| {
+            rows.iter()
+                .find(|r| &r.key == key)
+                .map(|r| r.desc.clone())
+                .unwrap_or_default()
+        };
+        assert!(note(&Key::Spacing).contains("Floating"));
+        assert!(note(&Key::Corners).contains("own frame"));
+        assert!(note(&Key::SeeThrough).contains("GPU"));
+        state.page = Page::Windows;
+        let titlebars = state
+            .desktop_rows()
+            .into_iter()
+            .find(|r| r.key == Key::Setting("hyprix:titlebars"))
+            .unwrap();
+        assert!(titlebars.on, "Yoru's bars are on, and the switch says so");
     }
 }

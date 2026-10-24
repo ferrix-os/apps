@@ -84,7 +84,10 @@ pub fn state(
             Err(error) => say(&format!("err: {}: {error}", path.display())),
         }
     }
-    state.values = system.settings();
+    // What is in force -- Yoru's theme, the person's hyprland.conf -- and
+    // over it what Settings itself kept, as the pages compare them.
+    state.values = system.options(crate::backend::OPTION_KEYS);
+    state.values.extend(system.settings());
     state.accent = state.desktop_accent().unwrap_or(0);
     state.monitors = system.monitors();
     state.typing_in = system.layout_now().unwrap_or_else(|| {
