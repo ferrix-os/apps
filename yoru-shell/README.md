@@ -6,7 +6,8 @@ Yoru's shell: the dock of the customer's "Yoru WM" design (Ferrix's
 with tole in the Nocturne design system's tokens, Inter for words and
 Phosphor for icons. An app (Ferrix's
 [docs/APPS.md](https://github.com/ferrix-os/ferrix/blob/develop/docs/APPS.md)):
-`app.toml` says what it installs and how it is built; its licence is `MIT`.
+`app.toml` says what it installs and how it is built; its licence is `MIT`, and the Phosphor icon font it carries
+(`share/fonts/Phosphor.ttf`, Phosphor 2.1.1) is MIT too (`LICENSE-phosphor`).
 
 ![Yoru on Ferrix: the theme's windows and the dock](screenshot.png)
 

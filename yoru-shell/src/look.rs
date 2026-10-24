@@ -34,26 +34,27 @@ pub fn icon(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Where the shell finds its faces beside the system's: Phosphor and Inter
-/// where the image puts them, and on a development host the tree's.
+/// Where the shell finds its faces beside the system's: Phosphor from the
+/// app's own folder (`share/fonts`, installed to
+/// `/usr/share/fonts/yoru-shell`), and Inter where Ferrix's tree or the
+/// image has it.
 #[must_use]
 pub fn fonts() -> tole::Fonts {
     let mut fonts = tole::Fonts::system();
-    let tree = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../assets/fonts");
-    for dir in [
-        std::env::var("YORU_FONTS").ok(),
-        Some(format!("{tree}/phosphor")),
-        Some(format!("{tree}/inter")),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    let own = concat!(env!("CARGO_MANIFEST_DIR"), "/share/fonts");
+    let tree = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../assets/fonts/inter"
+    );
+    for (dir, family) in [
+        (std::env::var("YORU_FONTS").ok(), "Phosphor"),
+        (Some("/usr/share/fonts/yoru-shell".to_owned()), "Phosphor"),
+        (Some(own.to_owned()), "Phosphor"),
+        (Some("/usr/share/fonts/inter".to_owned()), "Inter Variable"),
+        (Some(tree.to_owned()), "Inter Variable"),
+    ] {
+        let Some(dir) = dir else { continue };
         let path = std::path::Path::new(&dir);
-        let family = if dir.ends_with("inter") {
-            "Inter Variable"
-        } else {
-            "Phosphor"
-        };
         if path.is_dir() && !has_family(&fonts, family) {
             let _ = fonts.add_dir(path);
         }

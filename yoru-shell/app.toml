@@ -17,6 +17,20 @@ from = "yoru-shell"
 to = "bin/yoru-shell"
 mode = "755"
 
+# Phosphor's icons as a font (MIT, Phosphor Icons 2.1.1), where the shell
+# and the fonts the desktop scans find them, with its licence.
+[[package.files]]
+from = "share/fonts"
+source = "folder"
+tree = true
+to = "usr/share/fonts/yoru-shell"
+
+[[package.files]]
+from = "LICENSE-phosphor"
+source = "folder"
+to = "usr/share/licenses/yoru-shell/LICENSE-phosphor"
+mode = "644"
+
 [build]
 kind = "cargo"
 
