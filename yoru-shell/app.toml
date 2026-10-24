@@ -1,0 +1,31 @@
+# yoru-shell, an app (docs/APPS.md): Yoru's dock, after the customer's
+# design (docs/DESKTOP.md §6). Every desktop drawn in Yoru carries it
+# whether or not the app is installed (xtask's compositor), as waybar is,
+# so it is not in an image by default.
+
+[package]
+name = "yoru-shell"
+version = "0.1.0"
+description = "Yoru's shell: the dock, after the customer's Yoru WM design, as layer-shell surfaces drawn with tole"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "yoru-shell"
+to = "bin/yoru-shell"
+mode = "755"
+
+[build]
+kind = "cargo"
+
+[image]
+default = false
+
+[check]
+host-tests = true
+
+[[smoke]]
+run = "yoru-shell --version"
+expect = "yoru-shell 0.1.0"

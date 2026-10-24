@@ -1,0 +1,45 @@
+[package]
+name = "yoru-shell"
+description = "Yoru's shell: the dock, after the customer's Yoru WM design, as layer-shell surfaces drawn with tole"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# An app (Ferrix's docs/APPS.md): a workspace of its own, a static Linux
+# program built with std against the target's own musl. It builds inside a
+# Ferrix checkout, where the compositor's libraries are beside it.
+[workspace]
+
+[lib]
+name = "yoru_shell"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yoru-shell"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+# The applications a launcher lists: the dock's launchers are found there.
+compositor-desktop = { path = "../../system/linux/compositor/desktop" }
+# The Wayland client's events, which tole's window hands back: the
+# compositor's event socket watched, the clock's timer.
+compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
+# tole, Ferrix's UI framework: the dock's tree, from the markup under
+# `ui/`, in a layer-shell surface.
+tole = { path = "../../system/linux/tole/tole", features = ["wayland"] }
+
+[build-dependencies]
+# The markup, compiled into Rust when the shell is built.
+tole-compiler = { path = "../../system/linux/tole/tole-compiler" }
+
+# As the compositor's: overflow checks on everywhere.
+[profile.dev]
+overflow-checks = true
+opt-level = 2
+
+[profile.release]
+overflow-checks = true
