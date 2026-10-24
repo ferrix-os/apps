@@ -30,6 +30,8 @@ ferrix-lode-core = { path = "../../../lib/log/lode" }
 # The screenshots lode keeps of a crash, in QOI: read with lode's own
 # decoder.
 ferrix-lode-capture = { path = "../../../lib/proto/lode-capture" }
+# A PNG screenshot from lode's blobs, into pixels: the desktop's decoder.
+compositor-image = { path = "../../system/linux/compositor/image" }
 # Fonts, shaping and glyphs.
 compositor-text = { path = "../../system/linux/compositor/text" }
 # The Wayland client: the window, the keyboard, the pointer, the buffers,

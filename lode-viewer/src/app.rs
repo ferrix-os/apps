@@ -71,6 +71,13 @@ pub enum Action {
     CrashPick(usize),
     /// The crash shown, in Logs.
     CrashInLogs,
+    /// The crash shown's tombstone, in Logs.
+    CrashTombstone,
+    /// The crashed process's last lines its tombstone names, in Logs.
+    CrashTail,
+    /// The crash at this record shown on the Crashes page: a crash, or
+    /// the crash a tombstone or repeat record names.
+    ShowCrash(usize),
     /// Switch palette.
     Theme(Mode),
     /// Open or close the boot menu.
@@ -1235,6 +1242,24 @@ impl App {
                 self.crash_pick = 0;
             }
             Action::CrashPick(index) => self.crash_pick = index,
+            Action::CrashTombstone => {
+                if let Some(at) = self
+                    .crash_shown()
+                    .and_then(|crash| crate::crashes::tombstone_of(&self.log, crash.index))
+                {
+                    self.open_in_logs(at);
+                }
+            }
+            Action::CrashTail => {
+                if let Some((first, _)) = self
+                    .crash_shown()
+                    .and_then(|crash| crate::crashes::tombstone_of(&self.log, crash.index))
+                    .and_then(|tomb| crate::crashes::tail_of(&self.log, tomb))
+                {
+                    self.open_in_logs(first);
+                }
+            }
+            Action::ShowCrash(index) => self.show_crash(index),
             Action::CrashInLogs => {
                 if let Some(index) = self.crash_shown().map(|crash| crash.index) {
                     if let Some(boot) = self
@@ -1781,12 +1806,76 @@ impl App {
     #[must_use]
     pub fn crash_groups(&self) -> (Vec<crate::crashes::Group>, Vec<crate::crashes::Crash>) {
         let crashes = self.crash_list();
-        let groups = crate::crashes::groups(
+        let mut groups = crate::crashes::groups(
             &crashes,
             self.crash_program.as_deref(),
             self.crash_signal.as_deref(),
         );
+        // A crash storm counts more than the crashes it kept tombstones
+        // of: the repeat records say how many.
+        let storms =
+            crate::crashes::storm_counts(&self.log, (!self.crash_all).then_some(self.boot));
+        for group in &mut groups {
+            let signature = group
+                .crashes
+                .first()
+                .and_then(|at| crashes.get(*at))
+                .and_then(|crash| crash.signature.as_ref());
+            if let Some(count) = signature.and_then(|s| storms.get(s)) {
+                group.repeats = group.repeats.max(*count);
+            }
+        }
         (groups, crashes)
+    }
+
+    /// Record `index` in Logs: its boot, a minute around it, selected
+    /// and scrolled to.
+    pub fn open_in_logs(&mut self, index: usize) {
+        if let Some(boot) = self
+            .log
+            .boots
+            .iter()
+            .position(|boot| boot.range.contains(&index))
+            && boot != self.boot
+        {
+            self.go_to_boot(boot);
+        }
+        self.span = 60_000_000;
+        if let Some(at) = self.log.entries.get(index).map(crate::data::Entry::time) {
+            self.set_cursor(at);
+        }
+        self.page = Page::Logs;
+        self.refresh();
+        self.selected = Some(index);
+        self.scroll_to(index);
+    }
+
+    /// The crash at record `index` on the Crashes page: its group open
+    /// and it picked, every boot's when it is not this boot's.
+    pub fn show_crash(&mut self, index: usize) {
+        self.page = Page::Crashes;
+        self.crash_program = None;
+        self.crash_signal = None;
+        let here = |app: &App| app.crash_list().iter().any(|c| c.index == index);
+        if !here(self) {
+            self.crash_all = true;
+        }
+        let (groups, crashes) = self.crash_groups();
+        for group in &groups {
+            if let Some(pick) = group
+                .crashes
+                .iter()
+                .position(|at| crashes.get(*at).is_some_and(|c| c.index == index))
+            {
+                self.crash_group = Some((
+                    group.program.clone(),
+                    group.address.clone(),
+                    group.signal.clone(),
+                ));
+                self.crash_pick = pick;
+                return;
+            }
+        }
     }
 
     /// The crash the Crashes page shows, if one.

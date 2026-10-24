@@ -15,12 +15,12 @@ fn s(value: impl AsRef<str>) -> Rc<str> {
     Rc::from(value.as_ref())
 }
 
-/// The screenshot last read, by its file: read once, drawn as often as
-/// the page is.
+/// The screenshot last read: read only when its crash is shown, once,
+/// and drawn as often as the page is.
 #[derive(Debug, Default)]
 pub(super) struct Capture {
-    /// The file, and its picture when it could be read.
-    shown: Option<(PathBuf, Option<tole::Image>)>,
+    /// Where it is, and its picture when it could be read.
+    shown: Option<(crate::crashes::Screenshot, Option<tole::Image>)>,
 }
 
 /// Where lode's captures may be: beside the store, or the export.
@@ -102,7 +102,7 @@ pub(super) fn show(view: &mut View, app: &App) {
                     g.signal,
                     clock(g.last, zone)
                 )),
-                count: s(format!("{}×", group(g.crashes.len() as u64))),
+                count: s(format!("{}×", group(g.repeats))),
                 app_error: g.kind == CrashKind::AppError,
                 selected: selected.as_ref().is_some_and(|(p, a, sig)| {
                     *p == g.program && *a == g.address && *sig == g.signal
@@ -180,27 +180,32 @@ pub(super) fn show(view: &mut View, app: &App) {
         })
         .collect();
     page.around.set(ui, around);
-    // Its screenshot, when lode kept one.
-    let file = crate::crashes::capture_of(&app.log, crash.seqnum, &capture_dirs(app));
-    let image = match (&file, &view.capture.shown) {
-        (Some(path), Some((kept, image))) if kept == path => image.clone(),
-        (Some(path), _) => {
-            let image = crate::crashes::read_capture(path)
+    // Its tombstone and the process's last lines it names.
+    let tombstone = crate::crashes::tombstone_of(&app.log, crash.index);
+    let tail = tombstone.and_then(|t| crate::crashes::tail_of(&app.log, t));
+    page.has_tombstone.set(&mut view.ui, tombstone.is_some());
+    page.has_tail.set(&mut view.ui, tail.is_some());
+    // Its screenshot, when lode kept one: a blob read only now.
+    use crate::crashes::Screenshot;
+    let dirs = capture_dirs(app);
+    let shot = crate::crashes::screenshot_of(&app.log, crash.seqnum, &dirs);
+    let image = match &view.capture.shown {
+        Some((kept, image)) if *kept == shot => image.clone(),
+        _ => {
+            let image = crate::crashes::read_screenshot(&shot, &dirs)
                 .and_then(|(w, h, rgba)| tole::Image::from_rgba(w, h, &rgba));
-            view.capture.shown = Some((path.clone(), image.clone()));
+            view.capture.shown = Some((shot.clone(), image.clone()));
             image
         }
-        (None, _) => None,
     };
     let ui = &mut view.ui;
-    page.capture_note.set(
-        ui,
-        s(match (&file, &image) {
-            (None, _) => "No screenshot was kept of it.",
-            (Some(_), None) => "Its screenshot could not be read.",
-            (Some(_), Some(_)) => "",
-        }),
-    );
+    let note = match (&shot, &image) {
+        (Screenshot::None, _) => "No screenshot was kept of it.".to_owned(),
+        (Screenshot::Dropped(why), _) => format!("lode could not keep its screenshot: {why}"),
+        (_, None) => "Its screenshot could not be read.".to_owned(),
+        (_, Some(_)) => String::new(),
+    };
+    page.capture_note.set(ui, s(note));
     page.capture.set(
         ui,
         tole::CanvasPainter::new(move |p| {
@@ -229,6 +234,8 @@ pub(super) fn action(app: &App, signal: CrashesPageSignal) -> Vec<Action> {
         CrashesPageSignal::Group(i) => Action::CrashGroup(at(i)),
         CrashesPageSignal::Crash(i) => Action::CrashPick(at(i)),
         CrashesPageSignal::OpenInLogs => Action::CrashInLogs,
+        CrashesPageSignal::OpenTombstone => Action::CrashTombstone,
+        CrashesPageSignal::OpenTail => Action::CrashTail,
         CrashesPageSignal::CopyField(i) => {
             return match app.crash_shown() {
                 Some(crash) => vec![Action::Select(crash.index), Action::CopyField(at(i))],

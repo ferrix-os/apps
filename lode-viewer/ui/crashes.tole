@@ -41,6 +41,9 @@ export component CrashesPage : Item {
     property string groupTitle
     property list<CrashRow> crashes
     property bool hasCrash
+    // The crash shown has a tombstone, and its process's last lines.
+    property bool hasTombstone
+    property bool hasTail
     property list<FieldRow> fields
     property painter capture
     property string captureNote
@@ -52,6 +55,8 @@ export component CrashesPage : Item {
     signal group(int index)
     signal crash(int index)
     signal openInLogs()
+    signal openTombstone()
+    signal openTail()
     signal copyField(int field)
 
     property real rightX: 36 + 400 + 20
@@ -170,7 +175,7 @@ export component CrashesPage : Item {
         height: page.height - 82 - 24
 
         Text {
-            width: parent.width - 140; height: 24
+            width: parent.width - 140 - (page.hasTombstone ? 118 : 0) - (page.hasTail ? 118 : 0); height: 24
             elide: Text.ElideRight
             text: page.groupTitle
             font: Theme.sans(13, 600)
@@ -181,6 +186,18 @@ export component CrashesPage : Item {
             x: parent.width - 130; y: -2; width: 130; height: 28
             text: "Open in Logs"
             onClicked: page.openInLogs()
+        }
+        PushButton {
+            visible: page.hasTombstone
+            x: parent.width - 130 - 8 - 110; y: -2; width: 110; height: 28
+            text: "Tombstone"
+            onClicked: page.openTombstone()
+        }
+        PushButton {
+            visible: page.hasTail
+            x: parent.width - 130 - 8 - 110 - 8 - 110; y: -2; width: 110; height: 28
+            text: "Last lines"
+            onClicked: page.openTail()
         }
         Rectangle {
             y: 30

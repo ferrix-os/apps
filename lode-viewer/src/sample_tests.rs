@@ -884,3 +884,147 @@ fn live_at_the_end_the_newest_row_stays_at_the_tables_foot_as_records_come() {
     let (y, most, follow) = table_state(&mut view);
     assert!(follow && (y - most).abs() < 0.01);
 }
+
+#[test]
+fn a_tombstone_links_both_ways_its_storm_counts_and_its_screenshot_is_a_blob() {
+    use ferrix_lode_core::blob;
+    let dir = std::env::temp_dir().join(format!("lode-viewer-tombstones-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("blobs")).expect("made");
+    // The screenshot, a 4x2 red picture, as lode keeps it: a blob in a
+    // pack with no index yet, named by the capture record.
+    let xrgb: Vec<u8> = (0..8).flat_map(|_| [0, 0, 255, 0]).collect();
+    let qoi = ferrix_lode_capture::qoi::encode(4, 2, 16, &xrgb).expect("encoded");
+    let id = blob::id_of(&qoi);
+    let mut pack = blob::PACK_MAGIC.to_vec();
+    pack.extend(blob::encode_entry(&id, "qoi", &qoi));
+    std::fs::write(dir.join("blobs/pack-0000000000000001.fxb"), pack).expect("written");
+    let reference = blob::Reference {
+        id,
+        size: qoi.len() as u64,
+        kind: "qoi".to_owned(),
+    }
+    .text();
+    let boot = "062359e1029c423c0c0b4c9cf5216a14";
+    // Records 1..: two of the process's lines, the crash (3), its
+    // capture, its tombstone, a storm's repeat record.
+    let tail_first = format!("i=1;b={boot}");
+    let tail_last = format!("i=2;b={boot}");
+    let of = format!("i=3;b={boot}");
+    let line = vec![
+        ("PRIORITY", "6"),
+        ("SYSLOG_IDENTIFIER", "foot"),
+        ("MESSAGE", "drawing"),
+    ];
+    let crash = vec![
+        ("PRIORITY", "3"),
+        ("SYSLOG_IDENTIFIER", "kernel"),
+        ("MESSAGE", "a program ended by a signal"),
+        ("MESSAGE_ID", "5a1d3f9c8e2b4c7d9f0a1b2c3d4e5f60"),
+        ("CRASH_PID", "291"),
+        ("CRASH_COMM", "foot"),
+        ("CRASH_PROGRAM", "/bin/foot"),
+        ("CRASH_SIGNAL", "SIGSEGV"),
+        ("CRASH_PC", "0x4012ab"),
+        ("CRASH_MODULE", "foot+0x12ab"),
+    ];
+    let capture = vec![
+        ("PRIORITY", "6"),
+        ("SYSLOG_IDENTIFIER", "lode"),
+        ("MESSAGE", "screenshot of the screen at record 3"),
+        ("CAPTURE_OF", "3"),
+        ("CAPTURE", "stored"),
+        ("BLOB_SCREENSHOT", reference.as_str()),
+    ];
+    let tombstone = vec![
+        ("PRIORITY", "3"),
+        ("SYSLOG_IDENTIFIER", "lode"),
+        ("MESSAGE", "tombstone: foot ended by SIGSEGV at foot+0x12ab"),
+        (
+            "MESSAGE_ID",
+            ferrix_lode_core::tombstone::MESSAGE_ID_TOMBSTONE,
+        ),
+        ("TOMBSTONE", "1"),
+        ("TOMBSTONE_SIGNATURE", "/bin/foot foot+0x12ab SIGSEGV"),
+        ("TOMBSTONE_OF", of.as_str()),
+        ("TOMBSTONE_TAIL_FIRST", tail_first.as_str()),
+        ("TOMBSTONE_TAIL_LAST", tail_last.as_str()),
+        ("TOMBSTONE_REPEATS", "1"),
+    ];
+    let storm = vec![
+        ("PRIORITY", "4"),
+        ("SYSLOG_IDENTIFIER", "lode"),
+        ("MESSAGE", "foot crashed again, 12 times this boot"),
+        ("MESSAGE_ID", ferrix_lode_core::tombstone::MESSAGE_ID_REPEAT),
+        ("TOMBSTONE_SIGNATURE", "/bin/foot foot+0x12ab SIGSEGV"),
+        ("TOMBSTONE_REPEATS", "12"),
+        ("TOMBSTONE_FIRST", of.as_str()),
+        ("TOMBSTONE_LAST", of.as_str()),
+    ];
+    let records: Vec<&[(&str, &str)]> = vec![&line, &line, &crash, &capture, &tombstone, &storm];
+    let path = dir.join("tombstones.jsonl");
+    std::fs::write(&path, jsonl(&records)).expect("written");
+    let read = crate::json::read(&std::fs::read_to_string(&path).expect("read"));
+    let mut app = App::new(Log::new(read.records), Origin::File(path), "t".to_owned());
+    // Grouped by its signature's place, the storm's count shown.
+    app.act(&Action::Crashes);
+    let (groups, _) = app.crash_groups();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].address, "foot+0x12ab");
+    assert_eq!(groups[0].repeats, 12, "the storm counts more than kept");
+    // From the tombstone's log line to its crash, and back.
+    assert_eq!(crate::crashes::linked(&app.log, 4).map(|l| l.0), Some(2));
+    assert_eq!(crate::crashes::linked(&app.log, 5).map(|l| l.0), Some(2));
+    assert_eq!(crate::crashes::tombstone_of(&app.log, 2), Some(4));
+    assert_eq!(crate::crashes::tail_of(&app.log, 4), Some((0, 1)));
+    app.act(&Action::ShowCrash(2));
+    assert_eq!(app.crash_shown().map(|c| c.index), Some(2));
+    let mut view = view_of(app, (1440, 1000));
+    assert!(text_at(&mut view, "12×").is_some());
+    assert!(text_at(&mut view, "Tombstone").is_some());
+    assert!(text_at(&mut view, "Last lines").is_some());
+    // The screenshot, read from the pack now the crash is shown.
+    assert!(text_at(&mut view, "No screenshot was kept of it.").is_none());
+    assert!(text_at(&mut view, "Its screenshot could not be read.").is_none());
+    let frame = view.frame((1440, 1000), 1.0).expect("a frame");
+    let red = (0..frame.width())
+        .flat_map(|x| (0..frame.height()).map(move |y| (x, y)))
+        .filter(|&(x, y)| {
+            let p = frame.pixel(x, y).expect("in it");
+            p.red() == 255 && p.green() == 0 && p.blue() == 0
+        })
+        .count();
+    assert!(red > 1000, "the blob's picture is drawn: {red} red pixels");
+    // The tombstone in Logs, then its crash again from the pane's link.
+    view.app.borrow_mut().act(&Action::CrashTombstone);
+    view.show();
+    view.ui.update();
+    assert_eq!(view.app.borrow().selected, Some(4));
+    assert!(text_at(&mut view, "Its crash on the Crashes page ›").is_some());
+    let _ = click(&mut view, "Its crash on the Crashes page ›");
+    let _ = view.step();
+    assert_eq!(view.app.borrow().page, Page::Crashes);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_screenshot_lode_could_not_keep_is_said_and_an_old_stores_file_still_read() {
+    let dropped = vec![
+        ("PRIORITY", "6"),
+        ("SYSLOG_IDENTIFIER", "lode"),
+        ("MESSAGE", "screenshot of the screen at record 1"),
+        ("CAPTURE_OF", "1"),
+        ("BLOB_DROPPED", "the blob queue was full"),
+    ];
+    let records: Vec<&[(&str, &str)]> = vec![&dropped];
+    let read = crate::json::read(&jsonl(&records));
+    let log = Log::new(read.records);
+    assert_eq!(
+        crate::crashes::screenshot_of(&log, 1, &[]),
+        crate::crashes::Screenshot::Dropped("the blob queue was full".to_owned())
+    );
+    assert_eq!(
+        crate::crashes::screenshot_of(&log, 2, &[]),
+        crate::crashes::Screenshot::None
+    );
+}

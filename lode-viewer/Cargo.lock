@@ -159,8 +159,13 @@ version = "0.1.0"
 name = "ferrix-lode-core"
 version = "0.1.0"
 dependencies = [
+ "ferrix-slots",
  "ruzstd",
 ]
+
+[[package]]
+name = "ferrix-slots"
+version = "0.1.0"
 
 [[package]]
 name = "flate2"
@@ -213,6 +218,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 name = "lode-viewer"
 version = "0.1.0"
 dependencies = [
+ "compositor-image",
  "compositor-text",
  "compositor-toolkit",
  "ferrix-lode-capture",

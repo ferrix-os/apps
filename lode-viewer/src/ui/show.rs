@@ -662,6 +662,12 @@ fn pane(view: &mut View, app: &App) {
     };
     page.pane_level.set(ui, i32::from(entry.row.level));
     page.pane_crash.set(ui, entry.row.kind == Kind::Crash);
+    // Both ways between a crash and its tombstone: the link the pane offers.
+    let link = app
+        .selected
+        .and_then(|index| crate::crashes::linked(&app.log, index))
+        .map_or("", |(_, words)| words);
+    page.pane_link.set(ui, s(link));
     page.pane_title
         .set(ui, s(format!("Record {}", group(entry.record.seqnum))));
     let face = paint::mono(13.0, 400);
@@ -907,6 +913,14 @@ pub(super) fn logs_action(app: &App, signal: LogsPageSignal) -> Vec<Action> {
         LogsPageSignal::ToggleRawNames => Action::RawNames,
         LogsPageSignal::CopyCursor => {
             return app.selected.map(Action::CopyCursor).into_iter().collect();
+        }
+        LogsPageSignal::PaneLinkPressed => {
+            return app
+                .selected
+                .and_then(|index| crate::crashes::linked(&app.log, index))
+                .map(|(at, _)| Action::ShowCrash(at))
+                .into_iter()
+                .collect();
         }
         _ => return Vec::new(),
     };

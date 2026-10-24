@@ -141,6 +141,8 @@ export component LogsPage : Item {
     property bool paneOpen
     property int paneLevel
     property bool paneCrash
+    // Where the record links to: its crash, or its tombstone's page.
+    property string paneLink
     property string paneTitle
     property list<string> paneMessage
     property list<string> paneNote
@@ -178,6 +180,7 @@ export component LogsPage : Item {
     signal copyCursor()
     signal copyField(int field)
     signal toggleRawNames()
+    signal paneLinkPressed()
 
     function levelInk(level: int): color {
         return level <= 3 ? Theme.redInk : level == 4 ? Theme.amberInk : level == 5 ? Theme.accent : level == 8 ? Theme.ink4 : Theme.ink2
@@ -666,6 +669,24 @@ export component LogsPage : Item {
         Rectangle { width: 1; height: pane.height; color: Theme.line }
         Badge { x: 26; y: 31; level: page.paneLevel; crash: page.paneCrash }
         Text { x: 52; y: 28; height: 22; text: page.paneTitle; font: Theme.sans(15, 600); color: Theme.ink }
+        Item {
+            visible: page.paneLink != ""
+            x: 52; y: 48
+            width: linkText.implicitWidth + 4
+            height: 16
+            Text {
+                id: linkText
+                height: 16
+                text: page.paneLink + " ›"
+                font: Theme.sans(11.5, 500)
+                color: Theme.accent
+            }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: page.paneLinkPressed()
+            }
+        }
         Item {
             x: 392 - 46; y: 24; width: 30; height: 30
             Text { x: 9; height: 30; text: "×"; font: Theme.sans(18); color: Theme.ink3 }
