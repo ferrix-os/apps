@@ -67,6 +67,7 @@ pub fn run(mut app: App) -> i32 {
         min_size: (900, 560),
         resize_edges: true,
         clipboard: true,
+        ..WindowOptions::default()
     };
     let mut window = match Window::open(view.shelf.common(), options) {
         Ok(window) => window,
