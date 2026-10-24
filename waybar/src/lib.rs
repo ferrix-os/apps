@@ -15,5 +15,6 @@ pub mod options;
 pub mod paint;
 pub mod probe;
 pub mod render;
+pub mod toplevels;
 pub mod tree;
 pub mod view;

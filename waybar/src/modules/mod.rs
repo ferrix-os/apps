@@ -18,6 +18,7 @@ pub mod network;
 pub mod pulse;
 pub mod pulseaudio;
 pub mod system;
+pub mod taskbar;
 pub mod tray;
 
 use std::time::Duration;
@@ -70,6 +71,9 @@ pub trait Host {
     /// which is what `signal: N` counts from and what `pkill -RTMIN+N`
     /// from the same system means.
     fn sigrtmin(&self) -> i32;
+    /// Ask the compositor to do `request` to the window whose handle is
+    /// `id` (`zwlr_foreign_toplevel_handle_v1`).
+    fn toplevel(&mut self, id: u32, request: crate::toplevels::Request);
 }
 
 /// A mouse button as GDK numbers them: 1 left, 2 middle, 3 right, 8 back,
@@ -472,6 +476,23 @@ pub trait Module {
     fn clickable(&mut self) -> bool {
         self.common().clickable()
     }
+    /// The compositor's windows changed (`wlr/taskbar`). Answers whether
+    /// the view changed.
+    fn toplevels(&mut self, _host: &mut dyn Host, _windows: &[crate::toplevels::Toplevel]) -> bool {
+        false
+    }
+    /// A button on the module's button `part` of its
+    /// [`ModuleView::buttons`]: a taskbar's window.
+    fn click_part(
+        &mut self,
+        host: &mut dyn Host,
+        button: Button,
+        press: Press,
+        part: usize,
+    ) -> bool {
+        let _ = part;
+        self.click(host, button, press, (0.5, 0.5))
+    }
 }
 
 /// Make the module `name` from its config block, as waybar's factory
@@ -499,6 +520,7 @@ pub fn make(
             "hyprland/window" => Box::new(hyprland::Window::new(name, config, output)),
             "pulseaudio" => Box::new(pulseaudio::Pulseaudio::new(name, config, host)),
             "tray" => Box::new(tray::Tray::new(name, config, host)),
+            "wlr/taskbar" => Box::new(taskbar::Taskbar::new(name, config, host)),
             _ => return Err(format!("Unknown module: {name}")),
         }
     };
@@ -557,6 +579,8 @@ pub mod fake {
         pub interfaces: BTreeMap<String, crate::modules::network::Interface>,
         /// What was said.
         pub diag: Diagnostics,
+        /// Requests about windows, by handle.
+        pub toplevels: Vec<(u32, crate::toplevels::Request)>,
         next: u64,
     }
 
@@ -608,6 +632,9 @@ pub mod fake {
         }
         fn interface(&mut self, name: &str) -> Option<crate::modules::network::Interface> {
             self.interfaces.get(name).copied()
+        }
+        fn toplevel(&mut self, id: u32, request: crate::toplevels::Request) {
+            self.toplevels.push((id, request));
         }
     }
 }

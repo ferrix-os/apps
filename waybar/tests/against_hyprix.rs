@@ -185,6 +185,53 @@ fn hand(socket: PathBuf, moves: Vec<(u64, Hand)>) -> std::thread::JoinHandle<()>
     })
 }
 
+/// A window titled `title`, filled with `colour`, opened once the one
+/// before it -- `after` -- is drawn, so that the tiling's order is the
+/// test's; it stays until the compositor goes. `drawn` is made once it has
+/// drawn.
+fn window(
+    socket: PathBuf,
+    title: &'static str,
+    colour: (u8, u8, u8),
+    after: Option<PathBuf>,
+    drawn: PathBuf,
+) -> std::thread::JoinHandle<()> {
+    use compositor_toolkit::{Event, ToplevelOptions};
+    std::thread::spawn(move || {
+        for _ in 0..800 {
+            if socket.exists() && after.as_ref().is_none_or(|path| path.exists()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let Ok(mut client) = Client::connect_to(&socket) else {
+            return;
+        };
+        let Ok(surface) = client.toplevel(&ToplevelOptions {
+            title: title.to_owned(),
+            app_id: "rocks.magical.test".to_owned(),
+            size: (200, 150),
+            ..ToplevelOptions::default()
+        }) else {
+            return;
+        };
+        let _ = client.flush();
+        let fill = tiny_skia::Color::from_rgba8(colour.0, colour.1, colour.2, 255);
+        while let Ok(events) = client.dispatch(Some(Duration::from_millis(50))) {
+            let configured = events.iter().any(
+                |event| matches!(event, Event::Configure { surface: which, .. } if *which == surface),
+            );
+            if configured
+                && client
+                    .draw(surface, |pixmap| pixmap.fill(fill))
+                    .is_ok_and(|drew| drew)
+            {
+                let _ = std::fs::write(&drawn, b"");
+            }
+        }
+    })
+}
+
 /// Run the compositor for `millis` with a bar on `config` and `style`,
 /// sending each of `requests` to its control socket at its time; give back
 /// the bar's log and the last frame.
@@ -194,6 +241,18 @@ fn with_bar(
     config: &str,
     style: &str,
     moves: &[(u64, Hand)],
+) -> (Vec<String>, Vec<u8>) {
+    with_bar_and_windows(name, millis, config, style, moves, &[])
+}
+
+/// [`with_bar`], with windows of these titles and colours opened in turn.
+fn with_bar_and_windows(
+    name: &str,
+    millis: u64,
+    config: &str,
+    style: &str,
+    moves: &[(u64, Hand)],
+    windows: &[(&'static str, (u8, u8, u8))],
 ) -> (Vec<String>, Vec<u8>) {
     let work = workspace(name);
     let socket = work.join("wayland");
@@ -217,6 +276,16 @@ fn with_bar(
         ..Options::default()
     };
     let hands = hand(socket.clone(), moves.to_vec());
+    let mut after = None;
+    let opened: Vec<_> = windows
+        .iter()
+        .map(|&(title, colour)| {
+            let drawn = work.join(format!("drawn-{title}"));
+            let made = window(socket.clone(), title, colour, after.take(), drawn.clone());
+            after = Some(drawn);
+            made
+        })
+        .collect();
     let root = json::parse(config).expect("the test's config is JSON");
     let mut diag = Diagnostics::default();
     let sheet = Stylesheet::parse(style, &work.join("style.css"), &|_| None, &mut diag);
@@ -255,6 +324,9 @@ fn with_bar(
     });
     let ran = hyprix::run(&options);
     let _ = hands.join();
+    for opened in opened {
+        let _ = opened.join();
+    }
     let lines = bar.join().expect("the bar finished").expect("the bar ran");
     let _ = ran.expect("the compositor ran");
     let frame = last_frame(&frames);
@@ -386,5 +458,73 @@ window#waybar { background: #0000c8; }
         pixel(&frame, 2, 5),
         (200, 200, 200),
         "the script's class restyled the chip; {said}"
+    );
+}
+
+/// The bar of the taskbar tests: `wlr/taskbar` alone, its buttons red,
+/// the active window's cyan and a minimized one's grey.
+const TASKBAR: &str = r#"{
+    "layer": "top", "height": 40,
+    "modules-left": ["wlr/taskbar"],
+    "wlr/taskbar": {"format": "{title}", "tooltip-format": "{title}"}
+}"#;
+const TASKBAR_STYLE: &str = r"
+* { font-size: 15px; min-height: 0; }
+window#waybar { background: #0000c8; color: #ffffff; }
+#taskbar button { background-color: #c80000; padding: 0 8px; margin: 4px 1px; color: #00c800; }
+#taskbar button.active { background-color: #00c8c8; }
+#taskbar button.minimized { background-color: #c8c8c8; }
+";
+
+/// Two windows, `one` then `two`, and `clicks` clicks on `one`'s button,
+/// a second apart, from 2 s in; the bar's log and the last frame.
+fn taskbar_clicked(name: &str, clicks: u64) -> (String, Vec<u8>) {
+    let mut moves = vec![(1500, Hand::To(20, 20))];
+    moves.extend((0..clicks).map(|click| (2000 + click * 1000, Hand::Click)));
+    let (lines, frame) = with_bar_and_windows(
+        name,
+        3000 + clicks * 1000,
+        TASKBAR,
+        TASKBAR_STYLE,
+        &moves,
+        &[("one", ONE), ("two", TWO)],
+    );
+    (lines.join("\n"), frame)
+}
+
+/// The two windows' colours.
+const ONE: (u8, u8, u8) = (255, 128, 0);
+const TWO: (u8, u8, u8) = (128, 0, 255);
+
+/// `wlr/taskbar` over hyprix's `zwlr_foreign_toplevel_management_v1`: a
+/// button a window, styled by its state, and a click doing what waybar's
+/// `minimize-raise` does (`docs/DESKTOP.md` §1.2). Two clicks on `one`'s
+/// button: the first activates it, the second -- on the active window --
+/// minimizes it, so `two` has the whole screen and `one`'s button is the
+/// minimized one's colour.
+#[test]
+fn a_taskbar_click_on_the_active_window_minimizes_it() {
+    let (said, frame) = taskbar_clicked("taskbar-min", 2);
+    assert_eq!(
+        pixel(&frame, 3, 6),
+        (200, 200, 200),
+        "one minimized; {said}"
+    );
+    assert_eq!(pixel(&frame, 55, 6), (0, 200, 200), "two active; {said}");
+    assert_eq!(pixel(&frame, 150, 250), TWO, "two on the left; {said}");
+    assert_eq!(pixel(&frame, 500, 250), TWO, "and on the right; {said}");
+}
+
+/// And a third click -- on the minimized window -- brings it back,
+/// focused, beside `two`.
+#[test]
+fn a_taskbar_click_on_a_minimized_window_brings_it_back() {
+    let (said, frame) = taskbar_clicked("taskbar-back", 3);
+    assert_eq!(pixel(&frame, 3, 6), (0, 200, 200), "one active; {said}");
+    assert_eq!(pixel(&frame, 55, 6), (200, 0, 0), "two not; {said}");
+    let sides = [pixel(&frame, 150, 250), pixel(&frame, 500, 250)];
+    assert!(
+        sides.contains(&ONE) && sides.contains(&TWO),
+        "both windows shown: {sides:?}; {said}"
     );
 }

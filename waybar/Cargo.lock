@@ -275,6 +275,10 @@ name = "ferrix-linux-abi"
 version = "0.1.0"
 
 [[package]]
+name = "ferrix-lode-capture"
+version = "0.1.0"
+
+[[package]]
 name = "ferrix-svc-proto"
 version = "0.1.0"
 
@@ -399,11 +403,13 @@ dependencies = [
  "compositor-seat",
  "compositor-server",
  "compositor-socket",
+ "compositor-text",
  "compositor-virgl",
  "compositor-wire",
  "compositor-xkb",
  "ferrix-fbtext",
  "ferrix-linux-abi",
+ "ferrix-lode-capture",
  "ferrix-svc-proto",
  "libc",
 ]

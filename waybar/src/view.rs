@@ -46,6 +46,21 @@ pub struct ModuleView {
     pub ellipsize: bool,
     /// The tooltip's markup, `None` or empty for none.
     pub tooltip: Option<String>,
+    /// Buttons inside a [`Shape::Box`]: a taskbar's windows. Each is a
+    /// `button` node holding its label, and a click on one is the
+    /// module's `click_part` with its index.
+    pub buttons: Vec<ButtonView>,
+}
+
+/// One button inside a module.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ButtonView {
+    /// The label's Pango markup.
+    pub markup: String,
+    /// Classes on the `button` node.
+    pub classes: Vec<String>,
+    /// Its own tooltip, over the module's.
+    pub tooltip: Option<String>,
 }
 
 impl ModuleView {
@@ -63,6 +78,7 @@ impl ModuleView {
             max_chars: None,
             ellipsize: false,
             tooltip: None,
+            buttons: Vec::new(),
         }
     }
 }
@@ -91,6 +107,9 @@ pub struct Built {
     pub window: usize,
     /// For each module, its event box and the label.
     pub modules: Vec<Option<(usize, usize)>>,
+    /// For each module, its buttons' nodes, in [`ModuleView::buttons`]'
+    /// order.
+    pub buttons: Vec<Vec<usize>>,
 }
 
 /// Build the tree for `bar` from `modules`.
@@ -115,6 +134,7 @@ pub fn build(bar: &BarView, modules: &[ModuleView]) -> (Tree, Built) {
     let mut built = Built {
         window,
         modules: vec![None; modules.len()],
+        buttons: vec![Vec::new(); modules.len()],
     };
     let names = ["modules-left", "modules-center", "modules-right"];
     let mut children_of_main = 0usize;
@@ -182,7 +202,11 @@ pub fn build(bar: &BarView, modules: &[ModuleView]) -> (Tree, Built) {
                     label.classes.clone_from(&module.label_classes);
                     label.visible = module.label_visible && module.shape == Shape::IconLabel;
                     label.module = Some(index);
-                    tree.add(Some(named), label)
+                    let label = tree.add(Some(named), label);
+                    if let Some(list) = built.buttons.get_mut(index) {
+                        *list = add_buttons(&mut tree, named, module, index);
+                    }
+                    label
                 }
             };
             if let Some(slot) = built.modules.get_mut(index) {
@@ -198,6 +222,38 @@ pub fn build(bar: &BarView, modules: &[ModuleView]) -> (Tree, Built) {
         };
     }
     (tree, built)
+}
+
+/// A module's buttons under its named box, as GTK's: `button > label`.
+/// Gives the buttons' nodes.
+fn add_buttons(tree: &mut Tree, named: usize, module: &ModuleView, index: usize) -> Vec<usize> {
+    let mut nodes = Vec::with_capacity(module.buttons.len());
+    for button in &module.buttons {
+        let mut node = NodeData::new(
+            "button",
+            Kind::Box {
+                spacing: 0.0,
+                center: None,
+                end: 0,
+            },
+        );
+        node.classes.clone_from(&button.classes);
+        node.module = Some(index);
+        let node = tree.add(Some(named), node);
+        let mut text = NodeData::new(
+            "label",
+            Kind::Label {
+                markup: button.markup.clone(),
+                max_chars: module.max_chars,
+                ellipsize: module.ellipsize || module.max_chars.is_some(),
+                wrap: false,
+            },
+        );
+        text.module = Some(index);
+        let _ = tree.add(Some(node), text);
+        nodes.push(node);
+    }
+    nodes
 }
 
 /// A tooltip's tree: `tooltip.background > box > label`, the label

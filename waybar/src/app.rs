@@ -88,6 +88,9 @@ struct BarState {
     built: Built,
     placement: Placement,
     hover: Option<usize>,
+    /// The button of the hovered module under the pointer: a taskbar's
+    /// window.
+    hover_part: Option<usize>,
     pointer: (f64, f64),
     tip: Option<Tip>,
     tip_timer: Option<TimerId>,
@@ -137,6 +140,8 @@ pub struct App<E: Engine> {
     /// Outputs bars have been made for: the toolkit reports the outputs
     /// there are at connection as added, too, and a bar is made once.
     seen: BTreeSet<OutputId>,
+    /// The compositor's windows, when a bar has a `wlr/taskbar`.
+    toplevels: Option<crate::toplevels::Toplevels>,
 }
 
 impl<E: Engine> std::fmt::Debug for App<E> {
@@ -154,6 +159,7 @@ pub fn sigrtmin() -> i32 {
 /// What the loop gives a module while it handles one event.
 struct Ctx<'a> {
     client: &'a mut Client,
+    toplevels: Option<&'a crate::toplevels::Toplevels>,
     owners: &'a mut Owners,
     bar: usize,
     module: usize,
@@ -270,6 +276,12 @@ impl Host for Ctx<'_> {
 
     fn sigrtmin(&self) -> i32 {
         sigrtmin()
+    }
+
+    fn toplevel(&mut self, id: u32, request: crate::toplevels::Request) {
+        if let Some(toplevels) = self.toplevels {
+            toplevels.request(self.client, id, request);
+        }
     }
 }
 
@@ -395,8 +407,18 @@ impl<E: Engine> App<E> {
             last_press: None,
             signals: Vec::new(),
             seen: BTreeSet::new(),
+            toplevels: None,
         };
         app.find_hyprland(hyprland);
+        if uses_module(&app.root, "wlr/taskbar") {
+            app.toplevels = crate::toplevels::Toplevels::bind(&mut app.client);
+            if app.toplevels.is_none() {
+                app.diag.warn(
+                    "wlr/taskbar: the compositor does not offer zwlr_foreign_toplevel_manager_v1"
+                        .to_owned(),
+                );
+            }
+        }
         let outputs: Vec<OutputId> = app.client.outputs().iter().filter_map(|o| o.id).collect();
         for output in outputs {
             app.add_output(output);
@@ -564,6 +586,7 @@ impl<E: Engine> App<E> {
             built: Built::default(),
             placement: Placement::default(),
             hover: None,
+            hover_part: None,
             pointer: (0.0, 0.0),
             tip: None,
             tip_timer: None,
@@ -595,8 +618,13 @@ impl<E: Engine> App<E> {
         let module_index = bar.modules.len();
         let output = bar.output_name.clone();
         let hyprland = self.hyprland.as_ref().map(|h| h.dir.clone());
+        let toplevels_now = self
+            .toplevels
+            .as_ref()
+            .map(crate::toplevels::Toplevels::list);
         let mut ctx = Ctx {
             client: &mut self.client,
+            toplevels: self.toplevels.as_ref(),
             owners: &mut self.owners,
             bar: index,
             module: module_index,
@@ -605,9 +633,13 @@ impl<E: Engine> App<E> {
             hyprland: hyprland.as_deref(),
             start: self.start,
         };
+        let windows = toplevels_now.unwrap_or_default();
         match modules::make(name, config.get(name), &output, &mut ctx) {
             Ok(mut module) => {
                 module.start(&mut ctx);
+                // A bar made after the windows were told of -- a monitor
+                // plugged in later -- is given the list at once.
+                let _ = module.toplevels(&mut ctx, &windows);
                 if let Some(bar) = self.bars.get_mut(index) {
                     bar.modules.push(module);
                     bar.names.push(name.to_owned());
@@ -741,6 +773,16 @@ impl<E: Engine> App<E> {
         {
             node.hover = true;
         }
+        if let Some(hovered) = bar.hover
+            && let Some(part) = bar.hover_part
+            && let Some(node) = built
+                .buttons
+                .get(hovered)
+                .and_then(|list| list.get(part))
+                .and_then(|node| tree.nodes.get_mut(*node))
+        {
+            node.hover = true;
+        }
         tree.style(&self.sheet);
         bar.tree = tree;
         bar.built = built;
@@ -793,6 +835,19 @@ impl<E: Engine> App<E> {
             })
     }
 
+    /// Which of a module's buttons is under a point of a bar.
+    fn part(&self, index: usize, module: usize, x: f64, y: f64) -> Option<usize> {
+        let bar = self.bars.get(index)?;
+        #[expect(clippy::cast_possible_truncation, reason = "a point on a bar")]
+        let (x, y) = (x as f32, y as f32);
+        bar.built.buttons.get(module)?.iter().position(|node| {
+            bar.placement
+                .nodes
+                .get(*node)
+                .is_some_and(|placed| placed.allocation.contains(x, y))
+        })
+    }
+
     fn bar_of(&self, surface: SurfaceId) -> Option<usize> {
         self.bars
             .iter()
@@ -811,6 +866,7 @@ impl<E: Engine> App<E> {
         let target = bar.modules.get_mut(module)?;
         let mut ctx = Ctx {
             client: &mut self.client,
+            toplevels: self.toplevels.as_ref(),
             owners: &mut self.owners,
             bar: index,
             module,
@@ -838,7 +894,14 @@ impl<E: Engine> App<E> {
 
     fn tooltip_markup(&self, index: usize, module: usize) -> Option<String> {
         let bar = self.bars.get(index)?;
-        let markup = bar.modules.get(module)?.view().tooltip.clone()?;
+        let view = bar.modules.get(module)?.view();
+        // A button's own tooltip, over the module's: a taskbar's window.
+        let own = bar
+            .hover_part
+            .filter(|_| bar.hover == Some(module))
+            .and_then(|part| view.buttons.get(part))
+            .and_then(|button| button.tooltip.clone());
+        let markup = own.or_else(|| view.tooltip.clone())?;
         (!markup.is_empty()).then_some(markup)
     }
 
@@ -965,14 +1028,16 @@ impl<E: Engine> App<E> {
 
     fn pointer_at(&mut self, index: usize, x: f64, y: f64) {
         let hit = self.hit(index, x, y);
+        let part = hit.and_then(|module| self.part(index, module, x, y));
         let Some(bar) = self.bars.get_mut(index) else {
             return;
         };
         bar.pointer = (x, y);
-        if hit == bar.hover {
+        if hit == bar.hover && part == bar.hover_part {
             return;
         }
         bar.hover = hit;
+        bar.hover_part = part;
         bar.dirty = true;
         let browsing = bar.tip.is_some();
         self.close_tip(index);
@@ -1016,6 +1081,7 @@ impl<E: Engine> App<E> {
                     && let Some(bar) = self.bars.get_mut(index)
                 {
                     bar.hover = None;
+                    bar.hover_part = None;
                     bar.dirty = true;
                     self.close_tip(index);
                 }
@@ -1077,6 +1143,7 @@ impl<E: Engine> App<E> {
             return;
         };
         let at = self.fraction(index, module, x, y);
+        let part = self.part(index, module, x, y);
         self.close_tip(index);
         let mut presses = Vec::new();
         if pressed {
@@ -1098,8 +1165,9 @@ impl<E: Engine> App<E> {
             presses.push(Press::Release);
         }
         for press in presses {
-            let _ = self.with_module(index, module, |target, ctx| {
-                target.click(ctx, button, press, at)
+            let _ = self.with_module(index, module, |target, ctx| match part {
+                Some(part) => target.click_part(ctx, button, press, part),
+                None => target.click(ctx, button, press, at),
             });
         }
     }
@@ -1358,6 +1426,26 @@ impl<E: Engine> App<E> {
                     });
                 }
             }
+            Event::Object {
+                object,
+                opcode,
+                args,
+                ..
+            } => {
+                let changed = self.toplevels.as_mut().is_some_and(|toplevels| {
+                    toplevels.event(&mut self.client, object, opcode, &args)
+                });
+                if changed {
+                    let windows = self
+                        .toplevels
+                        .as_ref()
+                        .map(crate::toplevels::Toplevels::list)
+                        .unwrap_or_default();
+                    self.every_module(|target, ctx| {
+                        let _ = target.toplevels(ctx, &windows);
+                    });
+                }
+            }
             Event::Signal(signal) => self.signal(signal),
             Event::Readable(watch) => {
                 let hyprland = self
@@ -1403,6 +1491,23 @@ impl<E: Engine> App<E> {
         }
         self.settle();
         Ok(())
+    }
+}
+
+/// Whether any bar of `root` names the module `wanted`, `#id` or not.
+fn uses_module(root: &Value, wanted: &str) -> bool {
+    let names = |bar: &Value| {
+        ["modules-left", "modules-center", "modules-right"]
+            .iter()
+            .flat_map(|list| bar.get(list).items())
+            .any(|name| {
+                name.as_str()
+                    .is_some_and(|n| n.split_once('#').map_or(n, |(r, _)| r) == wanted)
+            })
+    };
+    match root {
+        Value::Array(bars) => bars.iter().any(names),
+        bar => names(bar),
     }
 }
 

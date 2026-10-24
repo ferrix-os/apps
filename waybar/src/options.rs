@@ -200,6 +200,26 @@ fn own(kind: &str) -> Option<&'static [(&'static str, Support)]> {
             ("ignore-list", Not("no StatusNotifierItem without D-Bus")),
             ("icons", Not("no StatusNotifierItem without D-Bus")),
         ],
+        "wlr/taskbar" => &[
+            (
+                "all-outputs",
+                Not("the compositor says no window's output: every bar lists all"),
+            ),
+            ("ignore-list", Done),
+            ("sort-by-app-id", Done),
+            ("active-first", Done),
+            ("markup", Done),
+            ("on-click", Partly("minimize-raise when none is named")),
+            ("on-click-middle", Done),
+            ("on-click-right", Done),
+            ("icon-size", Not("application icons are not carried out")),
+            ("icon-theme", Not("application icons are not carried out")),
+            (
+                "app_ids-mapping",
+                Not("application icons are not carried out"),
+            ),
+            ("rewrite", Not("regex replacements are not carried out")),
+        ],
         "clock" => &[
             ("timezone", Not("one time zone, the local one")),
             ("timezones", Not("one time zone, the local one")),
@@ -250,6 +270,7 @@ pub fn module(kind: &str) -> Option<Support> {
              and with no server the chip shows waybar's starting values",
         ),
         "clock" => Partly("the C locale, one time zone, no calendar"),
+        "wlr/taskbar" => Partly("{title} by default, and no icons: no icon theme is read"),
         "custom" | "hyprland/window" | "cpu" | "memory" | "network" => Done,
         _ => return None,
     };
@@ -292,6 +313,8 @@ mod tests {
         assert_eq!(option("cpu", "format-critical"), Support::Done);
         assert_eq!(option("cpu", "frobnicate"), Support::Unknown);
         assert!(matches!(module("tray"), Some(Support::Not(_))));
+        assert_eq!(option("wlr/taskbar", "ignore-list"), Support::Done);
+        assert!(matches!(module("wlr/taskbar"), Some(Support::Partly(_))));
         assert_eq!(module("sway/workspaces"), None);
     }
 }

@@ -171,6 +171,9 @@ impl Host for Now<'_> {
     fn sigrtmin(&self) -> i32 {
         crate::app::sigrtmin()
     }
+
+    /// A picture drawn on the host has no compositor to ask.
+    fn toplevel(&mut self, _id: u32, _request: crate::toplevels::Request) {}
 }
 
 /// `RRGGBB` as a colour.
