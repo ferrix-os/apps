@@ -103,6 +103,15 @@ fn pixel(frame: &[u8], x: u32, y: u32) -> (u8, u8, u8) {
     (frame[at], frame[at + 1], frame[at + 2])
 }
 
+/// How long the pointer waits for the bar to be configured at most.
+const READY_PATIENCE: Duration = Duration::from_secs(10);
+
+/// What the compositor's deadline gives on top of a test's `millis`, for a
+/// bar configured late: the moves are counted from the bar, the deadline
+/// from the compositor, and the last frame shows the state the last move
+/// left either way.
+const READY_MARGIN: u64 = 2000;
+
 /// What a test's virtual pointer does, and when.
 #[derive(Clone, Copy, Debug)]
 enum Hand {
@@ -113,8 +122,11 @@ enum Hand {
 }
 
 /// A second client with a `zwlr_virtual_pointer_v1`, doing `moves` at
-/// their times.
-fn hand(socket: PathBuf, moves: Vec<(u64, Hand)>) -> std::thread::JoinHandle<()> {
+/// their times, counted from when the bar is configured (`ready` exists):
+/// counted from the compositor's start, a bar slow to map on a loaded
+/// machine met the pointer's move before it had a surface to enter, and
+/// the hover never came (CI run 40098587126).
+fn hand(socket: PathBuf, ready: PathBuf, moves: Vec<(u64, Hand)>) -> std::thread::JoinHandle<()> {
     use compositor_toolkit::Value;
     use compositor_toolkit::protocol::virtual_pointer::{
         ZWLR_VIRTUAL_POINTER_MANAGER_V1, ZWLR_VIRTUAL_POINTER_V1, zwlr_virtual_pointer_manager_v1,
@@ -143,6 +155,10 @@ fn hand(socket: PathBuf, moves: Vec<(u64, Hand)>) -> std::thread::JoinHandle<()>
             ],
         );
         let _ = client.flush();
+        let wait = Instant::now() + READY_PATIENCE;
+        while !ready.exists() && Instant::now() < wait {
+            let _ = client.dispatch(Some(Duration::from_millis(20)));
+        }
         let began = Instant::now();
         for (at, what) in moves {
             let due = began + Duration::from_millis(at);
@@ -269,13 +285,14 @@ fn with_bar_and_windows(
         display: socket.to_string_lossy().into_owned(),
         headless: Some((WIDTH, HEIGHT)),
         dump: Some(frames.clone()),
-        deadline: Some(millis),
+        deadline: Some(millis + READY_MARGIN),
         config: Some(conf),
         renderer: Renderer::Software,
         instance: Some(instance.to_string_lossy().into_owned()),
         ..Options::default()
     };
-    let hands = hand(socket.clone(), moves.to_vec());
+    let ready = work.join("bar-ready");
+    let hands = hand(socket.clone(), ready.clone(), moves.to_vec());
     let mut after = None;
     let opened: Vec<_> = windows
         .iter()
@@ -295,7 +312,7 @@ fn with_bar_and_windows(
         diag.lines
     );
     let path = socket.clone();
-    let patience = Duration::from_millis(millis + 1000);
+    let patience = Duration::from_millis(millis + READY_MARGIN + 1000);
     let bar = std::thread::spawn(move || {
         for _ in 0..400 {
             if path.exists() {
@@ -318,7 +335,11 @@ fn with_bar_and_windows(
             if app.turn(Some(Duration::from_millis(50))).is_err() {
                 break;
             }
-            lines.extend(app.take_lines());
+            let new = app.take_lines();
+            if new.iter().any(|line| line.contains("Bar configured")) {
+                let _ = std::fs::write(&ready, b"");
+            }
+            lines.extend(new);
         }
         Ok::<_, String>(lines)
     });
