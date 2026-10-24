@@ -24,7 +24,21 @@ pub(super) struct Shown {
     pub scrolls: (f32, f32, f32),
     /// What the table's lines were made from, to say when they changed.
     lines: Option<LinesKey>,
+    /// How many swim lanes the boot has, and what that was counted from
+    /// (the boot, its extent, how many records it held, the log itself by
+    /// where its records are, and its sources): counting walks
+    /// every record of the boot, which cost a scrolled frame 20 ms at
+    /// 300,000 records when it was done on each.
+    lanes: Option<(LanesKey, i32)>,
+    /// How many crashes the boot has, and the boot, the log (by where its
+    /// records are) and its record count it was counted at: finding them reads the whole log, 18 ms a frame
+    /// at 300,000 records when the sidebar's badge asked on each.
+    crashes: Option<((usize, usize, usize), usize)>,
 }
+
+/// What the swim lanes' count depends on: the boot, its extent, how many
+/// records it holds, where the log's records are, and how many sources.
+type LanesKey = (usize, (u64, u64), usize, usize, usize);
 
 /// What the table's lines depend on.
 #[derive(Debug, PartialEq)]
@@ -128,17 +142,31 @@ pub(super) fn show(view: &mut View, app: &App) {
     let theme = super::fx_controls::Theme::instance(ui);
     theme.dark.set(ui, app.mode == Mode::Dark);
     shell(view, app);
+    let key = (
+        app.boot,
+        app.extent(),
+        app.log.of_boot(app.boot).len(),
+        app.log.entries.as_ptr() as usize,
+        app.log.sources.len(),
+    );
+    let lanes = match view.shown.lanes {
+        Some((was, lanes)) if was == key => lanes,
+        _ => {
+            let counted = stats::lanes(
+                app.log.of_boot(app.boot),
+                &app.log.sources,
+                app.extent().0,
+                app.extent().1,
+                1,
+            )
+            .len()
+            .min(5);
+            let lanes = i32::try_from(counted).unwrap_or(5);
+            view.shown.lanes = Some((key, lanes));
+            lanes
+        }
+    };
     let ui = &mut view.ui;
-    let lanes = stats::lanes(
-        app.log.of_boot(app.boot),
-        &app.log.sources,
-        app.extent().0,
-        app.extent().1,
-        1,
-    )
-    .len()
-    .min(5);
-    let lanes = i32::try_from(lanes).unwrap_or(5);
     for (page, common) in [
         (Page::Overview, view.overview.base.common),
         (Page::Logs, view.logs.base.common),
@@ -194,7 +222,19 @@ fn shell(view: &mut View, app: &App) {
             app.log.offset_of(app.boot)
         )),
     );
-    let crashes = app.crashes();
+    let key = (
+        app.boot,
+        app.log.entries.as_ptr() as usize,
+        app.log.entries.len(),
+    );
+    let crashes = match view.shown.crashes {
+        Some((was, crashes)) if was == key => crashes,
+        _ => {
+            let crashes = app.crashes();
+            view.shown.crashes = Some((key, crashes));
+            crashes
+        }
+    };
     shell.nav.set(
         ui,
         vec![

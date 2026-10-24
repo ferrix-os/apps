@@ -38,8 +38,9 @@ compositor-text = { path = "../../system/linux/compositor/text" }
 # and the timer Live follows the store on.
 compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
 # tole, Ferrix's UI framework: the window's tree, from the markup under
-# `ui/`, drawn on the CPU with the desktop's own text.
-tole = { path = "../../system/linux/tole/tole", features = ["wayland"] }
+# `ui/`, drawn on the CPU with the desktop's own text, or by Vulkan when
+# TOLE_RENDERER asks (`gpu`).
+tole = { path = "../../system/linux/tole/tole", features = ["wayland", "gpu"] }
 
 [build-dependencies]
 # The markup, compiled into Rust when the viewer is built.
