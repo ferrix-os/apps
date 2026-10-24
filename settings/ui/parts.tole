@@ -458,3 +458,152 @@ component LayoutCards : Grid {
         }
     }
 }
+
+// The displays as boxes, each showing its wallpaper -- a picture, or its
+// colour -- with its name on a tag; the picked one ringed in the accent
+// when each has its own.
+component ScreensCard : Rectangle {
+    id: screens
+    property list<string> names
+    property list<string> pictures
+    property list<color> colours
+    property list<real> boxes
+    property int current
+    signal picked(int option)
+    height: 268
+    radius: 12
+    color: Look.inset
+    border.width: 1
+    border.color: Look.line
+    Repeater {
+        model: screens.names
+        Rectangle {
+            x: screens.boxes[index * 4]
+            y: screens.boxes[index * 4 + 1] + 14
+            width: screens.boxes[index * 4 + 2]
+            height: screens.boxes[index * 4 + 3]
+            radius: 6
+            color: screens.colours[index]
+            border.width: index == screens.current ? 2 : 1
+            border.color: index == screens.current ? Look.accent : Look.line2
+            clip: true
+            Image {
+                x: 1; y: 1
+                width: parent.width - 2
+                height: parent.height - 2
+                visible: screens.pictures[index] != ""
+                source: screens.pictures[index]
+                fillMode: Image.PreserveAspectCrop
+            }
+            Rectangle {
+                x: 8
+                y: parent.height - 28
+                width: tag.implicitWidth + 16
+                height: 20
+                radius: 5
+                color: "#0f1013"
+                Text {
+                    id: tag
+                    anchors.centerIn: parent
+                    text: modelData
+                    font: Look.sans(11, 500)
+                    color: "#f2f2f4"
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: screens.picked(index)
+            }
+        }
+    }
+}
+
+// The pictures to choose from, four across, each with its name, and a
+// card to choose a file of one's own.
+component PictureCards : Rectangle {
+    id: cards
+    property list<string> names
+    property list<string> paths
+    property int current
+    signal picked(int option)
+    signal browse()
+    height: grid.implicitHeight + 24
+    radius: 12
+    color: Look.card
+    border.width: 1
+    border.color: Look.line
+    Grid {
+        id: grid
+        x: 12; y: 12
+        columns: 4
+        spacing: 12
+        Repeater {
+            model: cards.names
+            Item {
+                width: (cards.width - 24 - 36) / 4
+                height: 120
+                Rectangle {
+                    width: parent.width
+                    height: 98
+                    radius: 8
+                    color: Look.inset
+                    border.width: index == cards.current ? 2 : 0
+                    border.color: Look.accent
+                    clip: true
+                    Image {
+                        x: index == cards.current ? 4 : 0
+                        y: index == cards.current ? 4 : 0
+                        width: parent.width - (index == cards.current ? 8 : 0)
+                        height: parent.height - (index == cards.current ? 8 : 0)
+                        source: cards.paths[index]
+                        fillMode: Image.PreserveAspectCrop
+                    }
+                }
+                Text {
+                    y: 102
+                    text: modelData
+                    font: Look.sans(13, 500)
+                    color: Look.text
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: cards.picked(index)
+                }
+            }
+        }
+        Item {
+            width: (cards.width - 24 - 36) / 4
+            height: 120
+            Rectangle {
+                width: parent.width
+                height: 98
+                radius: 8
+                color: browseArea.containsMouse ? Look.hover : "transparent"
+                border.width: 1
+                border.color: Look.track
+                border.dash: 4
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 6
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "+"; font: Look.sans(20, 400); color: Look.text }
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Browse"; font: Look.sans(13, 500); color: Look.text }
+                }
+            }
+            Text {
+                y: 102
+                text: "Your picture"
+                font: Look.sans(13)
+                color: Look.faint
+            }
+            MouseArea {
+                id: browseArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: cards.browse()
+            }
+        }
+    }
+}

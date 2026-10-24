@@ -225,6 +225,20 @@ pub fn apply(
             let list: Vec<String> = pairs.iter().map(|(k, v)| format!("{k} = {v}")).collect();
             format!("set {}", list.join(", "))
         }
+        Effect::Wall { set, reset } => {
+            for key in reset {
+                if let Err(why) = system.reset(key) {
+                    return format!("err: reset {key}: {why}");
+                }
+            }
+            for (key, value) in set {
+                if let Err(why) = system.set(key, value) {
+                    return format!("err: {key} = {value}: {why}");
+                }
+            }
+            let list: Vec<String> = set.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+            format!("set {}", list.join(", "))
+        }
         Effect::Monitor(line) => match system.monitor(line) {
             Ok(()) => {
                 state.monitors = system.monitors();
@@ -279,13 +293,21 @@ pub fn act(
         }
         Action::Pick(row, option) => state.pick(&row, option),
         Action::Slide(row, value) => state.slide(&row, value),
-        Action::Pressed(row) => state.press(&row),
+        Action::Pressed(row) => {
+            state.press_opens(&row);
+            state.press(&row)
+        }
+        Action::Browse => {
+            state.want_chooser = true;
+            None
+        }
         Action::Flip(row) => state.flip(&row),
         Action::Edited(row, text) => {
             state.edited(&row, &text);
             None
         }
         Action::Accepted(row) => state.accept(&row),
+        Action::Chosen(path) => state.wall_chosen(&path),
     };
     if let Some(effect) = effect {
         let said = apply(state, &effect, system, var);
@@ -383,6 +405,9 @@ pub fn run(options: &Options) -> i32 {
         view.show(&state);
         if moved && state.page == Page::Game {
             focus = !view.focus_field();
+        }
+        if std::mem::take(&mut state.want_chooser) {
+            view.open_chooser();
         }
         if let Err(error) = window.refresh(&mut view.ui) {
             say(&format!("err: a frame could not be drawn: {error}"));

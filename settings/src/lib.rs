@@ -23,6 +23,7 @@ pub mod look;
 pub mod pages;
 pub mod store;
 pub mod ui;
+pub mod wallpaper;
 pub mod window;
 
 #[cfg(test)]

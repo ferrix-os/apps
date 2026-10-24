@@ -286,6 +286,22 @@ pub enum Key {
     Idle(&'static str),
     /// Shown, not changed here yet.
     Shown,
+    /// Same on all, different on each, span across.
+    WallMode,
+    /// Picture, colour, slideshow, video.
+    WallKind,
+    /// A picture picked: its path in the row's `values`.
+    WallPicture,
+    /// How a picture fits.
+    WallFit,
+    /// A slideshow's pace.
+    WallEvery,
+    /// A plain colour.
+    WallColour,
+    /// A slideshow's folder: the chooser opens.
+    WallFolder,
+    /// A slideshow's shuffle.
+    WallShuffle,
 }
 
 /// A row's kind: the markup's `RowKind`, by name.
@@ -321,6 +337,10 @@ pub enum Kind {
     Monitors,
     /// A line to type in and a button.
     Name,
+    /// The displays, each with its wallpaper.
+    Screens,
+    /// Pictures to choose, and Browse.
+    Pictures,
 }
 
 /// One row of a page, as the markup's `Row` holds it, and what it does.
@@ -460,6 +480,13 @@ pub enum Effect {
     Monitor(String),
     /// The next keyboard layout.
     NextLayout,
+    /// Wallpaper lines set, and displays' own lines taken out.
+    Wall {
+        /// Keys and lines kept.
+        set: Vec<(String, String)>,
+        /// Keys whose lines go.
+        reset: Vec<String>,
+    },
     /// hypridle's timeouts, in minutes, `None` for never.
     Idle {
         /// Lock after.
@@ -509,6 +536,10 @@ pub struct State {
     pub about: Vec<(String, String)>,
     /// Pages whose changes wait for a sign-in or restart: page, key.
     pub waiting: Vec<(Page, String)>,
+    /// Wallpaper's Video chosen: the page says what plays.
+    pub wall_video: bool,
+    /// The file chooser is to open: Browse, or a slideshow's folder.
+    pub want_chooser: bool,
 }
 
 impl State {
@@ -538,6 +569,8 @@ impl State {
             idle: crate::desktop::Idle::default(),
             about: Vec::new(),
             waiting: Vec::new(),
+            wall_video: false,
+            want_chooser: false,
         }
     }
 
@@ -613,10 +646,7 @@ impl State {
     pub fn rows(&self) -> Vec<Line> {
         match self.page {
             Page::Game => self.game_rows(),
-            Page::Wallpaper => vec![Line::new(
-                Kind::Empty,
-                "Wallpaper comes with the next landing of Settings.",
-            )],
+            Page::Wallpaper => self.wallpaper_rows(),
             _ => self.desktop_rows(),
         }
     }
@@ -681,6 +711,7 @@ impl State {
                 id: id.clone(),
                 on: !self.games.set.contains(id),
             }),
+            Key::WallShuffle => self.wall_flip(row),
             _ => self.desktop_flip(row),
         }
     }

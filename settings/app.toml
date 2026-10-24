@@ -51,6 +51,14 @@ source = "folder"
 to = "usr/share/licenses/settings/LICENSE-jetbrains-mono"
 mode = "644"
 
+# The design's six wallpapers, drawn from its gradients: where the
+# Wallpaper page offers them and hyprix's wallpaper client reads them.
+[[package.files]]
+from = "share/wallpapers"
+source = "folder"
+tree = true
+to = "usr/share/backgrounds/settings"
+
 [build]
 kind = "cargo"
 

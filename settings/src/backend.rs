@@ -50,6 +50,8 @@ pub trait System {
     /// Set `key` to `value`, kept and applied: `Err` with hyprix's words
     /// when it refuses.
     fn set(&mut self, key: &str, value: &str) -> Result<(), String>;
+    /// Take `key`'s line out of `settings.conf`, back to the default.
+    fn reset(&mut self, key: &str) -> Result<(), String>;
     /// The displays.
     fn monitors(&mut self) -> Vec<Monitor>;
     /// A `monitor` line, applied and kept in `monitors.conf`.
@@ -113,6 +115,10 @@ impl System for Desktop {
 
     fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         Self::ok(&["setting", key, value])
+    }
+
+    fn reset(&mut self, key: &str) -> Result<(), String> {
+        Self::ok(&["setting", "reset", key])
     }
 
     fn monitors(&mut self) -> Vec<Monitor> {
@@ -419,6 +425,12 @@ impl System for Fake {
             return Err(why.clone());
         }
         let _ = self.kept.insert(key.to_owned(), value.to_owned());
+        Ok(())
+    }
+
+    fn reset(&mut self, key: &str) -> Result<(), String> {
+        self.calls.push(format!("setting reset {key}"));
+        let _ = self.kept.remove(key);
         Ok(())
     }
 

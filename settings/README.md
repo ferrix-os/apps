@@ -41,6 +41,13 @@ the fonts' the SIL Open Font License (`LICENSE-figtree`,
   - *Idle and lock*: when the screen locks and goes off, written into
     `~/.config/hypr/hypridle.conf` for the next sign-in (one written by hand
     is left alone and said so), and the unlock grace, live.
+  - *Wallpaper*: the displays drawn with what each shows; the same on all,
+    different on each or one picture spanning them; a picture -- the
+    design's six, shipped in `share/wallpapers`, or one's own through tole's
+    file chooser, which takes pictures -- with its fit, a plain colour, or a
+    slideshow of a folder with its pace and shuffle; video is said, not
+    chosen yet; the wallpaper under the lock screen. Each is one of hyprix's
+    `wallpaper` lines through `hyprctl setting`, drawn at once.
   - *Name and time*: the computer's name, shown with "Not kept yet" until the
     settings writer can keep it, and About.
   - *Remote login* shown, not changed, until the settings writer turns sshd
@@ -60,6 +67,7 @@ the fonts' the SIL Open Font License (`LICENSE-figtree`,
 | Windows | ![](docs/screenshots/windows-dark.png) | ![](docs/screenshots/windows-light.png) |
 | Displays | ![](docs/screenshots/displays-dark.png) | ![](docs/screenshots/displays-light.png) |
 | Keyboard | ![](docs/screenshots/keyboard-dark.png) | ![](docs/screenshots/keyboard-light.png) |
+| Wallpaper | ![](docs/screenshots/wallpaper-dark.png) | ![](docs/screenshots/wallpaper-light.png) |
 | Idle and lock | ![](docs/screenshots/idle-dark.png) | ![](docs/screenshots/idle-light.png) |
 | Game mode | ![](docs/screenshots/game-mode-dark.png) | ![](docs/screenshots/game-mode-light.png) |
 

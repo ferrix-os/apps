@@ -35,7 +35,11 @@ enum RowKind {
     // The displays, as boxes to pick.
     Monitors,
     // A card with a line to type in and a button: the computer's name.
-    Name
+    Name,
+    // The displays, each showing its wallpaper, to pick one.
+    Screens,
+    // Pictures to choose from, and Browse for one's own.
+    Pictures
 }
 
 struct PageRow {
@@ -96,6 +100,8 @@ export component Shell : Rectangle {
     signal edited(int row, string text)
     signal accepted(int row)
     signal pressed(int row)
+    signal browse()
+    signal chosen(string path)
 
     color: Look.bg
 
@@ -723,6 +729,38 @@ export component Shell : Rectangle {
                     }
                 }
                 DelegateChoice {
+                    roleValue: RowKind.Screens
+                    Item {
+                        width: body.width
+                        height: 296
+                        ScreensCard {
+                            width: body.width
+                            names: modelData.options
+                            pictures: modelData.values
+                            colours: modelData.colors
+                            boxes: modelData.nums
+                            current: modelData.current
+                            onPicked: shell.pick(index, option)
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: RowKind.Pictures
+                    Item {
+                        width: body.width
+                        height: pictures.height + 8
+                        PictureCards {
+                            id: pictures
+                            width: body.width
+                            names: modelData.options
+                            paths: modelData.values
+                            current: modelData.current
+                            onPicked: shell.pick(index, option)
+                            onBrowse: shell.browse()
+                        }
+                    }
+                }
+                DelegateChoice {
                     roleValue: RowKind.Preview
                     Item {
                         width: body.width
@@ -766,5 +804,21 @@ export component Shell : Rectangle {
                 }
             }
         }
+    }
+
+    // The file chooser, for a picture of one's own or a slideshow's
+    // folder: tole's, with the pictures it takes.
+    FileDialog {
+        id: chooser
+        anchors.centerIn: parent
+        title: "Choose a picture"
+        acceptedTypes: "[image]"
+        acceptedLabel: "Pictures"
+        acceptedNoun: "pictures"
+        openLabel: "Use picture"
+        gridView: true
+        placeNames: ["Home", "Pictures", "Downloads", "Wallpapers"]
+        placePaths: ["~", "~/Pictures", "~/Downloads", "/usr/share/backgrounds"]
+        onAccepted: shell.chosen(path)
     }
 }

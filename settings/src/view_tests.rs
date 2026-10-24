@@ -227,3 +227,25 @@ fn the_filter_takes_the_keys_only_once_the_window_has_a_size() {
     view.resize((1280, 860));
     assert!(view.focus_field());
 }
+
+#[test]
+fn browse_opens_the_chooser_and_a_picture_chosen_becomes_the_wallpaper() {
+    let mut state = state(Page::Wallpaper);
+    let mut view = view(&state);
+    let mut fake = crate::backend::Fake::default();
+    let _ = act(&mut state, Action::Browse, &mut fake, &|_| None);
+    assert!(state.want_chooser);
+    state.want_chooser = false;
+    view.open_chooser();
+    view.ui.update();
+    assert!(says(&mut view, "Choose a picture"));
+    let _ = act(
+        &mut state,
+        Action::Chosen("/home/ada/Pictures/sea.png".to_owned()),
+        &mut fake,
+        &|_| None,
+    );
+    assert_eq!(fake.calls.len(), 1);
+    assert!(fake.calls[0].starts_with("setting wallpaper , picture /home/ada/Pictures/sea.png"));
+    assert!(state.value("wallpaper").contains("sea.png"));
+}

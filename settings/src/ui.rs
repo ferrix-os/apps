@@ -34,6 +34,10 @@ pub enum Action {
     Accepted(Line),
     /// Row `row`'s button pressed.
     Pressed(Line),
+    /// The file chooser asked for: a picture of one's own.
+    Browse,
+    /// A file chosen in the file chooser.
+    Chosen(String),
 }
 
 /// The fonts the window draws with: the design's Figtree and JetBrains
@@ -83,7 +87,15 @@ fn s(value: impl AsRef<str>) -> Rc<str> {
 
 /// A colour from `rrggbb`.
 fn color(hex: &str) -> Color {
-    let value = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(0);
+    // The last six hex digits: `rrggbb`, `#rrggbb`, `rgb(rrggbb)`,
+    // `0xffrrggbb` alike.
+    let digits: String = hex
+        .trim_start_matches("0x")
+        .chars()
+        .filter(char::is_ascii_hexdigit)
+        .collect();
+    let tail = digits.get(digits.len().saturating_sub(6)..).unwrap_or("");
+    let value = u32::from_str_radix(tail, 16).unwrap_or(0);
     Color::hex(value)
 }
 
@@ -254,6 +266,8 @@ impl View {
                 }
                 ShellSignal::Accepted(row) => line(&self.rows, row).map(Action::Accepted),
                 ShellSignal::Pressed(row) => line(&self.rows, row).map(Action::Pressed),
+                ShellSignal::Browse => Some(Action::Browse),
+                ShellSignal::Chosen(path) => Some(Action::Chosen(path.to_string())),
             };
             out.extend(action);
         }
@@ -266,11 +280,23 @@ impl View {
     /// updated, so a window asks again until it is.
     pub fn focus_field(&mut self) -> bool {
         self.ui.update();
+        // The page's rows: the list's, not the search's or the chooser's.
         let mut stack = vec![self.shell.id()];
-        let search = self.search_input();
+        let mut body = None;
         while let Some(item) = stack.pop() {
-            if matches!(self.ui.kind(item), Some(tole::Kind::TextInput(_))) && Some(item) != search
-            {
+            if matches!(self.ui.kind(item), Some(tole::Kind::ListView(_))) {
+                body = Some(item);
+                break;
+            }
+            stack.extend(self.ui.children(item).iter().rev().copied());
+        }
+        let mut stack: Vec<tole::ItemId> = body.into_iter().collect();
+        while let Some(item) = stack.pop() {
+            let shown = self.ui.common(item).is_some_and(|c| self.ui.get(c.visible));
+            if !shown {
+                continue;
+            }
+            if matches!(self.ui.kind(item), Some(tole::Kind::TextInput(_))) {
                 self.ui.force_active_focus(item);
                 return true;
             }
@@ -279,16 +305,18 @@ impl View {
         false
     }
 
-    /// The search's line.
-    fn search_input(&self) -> Option<tole::ItemId> {
+    /// Open the file chooser: the window's one modal popup.
+    pub fn open_chooser(&mut self) {
         let mut stack = vec![self.shell.id()];
         while let Some(item) = stack.pop() {
-            if matches!(self.ui.kind(item), Some(tole::Kind::TextInput(_))) {
-                return Some(item);
+            if let Some(popup) = self.ui.popup(item)
+                && self.ui.get(popup.modal)
+            {
+                self.ui.open_popup(item);
+                return;
             }
             stack.extend(self.ui.children(item).iter().rev().copied());
         }
-        None
     }
 
     /// One whole frame at `scale`, for `--render` and the tests.
@@ -324,6 +352,8 @@ fn row(line: &Line) -> PageRow {
             Kind::Preview => RowKind::Preview,
             Kind::Monitors => RowKind::Monitors,
             Kind::Name => RowKind::Name,
+            Kind::Screens => RowKind::Screens,
+            Kind::Pictures => RowKind::Pictures,
         },
         title: s(&line.title),
         desc: s(&line.desc),

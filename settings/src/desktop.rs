@@ -756,6 +756,9 @@ impl State {
     /// Option `option` of a row chosen: what it asks.
     #[must_use]
     pub fn pick(&mut self, row: &Line, option: usize) -> Option<Effect> {
+        if self.page == Page::Wallpaper {
+            return self.wall_pick(row, option);
+        }
         let raw = row.raw.get(option).cloned();
         let set = |pairs: Vec<(&str, String)>| {
             Some(Effect::Set(
@@ -828,6 +831,13 @@ impl State {
         }
     }
 
+    /// A row's button pressed that opens the file chooser.
+    pub fn press_opens(&mut self, row: &Line) {
+        if matches!(row.key, Key::WallFolder | Key::WallPicture) {
+            self.want_chooser = true;
+        }
+    }
+
     /// `effect` was done: take what it changed, and note what waits.
     pub fn applied(&mut self, effect: &Effect) {
         match effect {
@@ -843,6 +853,14 @@ impl State {
                     self.waiting.push((Page::Idle, "hypridle".to_owned()));
                 }
             }
+            Effect::Wall { set, reset } => {
+                for key in reset {
+                    let _ = self.values.remove(key);
+                }
+                for (key, value) in set {
+                    let _ = self.values.insert(key.clone(), value.clone());
+                }
+            }
             Effect::GameMode { .. } | Effect::Monitor(_) | Effect::NextLayout => {}
         }
     }
@@ -850,7 +868,7 @@ impl State {
 
 /// What a person calls a display: the laptop's own panel is built in,
 /// another one external, and one alone the display.
-fn display_title(m: &crate::backend::Monitor, count: usize) -> String {
+pub fn display_title(m: &crate::backend::Monitor, count: usize) -> String {
     if ["eDP", "LVDS", "DSI"].iter().any(|p| m.name.starts_with(p)) {
         "Built-in display".to_owned()
     } else if count > 1 {
