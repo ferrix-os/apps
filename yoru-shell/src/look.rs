@@ -4,8 +4,9 @@
 
 /// Phosphor's code point for each icon the shell draws, from the
 /// package's `src/regular/style.css` (`@phosphor-icons/web` 2.1.1).
-const ICONS: [(&str, u32); 14] = [
+const ICONS: [(&str, u32); 15] = [
     ("clock", 0xe19a),
+    ("folder-simple", 0xe25a),
     ("crosshair-simple", 0xe1d8),
     ("gear-six", 0xe272),
     ("globe-simple", 0xe28e),

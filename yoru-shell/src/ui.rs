@@ -145,7 +145,7 @@ impl View {
             .map(|space| SpaceRow {
                 label: s(space.id.to_string()),
                 title: s(format!(
-                    "Workspace {} · {} · Alt {}",
+                    "Workspace {} · {} · Super {}",
                     space.id, space.name, space.id
                 )),
                 on: space.on,

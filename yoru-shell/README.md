@@ -15,8 +15,9 @@ Phosphor for icons. An app (Ferrix's
 - **The workspaces**, one to four always (code, docs, misc, free) and any
   other that exists, the one shown lit in the accent, a dot for each of
   its windows up to three. A press goes there.
-- **The launchers**: the terminal, and the browser and Settings where the
-  image has their desktop entries; a mark under one whose window is on the
+- **The launchers**: the terminal, and the browser, Files (shelf) and
+  Settings where the image has their desktop entries; nothing else is
+  shown; a mark under one whose window is on the
   workspace shown. A press starts it through hyprix (`dispatch exec`).
 - **The tools**: the search (fuzzel, until Yoru's own palette), the
   scratchpad terminal (`togglespecialworkspace scratch`), Settings.

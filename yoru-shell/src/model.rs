@@ -49,8 +49,12 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the dock's order, with its icon and words.
     pub const ALL: [(Tool, &'static str, &'static str); 3] = [
-        (Tool::Search, "magnifying-glass", "Search or run · Ctrl K"),
-        (Tool::Scratchpad, "terminal", "Scratchpad · Alt S"),
+        (
+            Tool::Search,
+            "magnifying-glass",
+            "Search or run · Super Space",
+        ),
+        (Tool::Scratchpad, "terminal", "Scratchpad · Super S"),
         (Tool::Settings, "sliders-horizontal", "Settings"),
     ];
 }
@@ -296,13 +300,13 @@ impl State {
     }
 }
 
-/// The dock's launchers: the terminal always, and the browser and
-/// Settings where the image has them, found as a launcher finds them.
+/// The dock's launchers: the terminal always, and the browser, Files
+/// (shelf) and Settings where the image has them, found as a launcher finds them.
 #[must_use]
 pub fn launchers(installed: &[(String, String, Option<String>)]) -> Vec<Launcher> {
     let mut out = vec![Launcher {
         icon: "terminal-window",
-        title: "Terminal · Alt ↵".to_owned(),
+        title: "Terminal · Super ↵".to_owned(),
         classes: vec!["rocks.magical.term".to_owned(), "foot".to_owned()],
         exec: "/bin/term /bin/zinc".to_owned(),
         running: false,
@@ -321,6 +325,19 @@ pub fn launchers(installed: &[(String, String, Option<String>)]) -> Vec<Launcher
                 .iter()
                 .cloned()
                 .chain(["google-chrome", "chromium", "firefox"].map(str::to_owned))
+                .collect(),
+            exec: exec.clone(),
+            running: false,
+        });
+    }
+    if let Some((_, exec, class)) = find(&["shelf"]) {
+        out.push(Launcher {
+            icon: "folder-simple",
+            title: "Files".to_owned(),
+            classes: class
+                .iter()
+                .cloned()
+                .chain(std::iter::once("rocks.magical.shelf".to_owned()))
                 .collect(),
             exec: exec.clone(),
             running: false,
@@ -429,9 +446,13 @@ mod tests {
                 None,
             ),
             ("settings.desktop".to_owned(), command("settings"), None),
+            ("shelf.desktop".to_owned(), command("shelf %U"), None),
         ]);
         let titles: Vec<&str> = found.iter().map(|l| l.title.as_str()).collect();
-        assert_eq!(titles, ["Terminal · Alt ↵", "Browser", "Settings"]);
+        assert_eq!(
+            titles,
+            ["Terminal · Super ↵", "Browser", "Files", "Settings"]
+        );
         assert_eq!(found[1].exec, "/bin/chrome --new-window");
     }
 }

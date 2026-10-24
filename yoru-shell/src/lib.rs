@@ -9,4 +9,5 @@ pub mod json;
 pub mod look;
 pub mod model;
 pub mod ui;
+pub mod weather;
 pub mod window;
