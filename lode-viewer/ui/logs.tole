@@ -5,7 +5,7 @@
 import Fx
 import Fx.Controls
 
-enum LineKind { Record, Note, Held, Detail, Fold, Mark, End }
+enum LineKind { Record, Note, Held, Detail, Fold, Mark, End, Gap }
 
 struct LogLine {
     kind: LineKind
@@ -586,6 +586,22 @@ export component LogsPage : Item {
                                 }
                             }
                             MouseArea { anchors.fill: parent; onClicked: page.select(modelData.record) }
+                        }
+                    }
+                    // Records of a long boot not read yet: the row is as
+                    // tall as their lines, and its words stay at its top
+                    // and its foot, where the view meets it.
+                    DelegateChoice {
+                        roleValue: LineKind.Gap
+                        Item {
+                            width: table.width
+                            height: 30
+                            Text {
+                                x: 10; y: 6; height: 20
+                                text: modelData.text
+                                font: Theme.mono(11.5)
+                                color: Theme.ink4
+                            }
                         }
                     }
                     DelegateChoice {

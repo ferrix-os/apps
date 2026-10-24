@@ -115,6 +115,9 @@ pub struct Row {
     pub kind: Kind,
     /// Its boot, in [`Log::boots`].
     pub boot: u16,
+    /// The kernel's own sequence number, for a kernel record: read off
+    /// its fields once, as it is added, not each time the boots are found.
+    pub kernel_seq: Option<u64>,
 }
 
 /// One record and what is read off it.
@@ -218,6 +221,25 @@ pub struct Boot {
     pub range: std::ops::Range<usize>,
     /// Its lowest and highest kernel sequence numbers.
     pub kernel_seqs: Option<(u64, u64)>,
+    /// How many records it holds in the store: its range's length, or, for
+    /// a boot read a page at a time, the summaries' count.
+    pub records: u64,
+}
+
+/// A boot the store holds whose records are not all read: what its
+/// segments' headers and summaries say of it (`crate::paged`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KnownBoot {
+    /// Its id.
+    pub id: [u8; 16],
+    /// Its machine's name.
+    pub host: String,
+    /// Its first time.
+    pub first_us: u64,
+    /// Its last time.
+    pub last_us: u64,
+    /// How many records it holds.
+    pub records: u64,
 }
 
 impl Boot {
@@ -251,6 +273,14 @@ pub struct Log {
     pub sessions: Names,
     /// The highest sequence number held, for following.
     pub last_seq: u64,
+    /// Boots the store holds beyond the records read, for a log read a
+    /// page at a time: each is a boot of [`Log::boots`] whether or not
+    /// any of its records are, with its whole extent and count.
+    pub known: Vec<KnownBoot>,
+    /// Records let go and not yet freed: freeing a page's thousands of
+    /// fields at once cost a frame, so they go a few at a time
+    /// ([`Log::sweep`]).
+    pub trash: Vec<Entry>,
 }
 
 /// The name a record's source goes by: who wrote it, as lode's own
@@ -355,16 +385,29 @@ impl Log {
         if self.sessions.is_empty() {
             let _ = self.sessions.intern("");
         }
-        let known: std::collections::HashSet<(u64, [u8; 16])> =
-            if records.iter().any(|record| record.seqnum <= self.last_seq) {
-                self.entries
-                    .iter()
-                    .map(|entry| (entry.record.seqnum, entry.record.boot_id))
-                    .collect()
-            } else {
-                std::collections::HashSet::new()
-            };
-        let mut added = 0;
+        // Only what is held within the new records' sequence numbers can
+        // be one of them again: a page read before the window's oldest
+        // meets none, and costs no set of the whole window.
+        let low = records
+            .iter()
+            .map(|record| record.seqnum)
+            .min()
+            .unwrap_or(0);
+        let high = records
+            .iter()
+            .map(|record| record.seqnum)
+            .max()
+            .unwrap_or(0);
+        let known: std::collections::HashSet<(u64, [u8; 16])> = if low <= self.last_seq {
+            self.entries
+                .iter()
+                .filter(|entry| (low..=high).contains(&entry.record.seqnum))
+                .map(|entry| (entry.record.seqnum, entry.record.boot_id))
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+        let mut fresh: Vec<Entry> = Vec::with_capacity(records.len());
         for record in records {
             if known.contains(&(record.seqnum, record.boot_id)) {
                 continue;
@@ -384,7 +427,8 @@ impl Log {
                 .sessions
                 .intern(record.get_str("SESSION_ID").unwrap_or(""));
             let kind = kind_of(&record);
-            self.entries.push(Entry {
+            let kernel_seq = ferrix_lode_core::ingest::kernel_seq(&record);
+            fresh.push(Entry {
                 row: Row {
                     level,
                     note,
@@ -393,26 +437,79 @@ impl Log {
                     session,
                     kind,
                     boot: 0,
+                    kernel_seq,
                 },
                 record,
             });
-            added += 1;
         }
+        let added = fresh.len();
         if added > 0 {
-            self.order();
+            self.place(fresh);
         }
         added
+    }
+
+    /// Put `fresh` among the entries in order. A page of a long boot lies
+    /// wholly before or after the entries held: sorted alone and put at
+    /// that end, which costs no sort of the window. Anything else is
+    /// sorted with the rest.
+    fn place(&mut self, mut fresh: Vec<Entry>) {
+        let firsts = self.firsts(&fresh);
+        let key = |entry: &Entry| {
+            (
+                firsts.get(&entry.record.boot_id).copied().unwrap_or(0),
+                entry.record.boot_id,
+                entry.record.realtime_us,
+                entry.record.seqnum,
+            )
+        };
+        fresh.sort_by_cached_key(key);
+        let (Some(new_first), Some(new_last)) = (fresh.first(), fresh.last()) else {
+            return;
+        };
+        match (self.entries.first(), self.entries.last()) {
+            (Some(old_first), _) if key(new_last) < key(old_first) => {
+                let _ = self.entries.splice(0..0, fresh);
+                self.find_boots();
+            }
+            (_, Some(old_last)) if key(new_first) > key(old_last) => {
+                self.entries.append(&mut fresh);
+                self.find_boots();
+            }
+            _ => {
+                self.entries.append(&mut fresh);
+                self.order();
+            }
+        }
+    }
+
+    /// Each boot's first time, which orders the boots: the index's where
+    /// it knows the boot, else the earliest of the entries held and
+    /// `fresh`.
+    fn firsts(&self, fresh: &[Entry]) -> HashMap<[u8; 16], u64> {
+        let mut firsts: HashMap<[u8; 16], u64> = self
+            .known
+            .iter()
+            .map(|known| (known.id, known.first_us))
+            .collect();
+        let known = firsts.len();
+        for entry in self.entries.iter().chain(fresh) {
+            if known > 0 && firsts.contains_key(&entry.record.boot_id) {
+                continue;
+            }
+            let first = firsts.entry(entry.record.boot_id).or_insert(u64::MAX);
+            *first = (*first).min(entry.record.realtime_us);
+        }
+        firsts
     }
 
     /// Put the entries in order and find the boots again.
     fn order(&mut self) {
         // Each boot's first time decides the boots' order.
-        let mut firsts: HashMap<[u8; 16], u64> = HashMap::new();
-        for entry in &self.entries {
-            let first = firsts.entry(entry.record.boot_id).or_insert(u64::MAX);
-            *first = (*first).min(entry.record.realtime_us);
-        }
-        self.entries.sort_by_key(|entry| {
+        let firsts = self.firsts(&[]);
+        // Each entry's key made once, not in every comparison: a window of
+        // a long boot is sorted again each time a page comes.
+        self.entries.sort_by_cached_key(|entry| {
             (
                 firsts.get(&entry.record.boot_id).copied().unwrap_or(0),
                 entry.record.boot_id,
@@ -420,6 +517,11 @@ impl Log {
                 entry.record.seqnum,
             )
         });
+        self.find_boots();
+    }
+
+    /// Find the boots in the entries, which are in order.
+    fn find_boots(&mut self) {
         self.boots.clear();
         // The entries are in boot order: each boot is one run of them.
         let mut boot = 0_u16;
@@ -431,7 +533,7 @@ impl Log {
             let mut kernel_seqs: Option<(u64, u64)> = None;
             for entry in chunk.iter_mut() {
                 entry.row.boot = boot;
-                if let Some(seq) = ferrix_lode_core::ingest::kernel_seq(&entry.record) {
+                if let Some(seq) = entry.row.kernel_seq {
                     kernel_seqs = Some(match kernel_seqs {
                         Some((low, high)) => (low.min(seq), high.max(seq)),
                         None => (seq, seq),
@@ -446,11 +548,78 @@ impl Log {
                     last_us: last.record.realtime_us,
                     range: index..index + chunk.len(),
                     kernel_seqs,
+                    records: chunk.len() as u64,
                 });
             }
             index += chunk.len();
             boot = boot.saturating_add(1);
         }
+        if !self.known.is_empty() {
+            self.complete_boots();
+        }
+    }
+
+    /// Put the boots known from the store's index among those read: a
+    /// boot read in part takes its whole extent and count from the index,
+    /// a boot none of whose records are read is one with no entries.
+    fn complete_boots(&mut self) {
+        for known in &self.known {
+            match self.boots.iter_mut().find(|boot| boot.id == known.id) {
+                Some(boot) => {
+                    boot.first_us = boot.first_us.min(known.first_us);
+                    boot.last_us = boot.last_us.max(known.last_us);
+                    boot.records = boot.records.max(known.records);
+                }
+                None => self.boots.push(Boot {
+                    id: known.id,
+                    host: known.host.clone(),
+                    first_us: known.first_us,
+                    last_us: known.last_us,
+                    range: 0..0,
+                    kernel_seqs: None,
+                    records: known.records,
+                }),
+            }
+        }
+        self.boots.sort_by_key(|boot| boot.first_us);
+        // A boot with no entries lies where the entries of the boots before
+        // it end; the entries' boot numbers follow the new order.
+        let mut end = 0;
+        for (index, boot) in self.boots.iter_mut().enumerate() {
+            if boot.range.is_empty() {
+                boot.range = end..end;
+            }
+            end = boot.range.end;
+            let number = u16::try_from(index).unwrap_or(u16::MAX);
+            if let Some(entries) = self.entries.get_mut(boot.range.clone()) {
+                for entry in entries {
+                    entry.row.boot = number;
+                }
+            }
+        }
+    }
+
+    /// Let go of boot `id`'s records with sequence numbers `low..=high`:
+    /// a page of a log read a page at a time, out of the window.
+    pub fn remove(&mut self, id: [u8; 16], (low, high): (u64, u64)) {
+        let gone = self.entries.extract_if(.., |entry| {
+            entry.record.boot_id == id && (low..=high).contains(&entry.record.seqnum)
+        });
+        self.trash.extend(gone);
+        // What is left is in order still.
+        self.find_boots();
+    }
+
+    /// Free at most `most` of the records let go.
+    pub fn sweep(&mut self, most: usize) {
+        let keep = self.trash.len().saturating_sub(most);
+        self.trash.truncate(keep);
+    }
+
+    /// Let go of every record of boot `id`.
+    pub fn clear_boot(&mut self, id: [u8; 16]) {
+        self.entries.retain(|entry| entry.record.boot_id != id);
+        self.find_boots();
     }
 
     /// The boot lode calls `offset`: 0 the last, -1 the one before.

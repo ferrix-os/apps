@@ -48,14 +48,18 @@ impl Model for LinesModel {
     type Row = LogLine;
 
     fn row_count(&self) -> usize {
-        self.app.try_borrow().map_or(0, |app| app.lines.len() + 1)
+        self.app.try_borrow().map_or(0, |app| {
+            app.lines.len() + 1 + usize::from(app.gaps.0 > 0.0) + usize::from(app.gaps.1 > 0.0)
+        })
     }
 
     fn row(&self, index: usize) -> Option<LogLine> {
         let app = self.app.try_borrow().ok()?;
-        match app.lines.get(index) {
-            Some(line) => Some(row(&app, line)),
-            None if index == app.lines.len() => Some(LogLine {
+        match place(&app, index)? {
+            Place::Line(line) => app.lines.get(line).map(|line| row(&app, line)),
+            Place::Older => Some(gap(&app, true)),
+            Place::Newer => Some(gap(&app, false)),
+            Place::End => Some(LogLine {
                 kind: LineKind::End,
                 record: -1,
                 text: if app.live {
@@ -68,17 +72,77 @@ impl Model for LinesModel {
                 .into(),
                 ..LogLine::default()
             }),
-            None => None,
         }
     }
 
     fn row_height(&self, index: usize) -> Option<f32> {
         let app = self.app.try_borrow().ok()?;
-        Some(app.lines.get(index).map_or(END, Line::height))
+        Some(match place(&app, index)? {
+            Place::Line(line) => app.lines.get(line).map_or(END, Line::height),
+            Place::Older => app.gaps.0,
+            Place::Newer => app.gaps.1,
+            Place::End => END,
+        })
     }
 
     fn tracker(&self) -> &ModelTracker {
         &self.tracker
+    }
+}
+
+/// What row `index` of the table is.
+enum Place {
+    /// The records not read, older than the window.
+    Older,
+    /// Line `.0` of the window's.
+    Line(usize),
+    /// The records not read, newer than the window.
+    Newer,
+    /// The table's end.
+    End,
+}
+
+/// Row `index`'s place: the older records not read first, when there are
+/// any, then the lines, the newer records not read, and the end.
+fn place(app: &App, index: usize) -> Option<Place> {
+    let older = usize::from(app.gaps.0 > 0.0);
+    if index < older {
+        return Some(Place::Older);
+    }
+    let line = index - older;
+    if line < app.lines.len() {
+        return Some(Place::Line(line));
+    }
+    let after = line - app.lines.len();
+    match (after, app.gaps.1 > 0.0) {
+        (0, true) => Some(Place::Newer),
+        (0, false) | (1, true) => Some(Place::End),
+        _ => None,
+    }
+}
+
+/// The row standing for the records not read, older or newer.
+fn gap(app: &App, older: bool) -> LogLine {
+    let count = app
+        .pager
+        .as_ref()
+        .map_or(0, |pager| if older { pager.older() } else { pager.newer() });
+    let text = if older {
+        format!(
+            "↑ {} older records, read as the view comes to them",
+            group(count as u64)
+        )
+    } else {
+        format!(
+            "↓ {} newer records, read as the view comes to them",
+            group(count as u64)
+        )
+    };
+    LogLine {
+        kind: LineKind::Gap,
+        record: -1,
+        text: text.into(),
+        ..LogLine::default()
     }
 }
 

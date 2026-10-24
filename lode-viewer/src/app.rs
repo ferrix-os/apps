@@ -346,6 +346,21 @@ pub struct App {
     pub clipboard: Option<String>,
     /// A line said at the foot for a while.
     pub toast: Option<String>,
+    /// The store read a page at a time, when it is too long to read whole
+    /// (`crate::scrollback`).
+    pub pager: Option<crate::paged::Pager>,
+    /// The heights of the records not read above and below the table's
+    /// lines.
+    pub gaps: (f32, f32),
+    /// Records followed while the window was away from the boot's end.
+    pub away: usize,
+    /// The selected record and the open lines' records whose page was let
+    /// go, by sequence number: given back when their page is read again.
+    pub kept: (Option<u64>, Vec<u64>),
+    /// Whether the table showed the whole boot at the last layout, and
+    /// whether the next layout puts the view at the boot's end: a long
+    /// boot opens at its newest records.
+    pub whole_shown: (bool, bool),
 }
 
 impl App {
@@ -418,6 +433,11 @@ impl App {
             compare: false,
             clipboard: None,
             toast: None,
+            pager: None,
+            gaps: (0.0, 0.0),
+            away: 0,
+            kept: (None, Vec::new()),
+            whole_shown: (false, false),
         };
         app.go_to_boot(boot);
         app
@@ -430,10 +450,11 @@ impl App {
             return;
         };
         let mut store = Store::at(std::slice::from_ref(&machine.dir));
-        let (records, refused) = store.load();
+        let (log, pager, refused) = crate::scrollback::read_store(&mut store);
         self.notices = refused;
         self.status = store.status();
-        self.log = Log::new(records);
+        self.log = log;
+        self.pager = pager;
         self.origin = Origin::Store(store);
         self.origin_name.clone_from(&machine.name);
         self.machine = index;
@@ -594,11 +615,13 @@ impl App {
     /// Show boot `index`, its end in the window.
     pub fn go_to_boot(&mut self, index: usize) {
         self.boot = index.min(self.log.boots.len().saturating_sub(1));
+        self.page_boot(self.boot);
         let (start, span) = self.extent();
         self.cursor = start + span;
         self.query.boot = self.boot;
         self.selected = None;
         self.expanded.clear();
+        self.kept = (None, Vec::new());
         self.boot_menu = false;
         self.refresh();
     }
@@ -625,6 +648,7 @@ impl App {
     /// Run the query again and lay the table out.
     pub fn refresh(&mut self) {
         self.clamp_cursor();
+        self.cover_window();
         self.query.window = if self.whole_boot() {
             None
         } else {
@@ -642,6 +666,7 @@ impl App {
         let (tops, height) = offsets(&self.lines);
         self.tops = tops;
         self.table_height = height;
+        self.add_gaps();
     }
 
     /// Records came: add them, and when Live keep the window at the end.
@@ -654,6 +679,9 @@ impl App {
             .and_then(|index| self.log.entries.get(index))
             .map(|entry| (entry.record.seqnum, entry.record.boot_id));
         let last_boot = self.boot + 1 == self.log.boots.len();
+        if self.pager.is_some() && !self.follow_paged(&records) {
+            return 0;
+        }
         let added = self.log.add(records);
         if added == 0 {
             return 0;
@@ -1582,14 +1610,20 @@ impl App {
             Action::Source(source) => self.toggle_chip(Chip::Source(source)),
             Action::Transport(transport) => self.toggle_chip(Chip::Transport(transport)),
             Action::Session(session) => self.toggle_chip(Chip::Session(session)),
-            Action::Select(index) => self.selected = Some(index),
+            Action::Select(index) => {
+                self.selected = Some(index);
+                self.kept = (None, Vec::new());
+            }
             Action::Expand(index) => {
                 if !self.expanded.remove(&index) {
                     let _ = self.expanded.insert(index);
                 }
                 self.relayout();
             }
-            Action::CloseDetail => self.selected = None,
+            Action::CloseDetail => {
+                self.selected = None;
+                self.kept.0 = None;
+            }
             Action::Around(index) => {
                 if let Some(at) = self.log.entries.get(index).map(crate::data::Entry::time) {
                     self.span = 60_000_000;

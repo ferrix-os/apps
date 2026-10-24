@@ -41,19 +41,19 @@ pub struct Status {
 
 /// One segment file.
 #[derive(Clone, Debug)]
-struct Segment {
+pub(crate) struct Segment {
     /// Its path.
-    path: PathBuf,
+    pub(crate) path: PathBuf,
     /// Its name's class.
-    class: String,
+    pub(crate) class: String,
     /// The first sequence number its name says.
-    first: u64,
+    pub(crate) first: u64,
     /// Its header.
-    header: Header,
+    pub(crate) header: Header,
     /// Its summary, if sealed.
-    summary: Option<Summary>,
+    pub(crate) summary: Option<Summary>,
     /// Its size.
-    size: u64,
+    pub(crate) size: u64,
 }
 
 /// A store: the directories it is read from, and where following stopped
@@ -91,7 +91,7 @@ impl Store {
 
     /// Every segment that reads, oldest first, and the directories that
     /// could not be read.
-    fn segments(&self) -> (Vec<Segment>, Vec<String>) {
+    pub(crate) fn segments(&self) -> (Vec<Segment>, Vec<String>) {
         let mut found = Vec::new();
         let mut refused = Vec::new();
         let mut dirs: Vec<PathBuf> = Vec::new();
@@ -178,6 +178,24 @@ impl Store {
         }
         records.sort_by_key(|record| record.seqnum);
         (records, refused)
+    }
+
+    /// Follow from the store's end as it is now, as [`Store::load`] leaves
+    /// it, without reading the records: for a store read a page at a time
+    /// (`crate::paged`). Only a segment being written is followed, and
+    /// its size is where its records end.
+    pub fn follow_from_now(&mut self) {
+        let (segments, _) = self.segments();
+        self.places = segments
+            .iter()
+            .filter(|each| each.summary.is_none())
+            .map(|each| {
+                (
+                    each.path.clone(),
+                    usize::try_from(each.size).unwrap_or(usize::MAX),
+                )
+            })
+            .collect();
     }
 
     /// The records written since the last [`Store::load`] or follow: the
@@ -404,15 +422,29 @@ fn segment_dirs(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Write `records` into `dir` as lode's store: one segment a boot, each
-/// with its summary, as sealed segments lie -- how a JSONL export (a box
-/// log) becomes a store the viewer, and `lode -D`, read. Answers how many
-/// segments were written.
+/// How large lode lets a segment grow before it seals it (lode's
+/// `SEGMENT_MAX`).
+pub const SEGMENT_MAX: usize = 16 * 1024 * 1024;
+
+/// Write `records` into `dir` as lode's store: each boot's records in
+/// segments of at most [`SEGMENT_MAX`] bytes, each with its summary, as
+/// sealed segments lie -- how a JSONL export (a box log) becomes a store
+/// the viewer, and `lode -D`, read. Answers how many segments were
+/// written.
 ///
 /// # Errors
 ///
 /// A directory or a file that cannot be written.
 pub fn import(records: &[Record], dir: &Path) -> std::io::Result<usize> {
+    import_split(records, dir, u64::MAX)
+}
+
+/// [`import`], a segment also sealed at `most` records.
+///
+/// # Errors
+///
+/// As [`import`].
+pub fn import_split(records: &[Record], dir: &Path, most: u64) -> std::io::Result<usize> {
     fs::create_dir_all(dir)?;
     let mut boots: Vec<[u8; 16]> = Vec::new();
     for record in records {
@@ -420,6 +452,7 @@ pub fn import(records: &[Record], dir: &Path) -> std::io::Result<usize> {
             boots.push(record.boot_id);
         }
     }
+    let mut written = 0;
     for boot in &boots {
         let mut mine: Vec<Record> = records
             .iter()
@@ -427,26 +460,34 @@ pub fn import(records: &[Record], dir: &Path) -> std::io::Result<usize> {
             .cloned()
             .collect();
         mine.sort_by_key(|record| record.seqnum);
-        let Some(first) = mine.first() else {
-            continue;
-        };
-        let header = Header {
-            boot_id: *boot,
-            machine_id: [0; 16],
-            first_seqnum: first.seqnum,
-            created_us: first.realtime_us,
-            host: first.host.to_string(),
-        };
-        let mut bytes = header.encode();
-        for record in &mine {
-            segment::encode_record(record, &mut bytes);
+        let mut rest: &[Record] = &mine;
+        while let Some(first) = rest.first() {
+            let header = Header {
+                boot_id: *boot,
+                machine_id: [0; 16],
+                first_seqnum: first.seqnum,
+                created_us: first.realtime_us,
+                host: first.host.to_string(),
+            };
+            let mut bytes = header.encode();
+            let mut taken = 0;
+            for record in rest {
+                if bytes.len() >= SEGMENT_MAX || taken >= most {
+                    break;
+                }
+                segment::encode_record(record, &mut bytes);
+                taken += 1;
+            }
+            let (these, after) = rest.split_at(usize::try_from(taken).unwrap_or(rest.len()));
+            let name = segment::file_name("system", boot, first.seqnum);
+            fs::write(dir.join(&name), bytes)?;
+            let summary = ferrix_lode_core::summary::Summary::of(these).encode();
+            fs::write(dir.join(format!("{name}.sum")), summary)?;
+            written += 1;
+            rest = after;
         }
-        let name = segment::file_name("system", boot, first.seqnum);
-        fs::write(dir.join(&name), bytes)?;
-        let summary = ferrix_lode_core::summary::Summary::of(&mine).encode();
-        fs::write(dir.join(format!("{name}.sum")), summary)?;
     }
-    Ok(boots.len())
+    Ok(written)
 }
 
 /// The segment `item` of `dir` is, `None` when it is no segment, or an

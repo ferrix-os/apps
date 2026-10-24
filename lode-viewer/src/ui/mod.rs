@@ -332,6 +332,8 @@ impl View {
                 }
             }
         }
+        // A long boot read a page at a time: the page the view nears.
+        let _ = self.app.borrow_mut().page_in();
         self.show();
         self.ui.update();
         (done, window)

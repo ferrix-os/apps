@@ -574,14 +574,27 @@ fn logs(view: &mut View, app: &App) {
             _ => s(""),
         },
     );
-    let boot_total = app.log.of_boot(app.boot).len();
+    let read = app.log.of_boot(app.boot).len() as u64;
+    let boot_total = app.boot().map_or(read, |boot| boot.records.max(read));
     page.count.set(
         ui,
-        s(format!(
-            "{} of {} records",
-            group(app.found.len() as u64),
-            group(boot_total as u64)
-        )),
+        s(if boot_total > read {
+            // A long boot read a page at a time: the query has seen the
+            // records read so far (docs/LOGGING.md, the viewer's
+            // scrollback, step 3 searches the rest).
+            format!(
+                "{} of {} records read · {} in the boot",
+                group(app.found.len() as u64),
+                group(read),
+                group(boot_total)
+            )
+        } else {
+            format!(
+                "{} of {} records",
+                group(app.found.len() as u64),
+                group(read)
+            )
+        }),
     );
     // The facets.
     let mut levels = Vec::new();

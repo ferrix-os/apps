@@ -300,23 +300,31 @@ pub fn open(options: &Options) -> App {
         ));
         return settle(app, options);
     }
+    let mut paged: Option<crate::paged::Pager> = None;
     let (log, origin, name) = if options.files.is_empty() {
         let mut store = if options.dirs.is_empty() {
             Store::system()
         } else {
             Store::at(&options.dirs)
         };
-        let (records, refused) = store.load();
+        let (log, pager, refused) = crate::scrollback::read_store(&mut store);
         for why in &refused {
             say(&format!("warn: {why}"));
         }
         notices.extend(refused);
-        say(&format!("read {} records from lode's store", records.len()));
-        (
-            Log::new(records),
-            Origin::Store(store),
-            "lode store".to_owned(),
-        )
+        match &pager {
+            Some(pager) => say(&format!(
+                "read the newest {} of {} records from lode's store, the rest a page at a time",
+                log.entries.len(),
+                pager.records()
+            )),
+            None => say(&format!(
+                "read {} records from lode's store",
+                log.entries.len()
+            )),
+        }
+        paged = pager;
+        (log, Origin::Store(store), "lode store".to_owned())
     } else {
         let mut records = Vec::new();
         for file in &options.files {
@@ -345,6 +353,10 @@ pub fn open(options: &Options) -> App {
         (Log::new(records), Origin::File(first), name)
     };
     let mut app = App::new(log, origin, name);
+    if paged.is_some() {
+        app.pager = paged;
+        app.refresh();
+    }
     app.notices = notices;
     settle(app, options)
 }
