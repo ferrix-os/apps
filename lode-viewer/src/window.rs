@@ -97,6 +97,7 @@ pub fn run(app: App) -> i32 {
         min_size: (960, 600),
         resize_edges: true,
         clipboard: false,
+        ..WindowOptions::default()
     };
     let started = Instant::now();
     let mut window = match Window::open(view.shell.common(), options) {
