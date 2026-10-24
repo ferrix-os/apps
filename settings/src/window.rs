@@ -97,6 +97,8 @@ pub fn state(
     let idle = crate::backend::hypridle_path(var).and_then(|p| system.read(&p));
     state.idle = crate::desktop::Idle::read(idle.as_deref());
     state.about = about(var);
+    state.machine =
+        crate::machine::Machine::read(&ferrix_settings_client::manifest::Manifest::read());
     state
 }
 
@@ -254,6 +256,13 @@ pub fn apply(
                 format!("typing in {}", state.typing_in)
             }
             Err(why) => return format!("err: switchxkblayout: {why}"),
+        },
+        Effect::Change(request) => match system.change(request) {
+            Ok(text) => {
+                state.machine_changed(request);
+                text
+            }
+            Err(why) => return format!("err: {why}"),
         },
         Effect::Idle { lock, off } => {
             let Some(path) = crate::backend::hypridle_path(var) else {

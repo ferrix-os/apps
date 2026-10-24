@@ -267,20 +267,8 @@ impl State {
             Page::Displays => self.displays(),
             Page::Keyboard => self.keyboard(),
             Page::Idle => self.idle_rows(),
-            Page::Computer => self.computer(),
-            Page::Remote => vec![
-                switch(
-                    "Allow remote login",
-                    "Anyone on your network who knows a user's password can sign in as that user.",
-                    Key::Shown,
-                    false,
-                )
-                .note(Note::NotKept),
-                Line::new(
-                    Kind::Empty,
-                    "Turning it on comes with the settings writer; today sshd is started by the image.",
-                ),
-            ],
+            Page::Computer => self.computer_rows(),
+            Page::Remote => self.remote_rows(),
             page => vec![Line::new(
                 Kind::Empty,
                 &format!(
@@ -673,33 +661,6 @@ impl State {
         rows
     }
 
-    /// Name and time: the name, the clock, About.
-    fn computer(&self) -> Vec<Line> {
-        let mut name = Line::new(Kind::Name, "Computer name")
-            .desc(&format!(
-                "Not kept yet: it goes back to “{}” when you restart.",
-                if self.hostname.is_empty() {
-                    "ferrix"
-                } else {
-                    &self.hostname
-                }
-            ))
-            .key(Key::Shown);
-        name.shown.clone_from(&self.hostname);
-        "Rename".clone_into(&mut name.tag);
-        name.enabled = false;
-        let mut about = Line::new(Kind::Info, "");
-        for (label, value) in &self.about {
-            about.options.push(label.clone());
-            about.values.push(value.clone());
-        }
-        let mut rows = vec![name, section("About")];
-        if !about.options.is_empty() {
-            rows.push(about);
-        }
-        rows
-    }
-
     /// A switch or tick turned: what it asks.
     #[must_use]
     pub fn desktop_flip(&self, row: &Line) -> Option<Effect> {
@@ -712,6 +673,7 @@ impl State {
             ))
         };
         match row.key {
+            Key::Remote => self.machine_flip(row),
             Key::Setting(key) => set(&[(key, if row.on { "0" } else { "1" }.to_owned())]),
             Key::SeeThrough => {
                 if row.on {
@@ -827,6 +789,7 @@ impl State {
     pub fn press(&self, row: &Line) -> Option<Effect> {
         match row.key {
             Key::NextLayout => Some(Effect::NextLayout),
+            Key::HostName | Key::Zone => self.machine_press(row),
             _ => None,
         }
     }
@@ -861,7 +824,10 @@ impl State {
                     let _ = self.values.insert(key.clone(), value.clone());
                 }
             }
-            Effect::GameMode { .. } | Effect::Monitor(_) | Effect::NextLayout => {}
+            Effect::GameMode { .. }
+            | Effect::Monitor(_)
+            | Effect::NextLayout
+            | Effect::Change(_) => {}
         }
     }
 }

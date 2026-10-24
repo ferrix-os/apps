@@ -32,6 +32,9 @@ compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
 # `ui/`, drawn on the CPU with the desktop's own text, or by Vulkan when
 # TOLE_RENDERER asks (`gpu`).
 tole = { path = "../../system/linux/tole/tole", features = ["wayland", "gpu"] }
+# The settings writer's requests, the trusted prompt's side of them, and
+# the image manifest (Ferrix's docs/SETTINGS-WRITER.md §7, §13).
+ferrix-settings-client = { path = "../../system/linux/settingsd/client" }
 
 [build-dependencies]
 # The markup, compiled into Rust when Settings is built.

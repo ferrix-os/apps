@@ -302,6 +302,12 @@ pub enum Key {
     WallFolder,
     /// A slideshow's shuffle.
     WallShuffle,
+    /// The computer's name, renamed through the settings writer.
+    HostName,
+    /// The time zone, set through the settings writer.
+    Zone,
+    /// Remote login, switched through the settings writer.
+    Remote,
 }
 
 /// A row's kind: the markup's `RowKind`, by name.
@@ -487,6 +493,8 @@ pub enum Effect {
         /// Keys whose lines go.
         reset: Vec<String>,
     },
+    /// A change to the system, asked of the settings writer.
+    Change(ferrix_settings_client::Request),
     /// hypridle's timeouts, in minutes, `None` for never.
     Idle {
         /// Lock after.
@@ -540,6 +548,8 @@ pub struct State {
     pub wall_video: bool,
     /// The file chooser is to open: Browse, or a slideshow's folder.
     pub want_chooser: bool,
+    /// The System pages the settings writer backs.
+    pub machine: crate::machine::Machine,
 }
 
 impl State {
@@ -571,6 +581,7 @@ impl State {
             waiting: Vec::new(),
             wall_video: false,
             want_chooser: false,
+            machine: crate::machine::Machine::default(),
         }
     }
 
@@ -699,7 +710,7 @@ impl State {
         match row.key {
             Key::Filter => text.clone_into(&mut self.games.filter),
             Key::Try => text.clone_into(&mut self.tried),
-            _ => {}
+            _ => self.machine_edited(row, text),
         }
     }
 

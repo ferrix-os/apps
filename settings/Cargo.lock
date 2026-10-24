@@ -165,6 +165,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrix-auth-client"
+version = "0.1.0"
+dependencies = [
+ "ferrix-auth-proto",
+ "libc",
+]
+
+[[package]]
+name = "ferrix-auth-proto"
+version = "0.1.0"
+
+[[package]]
+name = "ferrix-settings-client"
+version = "0.1.0"
+dependencies = [
+ "ferrix-auth-client",
+ "ferrix-settings-proto",
+ "libc",
+]
+
+[[package]]
+name = "ferrix-settings-proto"
+version = "0.1.0"
+dependencies = [
+ "ferrix-auth-proto",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -347,6 +375,7 @@ version = "0.1.0"
 dependencies = [
  "compositor-desktop",
  "compositor-toolkit",
+ "ferrix-settings-client",
  "tole",
  "tole-compiler",
 ]

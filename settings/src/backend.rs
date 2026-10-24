@@ -64,6 +64,23 @@ pub trait System {
     fn read(&mut self, path: &std::path::Path) -> Option<String>;
     /// Write `text` to `path`, whole.
     fn write(&mut self, path: &std::path::Path, text: &str) -> Result<(), String>;
+    /// Ask the settings writer for `request`: what was done, or why not.
+    fn change(&mut self, request: &ferrix_settings_client::Request) -> Result<String, String>;
+}
+
+/// The person as the settings writer's relay would ask them: never. On a
+/// desktop that is a person's, they confirm in the compositor's own
+/// prompt, and nothing is asked of this window; where a question comes
+/// here instead, this window does not take passwords.
+#[derive(Debug)]
+struct NoPerson;
+
+impl ferrix_settings_client::Person for NoPerson {
+    fn ask(&mut self, _visible: bool, _text: &str) -> Option<ferrix_settings_client::Secret> {
+        None
+    }
+
+    fn tell(&mut self, _text: &str, _error: bool) {}
 }
 
 /// The real desktop: `hyprctl` and the user's files.
@@ -152,6 +169,13 @@ impl System for Desktop {
 
     fn read(&mut self, path: &std::path::Path) -> Option<String> {
         std::fs::read_to_string(path).ok()
+    }
+
+    fn change(&mut self, request: &ferrix_settings_client::Request) -> Result<String, String> {
+        ferrix_settings_client::Client::new()
+            .apply(request, &mut NoPerson)
+            .map(|outcome| outcome.text)
+            .map_err(|refusal| format!("{}: {}", refusal.kind.title(), refusal.text))
     }
 
     fn write(&mut self, path: &std::path::Path, text: &str) -> Result<(), String> {
@@ -454,6 +478,14 @@ impl System for Fake {
 
     fn read(&mut self, path: &std::path::Path) -> Option<String> {
         self.files.get(path).cloned()
+    }
+
+    fn change(&mut self, request: &ferrix_settings_client::Request) -> Result<String, String> {
+        self.calls.push(format!("change {}", request.name()));
+        match self.refuse.get(request.name()) {
+            Some(why) => Err(why.clone()),
+            None => Ok(format!("{} done", request.name())),
+        }
     }
 
     fn write(&mut self, path: &std::path::Path, text: &str) -> Result<(), String> {
