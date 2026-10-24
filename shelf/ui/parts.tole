@@ -25,10 +25,6 @@ struct FileRow {
     tag3: color
 }
 
-struct Crumb {
-    name: string
-}
-
 // An arrow, drawn: `dir` 0 left, 1 up, 2 right, 3 down.
 component Arrow : Shape {
     id: arrow
@@ -208,7 +204,10 @@ export component PaneView : Rectangle {
     property bool wide: false
     property bool compact: false
     property list<FileRow> rows
-    property list<Crumb> crumbs
+    // Where it is, as crumbs (`FileEntry::named`), and the path of the
+    // last, the one it is in.
+    property model<FileEntry> crumbs
+    property string place
     property string countText
     property string emptyText
     property string errorText
@@ -253,45 +252,13 @@ export component PaneView : Rectangle {
             onClicked: pane.upClicked()
             Arrow { dir: 1 }
         }
-        Row {
+        Breadcrumbs {
             x: 40
             height: 36
-            spacing: 2
-            Repeater {
-                model: pane.crumbs
-                delegate: Row {
-                    height: 36
-                    spacing: 2
-                    Text {
-                        visible: index > 0
-                        height: 36
-                        text: "/"
-                        font: Theme.sans(13)
-                        color: Theme.ink5
-                    }
-                    Rectangle {
-                        y: 6
-                        width: crumb.implicitWidth + 10
-                        height: 24
-                        radius: 5
-                        color: crumbArea.containsMouse ? Theme.hover : "transparent"
-                        Text {
-                            id: crumb
-                            x: 5
-                            height: 24
-                            text: modelData.name
-                            font: Theme.sans(13, index == pane.crumbs.length - 1 ? 500 : 400)
-                            color: index == pane.crumbs.length - 1 ? Theme.ink : Theme.ink4
-                        }
-                        MouseArea {
-                            id: crumbArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: pane.crumbClicked(index)
-                        }
-                    }
-                }
-            }
+            padding: 5
+            crumbs: pane.crumbs
+            current: pane.place
+            onCrumbClicked: pane.crumbClicked(index)
         }
     }
     ToolButton {
@@ -356,46 +323,29 @@ export component PaneView : Rectangle {
         width: pane.width - 12
         height: pane.height - 86 - 28
         model: pane.rows
-        delegate: Rectangle {
+        delegate: FileListRow {
+            id: fileRow
             width: list.width
             height: pane.rowHeight
-            radius: 7
-            color: modelData.selected ? Theme.accentOver : rowArea.containsMouse ? Theme.hover : "transparent"
             opacity: modelData.dim && !modelData.selected ? 0.6 : 1
-            FileIcon {
-                x: 10; y: (pane.rowHeight - 18) / 2
-                visible: modelData.image == ""
-                kind: modelData.kind
-                text: modelData.badge
-            }
-            Image {
-                x: 10; y: (pane.rowHeight - 18) / 2
-                width: 24; height: 18
-                visible: modelData.image != ""
-                source: modelData.image
-                fillMode: Image.PreserveAspectCrop
-            }
+            name: modelData.name
+            kind: modelData.kind
+            badge: modelData.badge
+            image: modelData.image
+            isDir: modelData.isDir
+            selected: modelData.selected
+            nameWidth: min(fileRow.nameImplicitWidth, list.width - (pane.wide ? 400 : 160) - modelData.tagCount * 10)
+            nameColor: modelData.selected ? Theme.ink : Theme.ink2
+            onClicked: pane.rowClicked(index)
+            onDoubleClicked: pane.rowActivated(index)
             Row {
-                x: 44
-                height: pane.rowHeight
-                spacing: 8
-                Text {
-                    id: name
-                    height: pane.rowHeight
-                    width: min(implicitWidth, list.width - (pane.wide ? 400 : 160) - modelData.tagCount * 10)
-                    elide: Text.ElideRight
-                    text: modelData.name
-                    font: Theme.sans(13, modelData.isDir ? 500 : 400)
-                    color: modelData.selected ? Theme.ink : Theme.ink2
-                }
-                Row {
-                    visible: modelData.tagCount > 0
-                    y: (pane.rowHeight - 7) / 2
-                    spacing: 3
-                    Rectangle { visible: modelData.tagCount > 0; width: 7; height: 7; radius: 3.5; color: modelData.tag1 }
-                    Rectangle { visible: modelData.tagCount > 1; width: 7; height: 7; radius: 3.5; color: modelData.tag2 }
-                    Rectangle { visible: modelData.tagCount > 2; width: 7; height: 7; radius: 3.5; color: modelData.tag3 }
-                }
+                visible: modelData.tagCount > 0
+                x: fileRow.nameEnd + 8
+                y: (pane.rowHeight - 7) / 2
+                spacing: 3
+                Rectangle { visible: modelData.tagCount > 0; width: 7; height: 7; radius: 3.5; color: modelData.tag1 }
+                Rectangle { visible: modelData.tagCount > 1; width: 7; height: 7; radius: 3.5; color: modelData.tag2 }
+                Rectangle { visible: modelData.tagCount > 2; width: 7; height: 7; radius: 3.5; color: modelData.tag3 }
             }
             Text {
                 visible: pane.wide
@@ -441,13 +391,6 @@ export component PaneView : Rectangle {
                 font: Theme.sans(12)
                 color: Theme.ink4
             }
-            MouseArea {
-                id: rowArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: pane.rowClicked(index)
-                onDoubleClicked: pane.rowActivated(index)
-            }
         }
     }
     ScrollBar {
@@ -473,54 +416,19 @@ export component PaneView : Rectangle {
             spacing: 8
             Repeater {
                 model: pane.rows
-                delegate: Rectangle {
+                delegate: FileTile {
                     width: 120
                     height: 116
-                    radius: 9
-                    color: modelData.selected ? Theme.accentOver : tile.containsMouse ? Theme.hover : "transparent"
+                    nameY: 76
                     opacity: modelData.dim && !modelData.selected ? 0.6 : 1
-                    FileIcon {
-                        x: 32; y: 14
-                        width: 56; height: 44
-                        radius: 8
-                        fontSize: 12
-                        visible: modelData.image == ""
-                        kind: modelData.kind
-                        text: modelData.badge
-                    }
-                    Image {
-                        x: 12; y: 8
-                        width: 96; height: 64
-                        visible: modelData.image != ""
-                        source: modelData.image
-                        fillMode: Image.PreserveAspectCrop
-                    }
-                    Text {
-                        x: 6; y: 76
-                        width: 108
-                        height: 18
-                        elide: Text.ElideRight
-                        horizontalAlignment: Text.AlignHCenter
-                        text: modelData.name
-                        font: Theme.sans(12, 500)
-                        color: Theme.ink
-                    }
-                    Text {
-                        x: 6; y: 94
-                        width: 108
-                        height: 14
-                        horizontalAlignment: Text.AlignHCenter
-                        text: modelData.sizeText
-                        font: Theme.sans(11)
-                        color: Theme.ink4
-                    }
-                    MouseArea {
-                        id: tile
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: pane.rowClicked(index)
-                        onDoubleClicked: pane.rowActivated(index)
-                    }
+                    name: modelData.name
+                    kind: modelData.kind
+                    badge: modelData.badge
+                    image: modelData.image
+                    sizeText: modelData.sizeText
+                    selected: modelData.selected
+                    onClicked: pane.rowClicked(index)
+                    onDoubleClicked: pane.rowActivated(index)
                 }
             }
         }

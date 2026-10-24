@@ -85,12 +85,14 @@ export component Shelf : Rectangle {
     property string sortColumn: "name"
     property bool ascending: true
     property list<FileRow> rows0
-    property list<Crumb> crumbs0
+    property model<FileEntry> crumbs0
+    property string place0
     property string count0
     property string empty0
     property string error0
     property list<FileRow> rows1
-    property list<Crumb> crumbs1
+    property model<FileEntry> crumbs1
+    property string place1
     property string count1
     property string empty1
     property string error1
@@ -317,79 +319,16 @@ export component Shelf : Rectangle {
     }
 
     // The search, and its modes.
-    Rectangle {
-        id: searchBox
+    SearchField {
+        id: search
         x: shelf.width - 14 - 44 - 290; y: 54
         width: 290; height: 36
-        radius: 8
-        color: shelf.searchError != "" ? Theme.redBg : Theme.bg2
-        border.width: search.activeFocus ? 2 : 1
-        border.color: shelf.searchError != "" ? Theme.redInk : search.activeFocus ? Theme.accent : Theme.line
-        TextInput {
-            id: search
-            x: 12
-            width: parent.width - 52
-            height: 36
-            activeFocusOnTab: true
-            font: Theme.sans(13)
-            color: shelf.searchError != "" ? Theme.redInk : Theme.ink
-            cursorColor: Theme.ink
-            selectionColor: alpha(Theme.accent, 0.3)
-            onTextEdited: shelf.queryEdited(search.text)
-        }
-        Text {
-            x: 12
-            height: 36
-            visible: search.text == ""
-            text: shelf.searchMode == 1 ? "*.png | [image]" : shelf.searchMode == 2 ? "^id_.*$" : "Filter by name"
-            font: Theme.sans(13)
-            color: Theme.ink5
-        }
-        Rectangle {
-            x: parent.width - 36; y: 6
-            width: 28; height: 24
-            radius: 5
-            color: shelf.searchMode != 0 ? Theme.accentOver : modeArea.containsMouse ? Theme.hover : "transparent"
-            Text {
-                anchors.centerIn: parent
-                text: shelf.searchMode == 1 ? "*" : shelf.searchMode == 2 ? ".*" : "Aa"
-                font: Theme.sans(11, 700)
-                color: shelf.searchMode != 0 ? Theme.accent : Theme.ink4
-            }
-            MouseArea {
-                id: modeArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: modes.open()
-            }
-        }
-        Menu {
-            id: modes
-            x: parent.width - 260; y: 40
-            width: 260
-            Repeater {
-                model: ["Basic", "Advanced", "Regex"]
-                delegate: Rectangle {
-                    width: 252
-                    height: 44
-                    radius: 5
-                    color: index == shelf.searchMode ? Theme.accentOver : modeItem.containsMouse ? Theme.hover : "transparent"
-                    Text { x: 10; y: 6; text: modelData; font: Theme.sans(13, 500); color: Theme.ink }
-                    Text {
-                        x: 10; y: 24
-                        text: index == 0 ? "Name contains the text" : index == 1 ? "*.png, my?.txt, [image] | *.txt" : "A regular expression, ^id_.*$"
-                        font: Theme.sans(11)
-                        color: Theme.ink4
-                    }
-                    MouseArea {
-                        id: modeItem
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: shelf.modePicked(index)
-                    }
-                }
-            }
-        }
+        highlight: Theme.accentOver
+        menuWidth: 260
+        mode: shelf.searchMode
+        error: shelf.searchError
+        onTextEdited: shelf.queryEdited(search.text)
+        onModePicked: shelf.modePicked(picked)
     }
     ToolButton {
         x: shelf.width - 14 - 36; y: 54
@@ -557,89 +496,61 @@ export component Shelf : Rectangle {
                 Text { visible: shelf.quick.length > 0; x: 10; height: 26; text: "QUICK ACCESS"; font: Theme.sans(11, 600); color: Theme.ink4 }
                 Repeater {
                     model: shelf.quick
-                    delegate: Rectangle {
+                    delegate: PlaceRow {
                         width: shelf.side - 20
                         height: 30
-                        radius: 7
-                        color: modelData.active ? Theme.accentOver : quickArea.containsMouse ? Theme.hover : "transparent"
+                        highlight: Theme.accentOver
+                        ink: Theme.ink
+                        strong: false
+                        textX: 40
+                        text: modelData.name
+                        active: modelData.active
+                        onClicked: shelf.quickClicked(index)
                         FileIcon { x: 10; y: 7; width: 22; height: 16; fontSize: 7; kind: modelData.kind; text: modelData.badge }
-                        Text {
-                            x: 40
-                            width: parent.width - 50
-                            height: 30
-                            elide: Text.ElideRight
-                            text: modelData.name
-                            font: Theme.sans(13)
-                            color: Theme.ink
-                        }
-                        MouseArea { id: quickArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.quickClicked(index) }
                     }
                 }
                 Item { width: 1; height: 8 }
                 Text { x: 10; height: 26; text: "PLACES"; font: Theme.sans(11, 600); color: Theme.ink4 }
                 Repeater {
                     model: shelf.places
-                    delegate: Rectangle {
+                    delegate: PlaceRow {
                         width: shelf.side - 20
                         height: 30
-                        radius: 7
-                        color: modelData.active ? Theme.accentOver : placeArea.containsMouse ? Theme.hover : "transparent"
-                        Text {
-                            x: 10
-                            width: parent.width - 90
-                            height: 30
-                            elide: Text.ElideRight
-                            text: modelData.name
-                            font: Theme.sans(13, modelData.active ? 500 : 400)
-                            color: Theme.ink
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                            height: 30
-                            text: modelData.detail
-                            font: Theme.sans(11)
-                            color: Theme.ink5
-                        }
-                        MouseArea { id: placeArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.placeClicked(index) }
+                        highlight: Theme.accentOver
+                        ink: Theme.ink
+                        textWidth: width - 90
+                        text: modelData.name
+                        detail: modelData.detail
+                        active: modelData.active
+                        onClicked: shelf.placeClicked(index)
                     }
                 }
-                Rectangle {
+                PlaceRow {
                     width: shelf.side - 20
                     height: 30
-                    radius: 7
-                    color: shelf.trashActive ? Theme.accentOver : trashArea.containsMouse ? Theme.hover : "transparent"
-                    Text { x: 10; height: 30; text: "Trash"; font: Theme.sans(13, shelf.trashActive ? 500 : 400); color: Theme.ink }
-                    Text {
-                        anchors.right: parent.right
-                        anchors.rightMargin: 10
-                        height: 30
-                        text: shelf.trashDetail
-                        font: Theme.sans(11)
-                        color: Theme.ink5
-                    }
-                    MouseArea { id: trashArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.trashClicked() }
+                    highlight: Theme.accentOver
+                    ink: Theme.ink
+                    text: "Trash"
+                    detail: shelf.trashDetail
+                    active: shelf.trashActive
+                    onClicked: shelf.trashClicked()
                 }
                 Item { visible: shelf.tagRows.length > 0; width: 1; height: 8 }
                 Text { visible: shelf.tagRows.length > 0; x: 10; height: 26; text: "TAGS"; font: Theme.sans(11, 600); color: Theme.ink4 }
                 Repeater {
                     model: shelf.tagRows
-                    delegate: Rectangle {
+                    delegate: PlaceRow {
                         width: shelf.side - 20
                         height: 30
-                        radius: 7
-                        color: modelData.active ? Theme.accentOver : tagArea.containsMouse ? Theme.hover : "transparent"
+                        highlight: Theme.accentOver
+                        ink: Theme.ink
+                        strong: false
+                        textX: 30
+                        text: modelData.name
+                        detail: modelData.detail
+                        active: modelData.active
+                        onClicked: shelf.tagClicked(index)
                         Rectangle { x: 12; y: 11; width: 8; height: 8; radius: 4; color: modelData.dot }
-                        Text { x: 30; height: 30; text: modelData.name; font: Theme.sans(13); color: Theme.ink }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                            height: 30
-                            text: modelData.detail
-                            font: Theme.sans(11)
-                            color: Theme.ink5
-                        }
-                        MouseArea { id: tagArea; anchors.fill: parent; hoverEnabled: true; onClicked: shelf.tagClicked(index) }
                     }
                 }
             }
@@ -703,6 +614,7 @@ export component Shelf : Rectangle {
         compact: shelf.compact
         rows: shelf.rows0
         crumbs: shelf.crumbs0
+        place: shelf.place0
         countText: shelf.count0
         emptyText: shelf.empty0
         errorText: shelf.error0
@@ -735,6 +647,7 @@ export component Shelf : Rectangle {
         compact: shelf.compact
         rows: shelf.rows1
         crumbs: shelf.crumbs1
+        place: shelf.place1
         countText: shelf.count1
         emptyText: shelf.empty1
         errorText: shelf.error1
@@ -757,54 +670,26 @@ export component Shelf : Rectangle {
         height: shelf.height - shelf.top - shelf.foot
         color: Theme.bg
         clip: true
-        Rectangle { width: 1; height: parent.height; color: Theme.line }
-        FileIcon {
-            x: 18; y: 16
-            width: 40; height: 34
-            radius: 7
-            fontSize: 10
+        FilePreview {
+            id: preview
+            width: parent.width
+            height: parent.height
+            top: 14
+            nameWidth: 214
+            bodyY: 62
+            imageHeight: 200
+            textHeight: 150
+            name: shelf.pvName
             kind: shelf.pvKindName
-            text: shelf.pvBadge
-        }
-        Text {
-            x: 68; y: 14
-            width: 214
-            height: 20
-            elide: Text.ElideRight
-            text: shelf.pvName
-            font: Theme.sans(14, 600)
-            color: Theme.ink
-        }
-        Text { x: 68; y: 34; text: shelf.pvKind; font: Theme.sans(12); color: Theme.ink4 }
-        Image {
-            x: 1; y: 62
-            width: 299; height: 200
-            visible: shelf.pvImage != ""
-            source: shelf.pvImage
-            fillMode: Image.PreserveAspectCrop
-        }
-        Rectangle {
-            x: 14; y: 62
-            width: 272; height: 150
-            visible: shelf.pvImage == ""
-            radius: 8
-            color: Theme.bg2
-            border.width: 1
-            border.color: Theme.line
-            clip: true
-            TextEdit {
-                x: 10; y: 8
-                width: 252
-                readOnly: true
-                wrapMode: TextEdit.NoWrap
-                text: shelf.pvText
-                font: Theme.mono(11)
-                color: shelf.pvTextDim ? Theme.ink4 : Theme.ink3
-            }
+            badge: shelf.pvBadge
+            kindLabel: shelf.pvKind
+            image: shelf.pvImage
+            text: shelf.pvText
+            textColor: shelf.pvTextDim ? Theme.ink4 : Theme.ink3
         }
         Column {
             x: 18
-            y: shelf.pvImage != "" ? 276 : 226
+            y: preview.bodyBottom + 14
             width: 264
             spacing: 8
             Text { visible: shelf.pvCanChange; text: "TAGS"; font: Theme.sans(11, 600); color: Theme.ink4 }

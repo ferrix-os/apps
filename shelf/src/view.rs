@@ -440,9 +440,9 @@ impl View {
     fn show_pane(&mut self, app: &mut App, n: usize) {
         let s = self.shelf;
         let pane = app.pane(n).clone();
-        let (rows, crumbs, count, empty, error) = match (&s.rows0, n) {
-            (_, 0) => (s.rows0, s.crumbs0, s.count0, s.empty0, s.error0),
-            _ => (s.rows1, s.crumbs1, s.count1, s.empty1, s.error1),
+        let (rows, crumbs, place, count, empty, error) = match (&s.rows0, n) {
+            (_, 0) => (s.rows0, s.crumbs0, s.place0, s.count0, s.empty0, s.error0),
+            _ => (s.rows1, s.crumbs1, s.place1, s.count1, s.empty1, s.error1),
         };
         let listed = app.items(n);
         let (items, why) = match listed {
@@ -521,7 +521,22 @@ impl View {
         let (labels, targets) = crumbs_of(&pane.loc, &app.home);
         let ui = &mut self.ui;
         rows.set(ui, row_list);
-        crumbs.set(ui, labels.iter().map(|l| Crumb { name: rc(l) }).collect());
+        // Each crumb's path is the labels up to it, which tells the one
+        // it is in (the last) from the rest; a click is mapped back by
+        // its index.
+        let mut at = String::new();
+        let entries: Vec<tole::FileEntry> = labels
+            .iter()
+            .map(|label| {
+                if !at.is_empty() {
+                    at.push('/');
+                }
+                at.push_str(label);
+                tole::FileEntry::named(label, &at)
+            })
+            .collect();
+        place.set(ui, rc(&at));
+        crumbs.set(ui, tole::ModelRc::new(tole::VecModel::new(entries)));
         count.set(
             ui,
             rc(if items.is_empty() {
