@@ -143,7 +143,7 @@ fn drain(stream: &mut std::os::unix::net::UnixStream, pending: &mut String) -> b
     loop {
         match stream.read(&mut bytes) {
             Ok(0) => return false,
-            Ok(n) => pending.push_str(&String::from_utf8_lossy(&bytes[..n])),
+            Ok(n) => pending.push_str(&String::from_utf8_lossy(bytes.get(..n).unwrap_or_default())),
             Err(_) => return true,
         }
     }
