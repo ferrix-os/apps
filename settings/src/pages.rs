@@ -259,51 +259,111 @@ pub enum Key {
     Filter,
     /// Application `id`'s game-mode switch.
     App(String),
+    /// A setting kept in `settings.conf`, its choices' values in the
+    /// row's `raw`.
+    Setting(&'static str),
+    /// Appearance's spacing: both gaps at once.
+    Spacing,
+    /// Appearance's corners.
+    Corners,
+    /// See-through windows: the others' opacity and the blur.
+    SeeThrough,
+    /// The accent: the borders and the shadow in it.
+    Accent,
+    /// Appearance's Simple or Advanced.
+    Mode,
+    /// A display picked.
+    Display,
+    /// One of the shown display's: `res`, `hz`, `scale`, `rot`.
+    Monitor(&'static str),
+    /// A keyboard layout ticked: its `layout(variant)`.
+    KbLayout(&'static str),
+    /// The layout typed in, switched.
+    NextLayout,
+    /// The keyboard's try line.
+    Try,
+    /// hypridle's `lock` or `off` timeout.
+    Idle(&'static str),
+    /// Shown, not changed here yet.
+    Shown,
 }
 
 /// A row's kind: the markup's `RowKind`, by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
+    /// A heading over cards.
     Section,
+    /// A card with a segmented choice.
     Choice,
+    /// A card with a switch.
     Switch,
+    /// A card with a slider.
     Slider,
+    /// A tick box and words.
     Check,
+    /// Lines of label and value.
     Info,
+    /// An application with its game-mode switch.
     App,
+    /// Discs of colour to pick.
     Accents,
+    /// Words alone.
     Empty,
+    /// A line to type in.
     Field,
+    /// A value and a button.
     Action,
+    /// The window layouts as cards.
     Layouts,
+    /// The desktop drawn small.
     Preview,
+    /// The displays as boxes.
     Monitors,
+    /// A line to type in and a button.
     Name,
 }
 
 /// One row of a page, as the markup's `Row` holds it, and what it does.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
+    /// Its kind.
     pub kind: Kind,
+    /// Its words.
     pub title: String,
+    /// The line under them.
     pub desc: String,
+    /// When its change takes effect.
     pub note: Note,
+    /// A choice's words, a list's labels.
     pub options: Vec<String>,
+    /// Values beside the options: lines' values, pictures, two lines of words each.
     pub values: Vec<String>,
     /// Colours as `rrggbb`.
     pub colors: Vec<String>,
+    /// Numbers: the displays' boxes, four each.
     pub nums: Vec<f32>,
+    /// The option chosen, -1 none.
     pub current: i32,
+    /// A switch or tick on.
     pub on: bool,
+    /// A slider's value.
     pub value: f32,
+    /// A slider's least.
     pub from: f32,
+    /// A slider's most.
     pub to: f32,
+    /// A slider's step.
     pub step: f32,
+    /// The value as said, or a field's text.
     pub shown: String,
+    /// A word at its right, a tile's letter, a button's words.
     pub tag: String,
+    /// Whether it can be changed.
     pub enabled: bool,
     /// What pressing it does.
     pub key: Key,
+    /// A choice's values, as they are written, beside `options`' words.
+    pub raw: Vec<String>,
 }
 
 impl Line {
@@ -329,6 +389,7 @@ impl Line {
             tag: String::new(),
             enabled: true,
             key: Key::None,
+            raw: Vec::new(),
         }
     }
 
@@ -393,6 +454,19 @@ pub enum Effect {
         /// On or off.
         on: bool,
     },
+    /// Settings kept in `settings.conf` and applied: key, value each.
+    Set(Vec<(String, String)>),
+    /// A `monitor` line.
+    Monitor(String),
+    /// The next keyboard layout.
+    NextLayout,
+    /// hypridle's timeouts, in minutes, `None` for never.
+    Idle {
+        /// Lock after.
+        lock: Option<u32>,
+        /// The screen off after.
+        off: Option<u32>,
+    },
 }
 
 /// The whole state of the window.
@@ -416,6 +490,25 @@ pub struct State {
     pub games: Games,
     /// The last thing said at the window's foot, if anything.
     pub status: Option<String>,
+    /// What `settings.conf` holds, by key.
+    pub values: std::collections::BTreeMap<String, String>,
+    /// The displays.
+    pub monitors: Vec<crate::backend::Monitor>,
+    /// The display picked on Displays.
+    pub display: usize,
+    /// Appearance shows every knob.
+    pub advanced: bool,
+    /// The layout typed in now.
+    pub typing_in: String,
+    /// What was typed into the keyboard's try line.
+    pub tried: String,
+    /// hypridle's timeouts as read, in minutes, and whether its file is
+    /// one Settings wrote (or none): one edited by hand is left alone.
+    pub idle: crate::desktop::Idle,
+    /// What the computer runs: version, profile, configuration.
+    pub about: Vec<(String, String)>,
+    /// Pages whose changes wait for a sign-in or restart: page, key.
+    pub waiting: Vec<(Page, String)>,
 }
 
 impl State {
@@ -436,6 +529,15 @@ impl State {
             hostname: String::new(),
             games: Games::default(),
             status: None,
+            values: std::collections::BTreeMap::new(),
+            monitors: Vec::new(),
+            display: 0,
+            advanced: false,
+            typing_in: String::new(),
+            tried: String::new(),
+            idle: crate::desktop::Idle::default(),
+            about: Vec::new(),
+            waiting: Vec::new(),
         }
     }
 
@@ -511,22 +613,23 @@ impl State {
     pub fn rows(&self) -> Vec<Line> {
         match self.page {
             Page::Game => self.game_rows(),
-            page => vec![Line::new(
+            Page::Wallpaper => vec![Line::new(
                 Kind::Empty,
-                &format!("{} comes with the next landing of Settings.", page.label()),
+                "Wallpaper comes with the next landing of Settings.",
             )],
+            _ => self.desktop_rows(),
         }
     }
 
     /// Game mode's rows: the filter, then each application it leaves.
     fn game_rows(&self) -> Vec<Line> {
-        let mut rows = vec![{
-            let mut filter = Line::new(Kind::Field, "")
+        // The filter's text is its field's own, so the row stays the
+        // same and the field keeps the keys as the list under it changes.
+        let mut rows = vec![
+            Line::new(Kind::Field, "")
                 .desc("Filter apps")
-                .key(Key::Filter);
-            filter.shown.clone_from(&self.games.filter);
-            filter
-        }];
+                .key(Key::Filter),
+        ];
         if self.games.file.is_none() {
             rows.push(Line::new(
                 Kind::Empty,
@@ -563,8 +666,10 @@ impl State {
 
     /// Text typed into row `row`'s field.
     pub fn edited(&mut self, row: &Line, text: &str) {
-        if row.key == Key::Filter {
-            text.clone_into(&mut self.games.filter);
+        match row.key {
+            Key::Filter => text.clone_into(&mut self.games.filter),
+            Key::Try => text.clone_into(&mut self.tried),
+            _ => {}
         }
     }
 
@@ -576,7 +681,7 @@ impl State {
                 id: id.clone(),
                 on: !self.games.set.contains(id),
             }),
-            _ => None,
+            _ => self.desktop_flip(row),
         }
     }
 
@@ -598,8 +703,8 @@ impl State {
     /// The badge on page `page`: changes made that wait for a sign-in or
     /// a restart.
     #[must_use]
-    pub fn badge(&self, _page: Page) -> usize {
-        0
+    pub fn badge(&self, page: Page) -> usize {
+        self.waiting.iter().filter(|(p, _)| *p == page).count()
     }
 }
 

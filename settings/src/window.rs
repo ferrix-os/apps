@@ -14,6 +14,7 @@ use compositor_toolkit::{Event, KeyboardEvent};
 use tole::Element as _;
 use tole::window::{Window, WindowOptions};
 
+use crate::backend::{Desktop, Monitor, System};
 use crate::pages::{Effect, Page, State};
 use crate::ui::{Action, View};
 
@@ -54,7 +55,11 @@ pub(crate) fn var(name: &str) -> Option<String> {
 /// The state a window opens with: the page, the applications and the
 /// user's game-mode file, who is signed in and where.
 #[must_use]
-pub fn state(options: &Options, var: &dyn Fn(&str) -> Option<String>) -> State {
+pub fn state(
+    options: &Options,
+    var: &dyn Fn(&str) -> Option<String>,
+    system: &mut dyn System,
+) -> State {
     let mut state = State::new(options.page);
     state.dark = options.dark;
     state.user = var("USER")
@@ -79,17 +84,127 @@ pub fn state(options: &Options, var: &dyn Fn(&str) -> Option<String>) -> State {
             Err(error) => say(&format!("err: {}: {error}", path.display())),
         }
     }
+    state.values = system.settings();
+    state.accent = state.desktop_accent().unwrap_or(0);
+    state.monitors = system.monitors();
+    state.typing_in = system.layout_now().unwrap_or_else(|| {
+        let first = state.kb_layouts().into_iter().next().unwrap_or_default();
+        crate::desktop::LAYOUTS
+            .iter()
+            .find(|(id, _)| *id == first)
+            .map_or(first, |(_, name)| (*name).to_owned())
+    });
+    let idle = crate::backend::hypridle_path(var).and_then(|p| system.read(&p));
+    state.idle = crate::desktop::Idle::read(idle.as_deref());
+    state.about = about(var);
     state
 }
 
+/// What the computer runs, for About: Ferrix's version, the kernel's
+/// profile, whether the configuration is the certified one.
+fn about(var: &dyn Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+    let release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let field = |name: &str| {
+        release.lines().find_map(|line| {
+            line.strip_prefix(name)
+                .and_then(|rest| rest.strip_prefix('='))
+                .map(|v| v.trim_matches('"').to_owned())
+        })
+    };
+    let version = var("SETTINGS_VERSION")
+        .or_else(|| field("VERSION"))
+        .or_else(|| field("PRETTY_NAME"))
+        .unwrap_or_else(|| "unknown".to_owned());
+    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    let word = |name: &str| {
+        cmdline
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix(name).and_then(|v| v.strip_prefix('=')))
+            .map(str::to_owned)
+    };
+    let profile = var("SETTINGS_PROFILE")
+        .or_else(|| word("ferrix.profile"))
+        .unwrap_or_else(|| "desktop".to_owned());
+    let certified = if word("ferrix.checks").as_deref() == Some("run") {
+        "Certified"
+    } else {
+        "Not certified"
+    };
+    vec![
+        ("Version".to_owned(), version),
+        ("Kernel profile".to_owned(), profile),
+        ("Reference configuration".to_owned(), certified.to_owned()),
+    ]
+}
+
+/// The desktop Settings changes: hyprix's, or for `SETTINGS_FAKE=1` (a
+/// drawing for the README) one made up as the design shows it.
+#[must_use]
+pub fn system(var: &dyn Fn(&str) -> Option<String>) -> Box<dyn System> {
+    if var("SETTINGS_FAKE").as_deref() != Some("1") {
+        return Box::new(Desktop);
+    }
+    let mut fake = crate::backend::Fake::default();
+    for (key, value) in [
+        (
+            "general:col.active_border",
+            crate::desktop::accent_colours(250.0)[0].clone(),
+        ),
+        ("decoration:rounding", "8".to_owned()),
+        ("input:follow_mouse", "1".to_owned()),
+    ] {
+        let _ = fake.kept.insert(key.to_owned(), value);
+    }
+    let modes = |list: &[&str]| list.iter().map(|m| (*m).to_owned()).collect();
+    fake.displays = vec![
+        Monitor {
+            name: "eDP-1".to_owned(),
+            model: "13.5\" panel".to_owned(),
+            width: 2560,
+            height: 1600,
+            refresh: 60.0,
+            scale: 1.5,
+            modes: modes(&[
+                "2560x1600@60.00Hz",
+                "2560x1600@120.00Hz",
+                "1920x1200@60.00Hz",
+                "1280x800@60.00Hz",
+            ]),
+            ..Monitor::default()
+        },
+        Monitor {
+            name: "DP-1".to_owned(),
+            model: "Dell U2723QE".to_owned(),
+            width: 3840,
+            height: 2160,
+            refresh: 60.0,
+            scale: 1.5,
+            x: 1707,
+            modes: modes(&[
+                "3840x2160@60.00Hz",
+                "3840x2160@30.00Hz",
+                "2560x1440@60.00Hz",
+                "1920x1080@60.00Hz",
+            ]),
+            ..Monitor::default()
+        },
+    ];
+    Box::new(fake)
+}
+
 /// Do `effect`, keeping what it changed in `state`: answers what to say.
-pub fn apply(state: &mut State, effect: &Effect) -> String {
-    match effect {
+pub fn apply(
+    state: &mut State,
+    effect: &Effect,
+    system: &mut dyn System,
+    var: &dyn Fn(&str) -> Option<String>,
+) -> String {
+    let said = match effect {
         Effect::GameMode { id, on } => {
             let Some(path) = state.games.file.clone() else {
                 return "err: there is no home folder for the game-mode file".to_owned();
             };
-            match crate::store::switch(&path, id, *on) {
+            return match crate::store::switch(&path, id, *on) {
                 Ok(set) => {
                     state.games.set = set;
                     format!(
@@ -99,14 +214,55 @@ pub fn apply(state: &mut State, effect: &Effect) -> String {
                     )
                 }
                 Err(why) => format!("err: {why}"),
-            }
+            };
         }
-    }
+        Effect::Set(pairs) => {
+            for (key, value) in pairs {
+                if let Err(why) = system.set(key, value) {
+                    return format!("err: {key} = {value}: {why}");
+                }
+            }
+            let list: Vec<String> = pairs.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+            format!("set {}", list.join(", "))
+        }
+        Effect::Monitor(line) => match system.monitor(line) {
+            Ok(()) => {
+                state.monitors = system.monitors();
+                format!("monitor {line}")
+            }
+            Err(why) => return format!("err: monitor {line}: {why}"),
+        },
+        Effect::NextLayout => match system.next_layout() {
+            Ok(()) => {
+                if let Some(now) = system.layout_now() {
+                    state.typing_in = now;
+                }
+                format!("typing in {}", state.typing_in)
+            }
+            Err(why) => return format!("err: switchxkblayout: {why}"),
+        },
+        Effect::Idle { lock, off } => {
+            let Some(path) = crate::backend::hypridle_path(var) else {
+                return "err: there is no home folder for hypridle.conf".to_owned();
+            };
+            if let Err(why) = system.write(&path, &crate::desktop::Idle::text(*lock, *off)) {
+                return format!("err: {why}");
+            }
+            format!("wrote {}", path.display())
+        }
+    };
+    state.applied(effect);
+    said
 }
 
 /// Act on `action`: answers whether the page changed, so its field takes
 /// the keys.
-pub fn act(state: &mut State, action: Action) -> bool {
+pub fn act(
+    state: &mut State,
+    action: Action,
+    system: &mut dyn System,
+    var: &dyn Fn(&str) -> Option<String>,
+) -> bool {
     let before = state.page;
     let effect = match action {
         Action::Search(text) => {
@@ -117,7 +273,13 @@ pub fn act(state: &mut State, action: Action) -> bool {
             state.navigate(nav);
             None
         }
-        Action::Mode(_) | Action::Pick(..) | Action::Slide(..) | Action::Pressed(_) => None,
+        Action::Mode(mode) => {
+            state.advanced = mode == 1;
+            None
+        }
+        Action::Pick(row, option) => state.pick(&row, option),
+        Action::Slide(row, value) => state.slide(&row, value),
+        Action::Pressed(row) => state.press(&row),
         Action::Flip(row) => state.flip(&row),
         Action::Edited(row, text) => {
             state.edited(&row, &text);
@@ -126,7 +288,7 @@ pub fn act(state: &mut State, action: Action) -> bool {
         Action::Accepted(row) => state.accept(&row),
     };
     if let Some(effect) = effect {
-        let said = apply(state, &effect);
+        let said = apply(state, &effect, system, var);
         say(&said);
         state.status = Some(said);
     }
@@ -136,7 +298,8 @@ pub fn act(state: &mut State, action: Action) -> bool {
 /// Open the window and run until it is closed. Answers the exit status.
 #[must_use]
 pub fn run(options: &Options) -> i32 {
-    let mut state = state(options, &var);
+    let mut system = system(&var);
+    let mut state = state(options, &var, system.as_mut());
     let file = state.games.file.as_ref().map_or_else(
         || "no file".to_owned(),
         |p: &PathBuf| p.display().to_string(),
@@ -173,9 +336,9 @@ pub fn run(options: &Options) -> i32 {
             return 1;
         }
     };
-    if state.page == Page::Game {
-        view.focus_field();
-    }
+    // Game mode's filter takes the keys once its row is made, which is
+    // once the window has a size.
+    let mut focus = state.page == Page::Game;
     let mut up = false;
     while !window.is_closed() {
         let events = match window.dispatch(&mut view.ui, None) {
@@ -205,17 +368,21 @@ pub fn run(options: &Options) -> i32 {
                 _ => {}
             }
         }
+        if focus && up && view.focus_field() {
+            focus = false;
+            let _ = window.refresh(&mut view.ui);
+        }
         let actions = view.actions();
         if actions.is_empty() {
             continue;
         }
         let mut moved = false;
         for action in actions {
-            moved |= act(&mut state, action);
+            moved |= act(&mut state, action, system.as_mut(), &var);
         }
         view.show(&state);
         if moved && state.page == Page::Game {
-            view.focus_field();
+            focus = !view.focus_field();
         }
         if let Err(error) = window.refresh(&mut view.ui) {
             say(&format!("err: a frame could not be drawn: {error}"));

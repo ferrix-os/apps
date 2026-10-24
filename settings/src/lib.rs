@@ -16,7 +16,9 @@
 //! All but the window are host-tested.
 
 pub mod apps;
+pub mod backend;
 pub mod cli;
+pub mod desktop;
 pub mod look;
 pub mod pages;
 pub mod store;

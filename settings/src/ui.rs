@@ -95,10 +95,18 @@ pub struct View {
     pub shell: Shell,
     /// The rows last shown, by index.
     rows: Vec<Line>,
+    /// The page's rows as the tree's model: changed row by row, so a row
+    /// that did not change -- a field being typed in -- keeps its item and
+    /// the keys.
+    model: Rc<tole::VecModel<PageRow>>,
+    /// The page the rows are of.
+    rows_page: Option<crate::pages::Page>,
     /// The sidebar's rows last shown, by index.
     nav: Vec<Nav>,
     /// The palette last set: dark, and the accent.
     look: Option<(bool, usize)>,
+    /// What the desktop drawn small last showed.
+    preview: Option<Preview>,
 }
 
 impl std::fmt::Debug for View {
@@ -114,12 +122,20 @@ impl View {
     pub fn new(fonts: tole::Fonts) -> Option<Self> {
         let mut ui = Ui::new(fonts);
         let shell = Shell::new(&mut ui, None)?;
+        let model = Rc::new(tole::VecModel::new(Vec::new()));
+        shell.rows.set(
+            &mut ui,
+            tole::ModelRc::from_rc(Rc::clone(&model) as Rc<dyn tole::Model<Row = PageRow>>),
+        );
         Some(View {
             ui,
             shell,
             rows: Vec::new(),
+            model,
+            rows_page: None,
             nav: Vec::new(),
             look: None,
+            preview: None,
         })
     }
 
@@ -178,13 +194,35 @@ impl View {
         self.shell.who.set(ui, s(who));
         self.shell.title.set(ui, s(state.page.label()));
         self.shell.subtitle.set(ui, s(state.page.subtitle()));
-        self.shell.modes.set(ui, Vec::new());
-        let lines = state.rows();
-        if lines != self.rows {
-            let tree: Vec<PageRow> = lines.iter().map(row).collect();
-            self.shell.rows.set(ui, tree);
-            self.rows = lines;
+        if state.page == crate::pages::Page::Appearance {
+            self.shell.modes.set(ui, vec![s("Simple"), s("Advanced")]);
+            self.shell.mode.set(ui, i32::from(state.advanced));
+        } else {
+            self.shell.modes.set(ui, Vec::new());
         }
+        let preview = Preview::of(state);
+        if self.preview != Some(preview) {
+            self.shell.preview.set(ui, preview.painter());
+            self.preview = Some(preview);
+        }
+        let lines = state.rows();
+        if self.rows_page != Some(state.page) {
+            // Another page: its rows anew.
+            self.model.set_vec(lines.iter().map(row).collect());
+            self.rows_page = Some(state.page);
+        } else if lines != self.rows {
+            for (at, line) in lines.iter().enumerate() {
+                match self.rows.get(at) {
+                    Some(old) if old == line => {}
+                    Some(_) => self.model.set_row(at, row(line)),
+                    None => self.model.push(row(line)),
+                }
+            }
+            for at in (lines.len()..self.rows.len()).rev() {
+                let _ = self.model.remove(at);
+            }
+        }
+        self.rows = lines;
     }
 
     /// What the tree asked since the last call.
@@ -223,18 +261,22 @@ impl View {
     }
 
     /// Give the page's first line to type in the keys, as game mode's
-    /// filter has them when the page opens.
-    pub fn focus_field(&mut self) {
+    /// filter has them when the page opens: whether there was one. Its
+    /// item is made only once the window has a size and the tree has
+    /// updated, so a window asks again until it is.
+    pub fn focus_field(&mut self) -> bool {
+        self.ui.update();
         let mut stack = vec![self.shell.id()];
         let search = self.search_input();
         while let Some(item) = stack.pop() {
             if matches!(self.ui.kind(item), Some(tole::Kind::TextInput(_))) && Some(item) != search
             {
                 self.ui.force_active_focus(item);
-                return;
+                return true;
             }
             stack.extend(self.ui.children(item).iter().rev().copied());
         }
+        false
     }
 
     /// The search's line.
@@ -299,5 +341,121 @@ fn row(line: &Line) -> PageRow {
         shown: s(&line.shown),
         tag: s(&line.tag),
         enabled: line.enabled,
+    }
+}
+
+/// Appearance's picture of the desktop: what it is drawn from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Preview {
+    dark: bool,
+    hue: f32,
+    gaps_in: f32,
+    gaps_out: f32,
+    rounding: f32,
+    border: f32,
+    see_through: bool,
+}
+
+impl Preview {
+    /// The picture for `state`.
+    fn of(state: &State) -> Self {
+        let number = |key: &str| state.value(key).trim().parse::<f32>().unwrap_or(0.0);
+        Preview {
+            dark: state.dark,
+            hue: ACCENTS.get(state.accent).map_or(250.0, |a| a.1),
+            gaps_in: number("general:gaps_in"),
+            gaps_out: number("general:gaps_out"),
+            rounding: number("decoration:rounding"),
+            border: number("general:border_size").max(1.0),
+            see_through: number("decoration:inactive_opacity") < 0.999,
+        }
+    }
+
+    /// Its painter: a bar, a wallpaper in the accent, and four windows
+    /// placed as the spiral places them, the first focused.
+    fn painter(self) -> tole::CanvasPainter {
+        tole::CanvasPainter::new(move |p| {
+            use crate::look::color;
+            let (w, h) = p.size();
+            let hue = self.hue;
+            let whole = tole::Rect::new(0.0, 0.0, w, h);
+            p.fill_rect(whole, 12.0, color(0.2, 0.04, 260.0));
+            p.push_clip(whole);
+            // The wallpaper: soft light in the accent and two near it.
+            for (cx, cy, r, l, c, dh) in [
+                (0.18, 0.22, 0.6, 0.6, 0.12, -15.0),
+                (0.82, 0.78, 0.6, 0.52, 0.13, 35.0),
+                (0.7, 0.12, 0.45, 0.66, 0.09, -45.0),
+            ] {
+                for step in 0..12 {
+                    let t = step as f32 / 12.0;
+                    let mut ink = color(l, c, hue + dh);
+                    ink.a = (40.0 * (1.0 - t)) as u8;
+                    p.circle((w * cx, h * cy), w * r * (1.0 - t * 0.9) * 0.6, ink);
+                }
+            }
+            // The bar.
+            let bar = 20.0;
+            p.fill_rect(
+                tole::Rect::new(0.0, 0.0, w, bar),
+                0.0,
+                color(0.17, 0.01, 260.0),
+            );
+            let mono = tole::Font::new("JetBrains Mono", 10.0, 400);
+            let ink = color(0.9, 0.003, 260.0);
+            p.text("1 2 3", &mono, (10.0, 14.0), ink);
+            let clock = "23:14";
+            let tw = p.text_width(clock, &mono);
+            p.text(clock, &mono, (w - tw - 10.0, 14.0), ink);
+            // The windows, scaled from the gaps chosen.
+            let k = 0.5;
+            let (gi, go) = (self.gaps_in * k, self.gaps_out * k + 4.0);
+            let area = tole::Rect::new(go, bar + go, w - 2.0 * go, h - bar - 2.0 * go);
+            let half = (area.w - gi) / 2.0;
+            let top = (area.h - gi) / 2.0;
+            let quarter = (half - gi) / 2.0;
+            let windows = [
+                ("term", tole::Rect::new(area.x, area.y, half, area.h)),
+                (
+                    "files",
+                    tole::Rect::new(area.x + half + gi, area.y, half, top),
+                ),
+                (
+                    "lode viewer",
+                    tole::Rect::new(area.x + half + gi, area.y + top + gi, quarter, top),
+                ),
+                (
+                    "fuzzel",
+                    tole::Rect::new(
+                        area.x + half + gi + quarter + gi,
+                        area.y + top + gi,
+                        quarter,
+                        top,
+                    ),
+                ),
+            ];
+            let radius = self.rounding * k;
+            for (i, (name, r)) in windows.iter().enumerate() {
+                let mut fill = color(0.19, 0.005, 260.0);
+                if self.see_through && i > 0 {
+                    fill.a = 0xd8;
+                }
+                p.fill_rect(*r, radius, fill);
+                let edge = if i == 0 {
+                    color(0.72, 0.13, hue)
+                } else {
+                    color(0.36, 0.03, hue)
+                };
+                p.stroke_rect(*r, radius, self.border.min(2.0), edge);
+                p.text(
+                    name,
+                    &mono,
+                    (r.x + 10.0, r.y + 18.0),
+                    color(0.85, 0.003, 260.0),
+                );
+            }
+            p.pop_clip();
+            let _ = self.dark;
+        })
     }
 }

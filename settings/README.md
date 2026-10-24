@@ -22,6 +22,29 @@ the fonts' the SIL Open Font License (`LICENSE-figtree`,
   matches" when none does.
 - **A note** under a setting says when its change takes effect: "Takes effect
   after you sign in again", after a restart, or "Not kept yet".
+- **The pages backed today** (Ferrix's
+  [docs/RUNTIME-SETTINGS.md](https://github.com/ferrix-os/ferrix/blob/develop/docs/RUNTIME-SETTINGS.md)
+  §3.3), every change made through hyprix, at once and kept:
+  - *Appearance*: the desktop drawn small; the accent, which colours the
+    window borders and the shadow too; spacing, corners, see-through windows,
+    animations -- or, in Advanced, each gap, the border, the rounding, the
+    others' opacity, blur and shadows. `hyprctl setting KEY VALUE`, kept in
+    `~/.config/hypr/settings.conf`.
+  - *Windows*: the layout (spiral, main and stack, one at a time, scrolling,
+    floating), title bars, focus following the pointer.
+  - *Displays*: the displays as they are placed, and the picked one's
+    resolution, refresh rate, scale and rotation: `hyprctl keyword monitor`,
+    kept by hyprix in `monitors.conf`.
+  - *Keyboard*: a line to try, the layout typed in and the button that
+    switches it (`hyprctl switchxkblayout`), the layouts Ferrix ships, the
+    first ticked the default, and key repeat.
+  - *Idle and lock*: when the screen locks and goes off, written into
+    `~/.config/hypr/hypridle.conf` for the next sign-in (one written by hand
+    is left alone and said so), and the unlock grace, live.
+  - *Name and time*: the computer's name, shown with "Not kept yet" until the
+    settings writer can keep it, and About.
+  - *Remote login* shown, not changed, until the settings writer turns sshd
+    on and off; Power, Users, Logs and Boot options say they come with it.
 - **Game mode** lists every application a launcher lists, each with a switch:
   the user's `~/.config/ferrix/game-mode.conf`, one desktop-file ID a line,
   which the launcher reads when it starts one (Ferrix's
@@ -30,6 +53,19 @@ the fonts' the SIL Open Font License (`LICENSE-figtree`,
   application it leaves.
 - **`settings --render PAGE FILE`** draws a page headless, `--light` for the
   light palette; **`settings --list`** prints game mode's list with no window.
+
+| | Dark | Light |
+|---|---|---|
+| Appearance | ![](docs/screenshots/appearance-dark.png) | ![](docs/screenshots/appearance-light.png) |
+| Windows | ![](docs/screenshots/windows-dark.png) | ![](docs/screenshots/windows-light.png) |
+| Displays | ![](docs/screenshots/displays-dark.png) | ![](docs/screenshots/displays-light.png) |
+| Keyboard | ![](docs/screenshots/keyboard-dark.png) | ![](docs/screenshots/keyboard-light.png) |
+| Idle and lock | ![](docs/screenshots/idle-dark.png) | ![](docs/screenshots/idle-light.png) |
+| Game mode | ![](docs/screenshots/game-mode-dark.png) | ![](docs/screenshots/game-mode-light.png) |
+
+*Drawn headless by `settings --render PAGE FILE [--light] --size 1280x900`
+with `SETTINGS_FAKE=1` (two displays and settings as the design shows them),
+`USER=ada`, `SETTINGS_HOSTNAME=ferrix` and six applications; nothing edited.*
 
 ```
 cargo xtask check                                          # its fmt, clippy and tests

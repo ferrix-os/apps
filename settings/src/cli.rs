@@ -168,7 +168,8 @@ pub fn list(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
 ///
 /// The tree could not be made, drawn or written, in words.
 pub fn render(render: &Render) -> Result<(), String> {
-    let mut state = crate::window::state(&render.options, &var);
+    let mut system = crate::window::system(&var);
+    let mut state = crate::window::state(&render.options, &var, system.as_mut());
     if let Some(search) = &render.search {
         state.search(search);
     }

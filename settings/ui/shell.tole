@@ -81,7 +81,7 @@ export component Shell : Rectangle {
     property string subtitle
     property list<string> modes
     property int mode
-    property list<PageRow> rows
+    property model<PageRow> rows
     property painter preview
     property real sidebar: shell.width >= 1100 ? 284 : 236
     // The column the page's rows are in.
@@ -511,7 +511,7 @@ export component Shell : Rectangle {
                                 x: 20; y: 13
                                 width: 36; height: 36
                                 radius: 8
-                                color: Look.sel
+                                color: Look.dark ? Look.sel : Look.inset
                                 Text {
                                     anchors.centerIn: parent
                                     text: modelData.tag
