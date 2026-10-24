@@ -28,6 +28,9 @@ use crate::ui::{Action, HEIGHT, View};
 /// what is behind every `yoru-` surface.
 pub const NAMESPACE: &str = "yoru-dock";
 
+/// The launcher's look in Yoru's theme, which fuzzel is started with.
+const PALETTE: &str = "/usr/share/hyprix/themes/yoru-fuzzel.ini";
+
 /// How far above the screen's foot the dock floats, and in from its sides.
 const MARGIN: i32 = 6;
 
@@ -88,7 +91,14 @@ fn act(hypr: Option<&Hypr>, state: &mut State, action: Action) {
         ));
     };
     match action {
-        Action::Search | Action::Tool(Tool::Search) => dispatch("exec /bin/fuzzel"),
+        Action::Search | Action::Tool(Tool::Search) => {
+            // fuzzel in Yoru's look where the theme put it (step Y3).
+            if std::path::Path::new(PALETTE).exists() {
+                dispatch(&format!("exec /bin/fuzzel --config {PALETTE}"));
+            } else {
+                dispatch("exec /bin/fuzzel");
+            }
+        }
         Action::Space(at) => {
             if let Some(space) = state.spaces.get(at) {
                 dispatch(&format!("workspace {}", space.id));
