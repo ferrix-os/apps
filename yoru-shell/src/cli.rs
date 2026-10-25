@@ -48,6 +48,63 @@ pub fn render(state: &State, width: u32, scale: f32) -> Option<tole::Frame> {
     Some(frame)
 }
 
+/// The switcher as drawn for a picture: the Settings app's six pictures
+/// from Ferrix's tree in a folder of their own and the Nocturne gradient
+/// in Yoru's, their colours read, the second in force.
+#[must_use]
+pub fn sample_walls(grid: bool) -> crate::walls::Picker {
+    let tree = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+    let mut found = Vec::new();
+    for (file, folder) in [
+        ("settings/share/wallpapers/tide.jpg", "Ferrix"),
+        ("settings/share/wallpapers/dune.jpg", "Ferrix"),
+        ("settings/share/wallpapers/fern.jpg", "Ferrix"),
+        ("settings/share/wallpapers/dusk.jpg", "Ferrix"),
+        ("settings/share/wallpapers/ember.jpg", "Ferrix"),
+        ("settings/share/wallpapers/graphite.jpg", "Ferrix"),
+    ] {
+        let path = format!("{tree}/{file}");
+        let name = file.rsplit('/').next().unwrap_or(file);
+        found.push(crate::walls::Wall {
+            look: crate::walls::look_of(std::path::Path::new(&path)),
+            path,
+            name: crate::walls::shown_name(name),
+            folder: folder.to_owned(),
+            video: false,
+        });
+    }
+    let current = found
+        .get(1)
+        .map(|wall| wall.path.clone())
+        .unwrap_or_default();
+    let mut picker = crate::walls::Picker::new(
+        found,
+        vec!["Ferrix".to_owned(), "Mine".to_owned()],
+        &current,
+    );
+    if grid {
+        picker.flip();
+    }
+    picker
+}
+
+/// The switcher drawn `size` logical pixels at `scale`.
+#[must_use]
+pub fn render_walls(
+    picker: &crate::walls::Picker,
+    size: (u32, u32),
+    scale: f32,
+) -> Option<tole::Frame> {
+    let mut view = crate::picker::View::new(crate::look::fonts())?;
+    view.ui.set_scale(scale);
+    view.resize(size);
+    view.show(picker);
+    view.ui.update();
+    let mut frame = tole::Frame::new(size, scale, tole::Color::hex(0x2b_2741))?;
+    let _ = view.ui.render_into(&mut frame);
+    Some(frame)
+}
+
 /// The program.
 #[must_use]
 pub fn main() -> ExitCode {
@@ -55,6 +112,33 @@ pub fn main() -> ExitCode {
     if arguments.iter().any(|word| word == "--version") {
         println!("yoru-shell {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
+    }
+    if arguments.iter().any(|word| word == "--walls") {
+        return if crate::switch::run() == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if let Some(at) = arguments.iter().position(|word| word == "--render-walls") {
+        let Some(path) = arguments.get(at + 1) else {
+            eprintln!("yoru-shell: --render-walls needs a file");
+            return ExitCode::FAILURE;
+        };
+        let grid = arguments.iter().any(|word| word == "--grid");
+        let Some(frame) = render_walls(&sample_walls(grid), (1600, 1000), 1.0) else {
+            eprintln!("yoru-shell: the switcher could not be drawn");
+            return ExitCode::FAILURE;
+        };
+        let pixmap = frame.pixmap();
+        let png = tole::png::encode(pixmap.width(), pixmap.height(), pixmap.data());
+        return match std::fs::write(path, png) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("yoru-shell: {path}: {error}");
+                ExitCode::FAILURE
+            }
+        };
     }
     if let Some(at) = arguments.iter().position(|word| word == "--render") {
         let Some(path) = arguments.get(at + 1) else {

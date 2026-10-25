@@ -25,6 +25,8 @@ bench = false
 [dependencies]
 # The applications a launcher lists: the dock's launchers are found there.
 compositor-desktop = { path = "../../system/linux/compositor/desktop" }
+# Pictures decoded: a wallpaper's colour, read off it for the switcher.
+compositor-image = { path = "../../system/linux/compositor/image" }
 # The Wayland client's events, which tole's window hands back: the
 # compositor's event socket watched, the clock's timer.
 compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }

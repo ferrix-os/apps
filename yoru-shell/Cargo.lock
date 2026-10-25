@@ -467,6 +467,7 @@ name = "yoru-shell"
 version = "0.1.0"
 dependencies = [
  "compositor-desktop",
+ "compositor-image",
  "compositor-toolkit",
  "tole",
  "tole-compiler",

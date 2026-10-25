@@ -1,0 +1,665 @@
+// Yoru's wallpaper switcher, as the design draws it (Alt+I): over the
+// whole screen, the title and the count, Cover and Grid, the folders as
+// chips with a new one, the colour dots and the sorts; under them the
+// wallpapers, one in hand in the middle of the cover or ringed in the
+// grid; at the foot Previous, Set and Next and what the keys do. Rust
+// works out where every card is (`src/picker.rs`); this draws them and
+// says what was pressed.
+import Fx
+
+struct Chip {
+    name: string
+    count: string
+    icon: string
+    on: bool
+}
+
+struct Dot {
+    title: string
+    colour: color
+    any: bool
+    on: bool
+}
+
+struct Sorter {
+    icon: string
+    title: string
+    on: bool
+}
+
+struct Card {
+    source: string
+    name: string
+    x: real
+    y: real
+    w: real
+    h: real
+    on: bool
+    inUse: bool
+    video: bool
+    dim: real
+}
+
+export component Walls : FocusScope {
+    id: walls
+    property string count
+    property list<Chip> chips
+    property list<Dot> dots
+    property list<Sorter> sorters
+    property list<Card> cards
+    property bool cover
+    property bool grid
+    property bool naming
+    property bool empty
+    property string name
+    property string meta
+    property string setLabel
+    property real panelX
+    property real panelW
+    property real stageY
+    property painter shade
+    property string icCards
+    property string icGrid
+    property string icClose
+    property string icPlus
+    property string icLeft
+    property string icRight
+    property string icCheck
+    property string icPlay
+
+    signal closed()
+    signal again()
+    signal layout(int grid)
+    signal folder(int index)
+    signal startNaming()
+    signal named(string text)
+    signal colour(int index)
+    signal sort(int index)
+    signal pick(int index)
+    signal step(int by)
+    signal row(int down)
+    signal flip()
+    signal apply()
+
+    focus: true
+    Keys.onEscapePressed: walls.closed()
+    // SUPER I again: the switcher holds the keyboard, so the key that
+    // opened it comes here, and closes it.
+    Keys.onPressed: { if (event.text == "i" || event.text == "I") { event.accepted = true; walls.again() } }
+    Keys.onLeftPressed: walls.step(-1)
+    Keys.onRightPressed: walls.step(1)
+    Keys.onUpPressed: walls.row(0)
+    Keys.onDownPressed: walls.row(1)
+    Keys.onTabPressed: walls.flip()
+    Keys.onReturnPressed: walls.apply()
+
+    // The shade over the desktop; a press on it keeps the one in force.
+    Canvas {
+        anchors.fill: parent
+        painter: walls.shade
+    }
+    MouseArea {
+        anchors.fill: parent
+        onClicked: walls.closed()
+    }
+
+    // The head: title, count, layouts, close; the folders; the colours.
+    Item {
+        id: head
+        x: walls.panelX
+        y: 24
+        width: walls.panelW
+        height: 112
+        MouseArea { anchors.fill: parent }
+        Text {
+            y: 2
+            text: "Wallpapers"
+            font: Nocturne.sans(16, 600)
+            color: Nocturne.text
+        }
+        Text {
+            y: 24
+            text: walls.count
+            font: Nocturne.sans(12, 400)
+            color: Nocturne.n400
+        }
+        Row {
+            x: head.width - width
+            y: 4
+            spacing: 8
+            Rectangle {
+                width: layouts.width + 4
+                height: 32
+                radius: 8
+                color: alpha(Nocturne.bg, 0.7)
+                border.width: 1
+                border.color: Nocturne.n800
+                Row {
+                    id: layouts
+                    x: 2; y: 2
+                    spacing: 2
+                    Rectangle {
+                        width: coverRow.width + 20
+                        height: 28
+                        radius: 6
+                        color: walls.cover ? alpha(Nocturne.accent, 0.18) : "transparent"
+                        Row {
+                            id: coverRow
+                            x: 10
+                            height: 28
+                            spacing: 6
+                            Text {
+                                height: 28
+                                text: walls.icCards
+                                font: Nocturne.icon(14)
+                                color: walls.cover ? Nocturne.a200 : Nocturne.n400
+                            }
+                            Text {
+                                height: 28
+                                text: "Cover"
+                                font: Nocturne.sans(12, 500)
+                                color: walls.cover ? Nocturne.a200 : Nocturne.n400
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: walls.layout(0)
+                        }
+                    }
+                    Rectangle {
+                        width: gridRow.width + 20
+                        height: 28
+                        radius: 6
+                        color: walls.grid ? alpha(Nocturne.accent, 0.18) : "transparent"
+                        Row {
+                            id: gridRow
+                            x: 10
+                            height: 28
+                            spacing: 6
+                            Text {
+                                height: 28
+                                text: walls.icGrid
+                                font: Nocturne.icon(14)
+                                color: walls.grid ? Nocturne.a200 : Nocturne.n400
+                            }
+                            Text {
+                                height: 28
+                                text: "Grid"
+                                font: Nocturne.sans(12, 500)
+                                color: walls.grid ? Nocturne.a200 : Nocturne.n400
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: walls.layout(1)
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                y: 1
+                width: 30; height: 30
+                radius: 6
+                color: closeArea.containsMouse ? Nocturne.n800 : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: walls.icClose
+                    font: Nocturne.icon(15)
+                    color: closeArea.containsMouse ? Nocturne.text : Nocturne.n300
+                }
+                MouseArea {
+                    id: closeArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: walls.closed()
+                }
+            }
+        }
+
+        // The folders, and a new one.
+        Flow {
+            y: 48
+            width: head.width
+            spacing: 6
+            Repeater {
+                model: walls.chips
+                Rectangle {
+                    width: chipRow.width + 22
+                    height: 28
+                    radius: 14
+                    color: modelData.on ? alpha(Nocturne.accent, 0.18) : alpha(Nocturne.bg, 0.7)
+                    border.width: 1
+                    border.color: modelData.on ? Nocturne.a500 : Nocturne.n800
+                    Row {
+                        id: chipRow
+                        x: 11
+                        height: 28
+                        spacing: 6
+                        Text {
+                            height: 28
+                            text: modelData.icon
+                            font: Nocturne.icon(14)
+                            color: modelData.on ? Nocturne.a200 : Nocturne.n300
+                        }
+                        Text {
+                            height: 28
+                            text: modelData.name
+                            font: Nocturne.sans(12, 500)
+                            color: modelData.on ? Nocturne.a200 : Nocturne.n300
+                        }
+                        Text {
+                            height: 28
+                            text: modelData.count
+                            font: Nocturne.sans(11, 500)
+                            color: Nocturne.n500
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: walls.folder(index)
+                    }
+                }
+            }
+            Rectangle {
+                visible: !walls.naming
+                width: newRow.width + 22
+                height: 28
+                radius: 14
+                color: "transparent"
+                border.width: 1
+                border.color: newArea.containsMouse ? Nocturne.a500 : Nocturne.n700
+                Row {
+                    id: newRow
+                    x: 11
+                    height: 28
+                    spacing: 6
+                    Text {
+                        height: 28
+                        text: walls.icPlus
+                        font: Nocturne.icon(14)
+                        color: newArea.containsMouse ? Nocturne.text : Nocturne.n400
+                    }
+                    Text {
+                        height: 28
+                        text: "New folder"
+                        font: Nocturne.sans(12, 500)
+                        color: newArea.containsMouse ? Nocturne.text : Nocturne.n400
+                    }
+                }
+                MouseArea {
+                    id: newArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: { walls.startNaming(); folderName.forceActiveFocus() }
+                }
+            }
+            Rectangle {
+                visible: walls.naming
+                width: 160
+                height: 28
+                radius: 14
+                color: Nocturne.bg
+                border.width: 1
+                border.color: Nocturne.a500
+                Text {
+                    x: 12
+                    height: 28
+                    visible: folderName.text == ""
+                    text: "Folder name, ↵"
+                    font: Nocturne.sans(12, 500)
+                    color: Nocturne.n500
+                }
+                TextInput {
+                    id: folderName
+                    x: 12
+                    width: 136
+                    height: 28
+                    font: Nocturne.sans(12, 500)
+                    color: Nocturne.text
+                    cursorColor: Nocturne.text
+                    selectionColor: alpha(Nocturne.accent, 0.35)
+                    onAccepted: { walls.named(text); text = ""; walls.forceActiveFocus() }
+                    Keys.onEscapePressed: { walls.named(""); text = ""; walls.forceActiveFocus() }
+                }
+            }
+        }
+
+        // The colours, and the sorts.
+        Row {
+            y: 86
+            spacing: 6
+            Repeater {
+                model: walls.dots
+                Item {
+                    width: 22; height: 22
+                    Rectangle {
+                        visible: modelData.on
+                        x: -3.5; y: -3.5
+                        width: 29; height: 29
+                        radius: 14.5
+                        color: Nocturne.text
+                    }
+                    Rectangle {
+                        visible: modelData.on
+                        x: -2; y: -2
+                        width: 26; height: 26
+                        radius: 13
+                        color: Nocturne.bg
+                    }
+                    Rectangle {
+                        width: 22; height: 22
+                        radius: 11
+                        color: modelData.colour
+                        border.width: 1
+                        border.color: alpha(Nocturne.text, 0.18)
+                    }
+                    // "Any colour": the dots' hues in quarters.
+                    Rectangle {
+                        visible: modelData.any
+                        x: 4; y: 4
+                        width: 7; height: 7
+                        radius: 3.5
+                        color: "#e06c75"
+                    }
+                    Rectangle {
+                        visible: modelData.any
+                        x: 11; y: 4
+                        width: 7; height: 7
+                        radius: 3.5
+                        color: "#e5c07b"
+                    }
+                    Rectangle {
+                        visible: modelData.any
+                        x: 4; y: 11
+                        width: 7; height: 7
+                        radius: 3.5
+                        color: "#56b6c2"
+                    }
+                    Rectangle {
+                        visible: modelData.any
+                        x: 11; y: 11
+                        width: 7; height: 7
+                        radius: 3.5
+                        color: "#c678dd"
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: walls.colour(index)
+                    }
+                }
+            }
+        }
+        Rectangle {
+            x: head.width - width
+            y: 82
+            width: sortRow.width + 4
+            height: 30
+            radius: 8
+            color: alpha(Nocturne.bg, 0.7)
+            border.width: 1
+            border.color: Nocturne.n800
+            Row {
+                id: sortRow
+                x: 2; y: 2
+                spacing: 2
+                Repeater {
+                    model: walls.sorters
+                    Rectangle {
+                        width: 30; height: 26
+                        radius: 6
+                        color: modelData.on ? alpha(Nocturne.accent, 0.18) : "transparent"
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.icon
+                            font: Nocturne.icon(14)
+                            color: modelData.on ? Nocturne.a200 : Nocturne.n400
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: walls.sort(index)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Text {
+        visible: walls.empty
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: walls.stageY + 120
+        text: "No wallpapers in this colour yet."
+        font: Nocturne.sans(13, 400)
+        color: Nocturne.n400
+    }
+
+    // The wallpapers, where Rust put them, the one in hand drawn last.
+    Item {
+        id: stage
+        y: walls.stageY
+        width: walls.width
+        height: walls.height - walls.stageY - 112
+        Repeater {
+            model: walls.cards
+            Item {
+                x: modelData.x
+                y: modelData.y
+                width: modelData.w
+                height: modelData.h + (walls.grid ? 24 : 0)
+                opacity: modelData.dim
+                Rectangle {
+                    visible: modelData.on
+                    x: -2; y: -2
+                    width: modelData.w + 4
+                    height: modelData.h + 4
+                    radius: 10
+                    color: alpha(Nocturne.accent, 0.3)
+                }
+                Rectangle {
+                    width: modelData.w
+                    height: modelData.h
+                    radius: 8
+                    color: Nocturne.surface
+                    border.width: modelData.on ? 1.5 : 1
+                    border.color: modelData.on ? Nocturne.a400 : Nocturne.n800
+                    clip: true
+                    Image {
+                        x: 1; y: 1
+                        width: modelData.w - 2
+                        height: modelData.h - 2
+                        source: modelData.source
+                        fillMode: Image.PreserveAspectCrop
+                    }
+                    Rectangle {
+                        visible: modelData.video
+                        x: modelData.w - width - 8
+                        y: modelData.h - 28
+                        width: liveRow.width + 14
+                        height: 20
+                        radius: 10
+                        color: alpha(Nocturne.bg, 0.8)
+                        Row {
+                            id: liveRow
+                            x: 7
+                            height: 20
+                            spacing: 4
+                            Text {
+                                height: 20
+                                text: walls.icPlay
+                                font: Nocturne.icon(11)
+                                color: Nocturne.n200
+                            }
+                            Text {
+                                height: 20
+                                text: "Live"
+                                font: Nocturne.sans(10.5, 500)
+                                color: Nocturne.n200
+                            }
+                        }
+                    }
+                    Rectangle {
+                        visible: modelData.inUse
+                        x: 10; y: 10
+                        width: useRow.width + 16
+                        height: 22
+                        radius: 11
+                        color: alpha(Nocturne.bg, 0.8)
+                        border.width: 1
+                        border.color: Nocturne.a500
+                        Row {
+                            id: useRow
+                            x: 8
+                            height: 22
+                            spacing: 4
+                            Text {
+                                height: 22
+                                text: walls.icCheck
+                                font: Nocturne.icon(11)
+                                color: Nocturne.a200
+                            }
+                            Text {
+                                height: 22
+                                text: "In use"
+                                font: Nocturne.sans(11, 500)
+                                color: Nocturne.a200
+                            }
+                        }
+                    }
+                }
+                Text {
+                    visible: walls.grid
+                    y: modelData.h + 6
+                    width: modelData.w
+                    text: modelData.name
+                    elide: Text.ElideRight
+                    font: Nocturne.sans(12, 400)
+                    color: modelData.on ? Nocturne.text : Nocturne.n400
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: { if (modelData.on) { walls.apply() } else { walls.pick(index) } }
+                }
+            }
+        }
+        Column {
+            visible: walls.cover && !walls.empty
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 290 + 8
+            spacing: 3
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: walls.name
+                font: Nocturne.sans(16, 500)
+                color: Nocturne.text
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: walls.meta
+                font: Nocturne.sans(12, 400)
+                color: Nocturne.n400
+            }
+        }
+    }
+
+    // The foot: Previous, Set, Next, and the keys.
+    Item {
+        y: walls.height - 24 - 64
+        width: walls.width
+        height: 64
+        MouseArea { anchors.fill: parent }
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: 10
+            Rectangle {
+                width: 34; height: 34
+                radius: 17
+                color: prevArea.containsMouse ? Nocturne.n800 : "transparent"
+                border.width: 1
+                border.color: Nocturne.n700
+                Text {
+                    anchors.centerIn: parent
+                    text: walls.icLeft
+                    font: Nocturne.icon(15)
+                    color: Nocturne.n300
+                }
+                MouseArea {
+                    id: prevArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: walls.step(-1)
+                }
+            }
+            Rectangle {
+                width: setRow.width + 32
+                height: 34
+                radius: 10
+                color: setArea.containsMouse ? alpha(Nocturne.accent, 0.16) : "transparent"
+                border.width: 1
+                border.color: Nocturne.accent
+                Row {
+                    id: setRow
+                    x: 16
+                    height: 34
+                    spacing: 7
+                    Text {
+                        height: 34
+                        text: walls.icCheck
+                        font: Nocturne.icon(14)
+                        color: Nocturne.a200
+                    }
+                    Text {
+                        height: 34
+                        text: walls.setLabel
+                        font: Nocturne.sans(13, 500)
+                        color: Nocturne.a200
+                    }
+                }
+                MouseArea {
+                    id: setArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: walls.apply()
+                }
+            }
+            Rectangle {
+                width: 34; height: 34
+                radius: 17
+                color: nextArea.containsMouse ? Nocturne.n800 : "transparent"
+                border.width: 1
+                border.color: Nocturne.n700
+                Text {
+                    anchors.centerIn: parent
+                    text: walls.icRight
+                    font: Nocturne.icon(15)
+                    color: Nocturne.n300
+                }
+                MouseArea {
+                    id: nextArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: walls.step(1)
+                }
+            }
+        }
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 46
+            spacing: 16
+            Text { text: "Arrows to browse"; font: Nocturne.sans(11.5, 400); color: Nocturne.n500 }
+            Text { text: "Tab cover / grid"; font: Nocturne.sans(11.5, 400); color: Nocturne.n500 }
+            Text { text: "↵ set"; font: Nocturne.sans(11.5, 400); color: Nocturne.n500 }
+            Text { text: "Esc keeps the current one"; font: Nocturne.sans(11.5, 400); color: Nocturne.n500 }
+        }
+    }
+}

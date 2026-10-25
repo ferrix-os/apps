@@ -44,17 +44,20 @@ pub enum Tool {
     Scratchpad,
     /// Settings.
     Settings,
+    /// The wallpaper switcher.
+    Walls,
 }
 
 impl Tool {
     /// Every tool, in the dock's order, with its icon and words.
-    pub const ALL: [(Tool, &'static str, &'static str); 3] = [
+    pub const ALL: [(Tool, &'static str, &'static str); 4] = [
         (
             Tool::Search,
             "magnifying-glass",
             "Search or run · Super Space",
         ),
         (Tool::Scratchpad, "terminal", "Scratchpad · Super S"),
+        (Tool::Walls, "image", "Wallpapers · Super I"),
         (Tool::Settings, "sliders-horizontal", "Settings"),
     ];
 }

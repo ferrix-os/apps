@@ -64,6 +64,14 @@ fn installed() -> Vec<(String, String, Option<String>)> {
         .collect()
 }
 
+/// This program, to start its wallpaper switcher with.
+fn own_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(str::to_owned))
+        .unwrap_or_else(|| "/bin/yoru-shell".to_owned())
+}
+
 /// Ask hyprix again for the workspaces and the windows.
 fn refresh(hypr: Option<&Hypr>, state: &mut State) {
     let Some(hypr) = hypr else {
@@ -112,6 +120,7 @@ fn act(hypr: Option<&Hypr>, state: &mut State, action: Action) {
         }
         Action::Tool(Tool::Scratchpad) => dispatch("togglespecialworkspace scratch"),
         Action::Tool(Tool::Settings) => dispatch("exec settings"),
+        Action::Tool(Tool::Walls) => dispatch(&format!("exec {} --walls", own_path())),
         Action::Focus => {
             state.focus = !state.focus;
             let line = format!("decoration:dim_inactive {}", i32::from(state.focus));
