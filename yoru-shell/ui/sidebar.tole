@@ -1,0 +1,421 @@
+// A widget sidebar, as the design draws it (Ferrix's docs/DESKTOP.md §6,
+// Y4): at a screen edge, a strip until the pointer reaches it, then a
+// column 320 wide: a tab for each of its widgets and the pin; the shown
+// widget's name, moved to the other side or taken away; the widget; and
+// the widgets on neither side to add. Rust keeps what is where
+// (`src/widgets.rs`) and opens and closes the column (`src/side.rs`).
+import Fx
+
+struct Tab {
+    icon: string
+    label: string
+    on: bool
+}
+
+struct Cell {
+    day: string
+    inMonth: bool
+    today: bool
+}
+
+struct TaskRow {
+    text: string
+    done: bool
+}
+
+struct AddRow {
+    label: string
+}
+
+export component Sidebar : Item {
+    id: side
+    property bool open
+    property bool right
+    property list<Tab> tabs
+    property string pinIcon
+    property string pinTitle
+    property string label
+    property string moveIcon
+    property int kind
+    property string time
+    property string seconds
+    property string date
+    property string monthTitle
+    property list<Cell> cells
+    property list<TaskRow> tasks
+    property string countLine
+    property list<AddRow> adds
+    property string icCheck
+    property string icBox
+    property string icTrash
+    property string icClose
+    property string icPlus
+    property string icCalendar
+    property real panelH
+
+    signal tab(int index)
+    signal pin()
+    signal moveIt()
+    signal removeIt()
+    signal add(int index)
+    signal toggle(int index)
+    signal drop(int index)
+    signal task(string text)
+
+    // The edge's hint while closed.
+    Rectangle {
+        visible: !side.open
+        x: side.right ? side.width - 2 : 0
+        width: 2
+        height: side.height
+        color: alpha(Nocturne.accent, 0.35)
+    }
+
+    Rectangle {
+        id: panel
+        visible: side.open
+        x: 8; y: 8
+        width: 320
+        height: side.panelH
+        radius: 16
+        color: alpha(Nocturne.surface, 0.94)
+        border.width: 1
+        border.color: Nocturne.n800
+        MouseArea { anchors.fill: parent }
+
+        // The tabs and the pin.
+        Row {
+            x: 12; y: 12
+            spacing: 4
+            Repeater {
+                model: side.tabs
+                Rectangle {
+                    width: tabRow.width + 18
+                    height: 30
+                    radius: 8
+                    color: modelData.on ? alpha(Nocturne.accent, 0.18) : "transparent"
+                    Row {
+                        id: tabRow
+                        x: 9
+                        height: 30
+                        spacing: 6
+                        Text {
+                            height: 30
+                            text: modelData.icon
+                            font: Nocturne.icon(14)
+                            color: modelData.on ? Nocturne.a200 : Nocturne.n400
+                        }
+                        Text {
+                            height: 30
+                            visible: modelData.on
+                            text: modelData.label
+                            font: Nocturne.sans(12, 500)
+                            color: Nocturne.a200
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: side.tab(index)
+                    }
+                }
+            }
+        }
+        Rectangle {
+            x: 320 - 12 - 30; y: 12
+            width: 30; height: 30
+            radius: 8
+            color: pinArea.containsMouse ? Nocturne.n800 : "transparent"
+            Text {
+                anchors.centerIn: parent
+                text: side.pinIcon
+                font: Nocturne.icon(14)
+                color: Nocturne.n300
+            }
+            MouseArea {
+                id: pinArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: side.pin()
+            }
+        }
+
+        // The shown widget's name, move and remove.
+        Item {
+            visible: side.kind >= 0
+            x: 16; y: 54
+            width: 320 - 32
+            height: 28
+            Text {
+                height: 28
+                text: side.label
+                font: Nocturne.sans(11, 600)
+                color: Nocturne.n500
+            }
+            Row {
+                x: parent.width - width
+                spacing: 4
+                Repeater {
+                    model: 2
+                    Rectangle {
+                        width: 28; height: 28
+                        radius: 6
+                        color: headArea.containsMouse ? Nocturne.n800 : "transparent"
+                        Text {
+                            anchors.centerIn: parent
+                            text: index == 0 ? side.moveIcon : side.icClose
+                            font: Nocturne.icon(13)
+                            color: Nocturne.n400
+                        }
+                        MouseArea {
+                            id: headArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: { if (index == 0) { side.moveIt() } else { side.removeIt() } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The clock and the month.
+        Item {
+            visible: side.kind == 0
+            x: 16; y: 90
+            width: 288
+            height: 360
+            Row {
+                spacing: 6
+                Text {
+                    text: side.time
+                    font: Nocturne.sans(44, 300)
+                    color: Nocturne.text
+                }
+                Text {
+                    y: 26
+                    text: side.seconds
+                    font: Nocturne.sans(16, 400)
+                    color: Nocturne.n500
+                }
+            }
+            Text {
+                y: 60
+                text: side.date
+                font: Nocturne.sans(13, 400)
+                color: Nocturne.n400
+            }
+            Rectangle {
+                y: 92
+                width: 288
+                height: 262
+                radius: 12
+                color: alpha(Nocturne.bg, 0.6)
+                border.width: 1
+                border.color: Nocturne.n800
+                Row {
+                    x: 14; y: 12
+                    spacing: 6
+                    Text {
+                        text: side.icCalendar
+                        font: Nocturne.icon(12)
+                        color: Nocturne.n500
+                    }
+                    Text {
+                        text: side.monthTitle
+                        font: Nocturne.sans(11, 600)
+                        color: Nocturne.n500
+                    }
+                }
+                Grid {
+                    x: 10; y: 38
+                    columns: 7
+                    Repeater {
+                        model: 7
+                        Text {
+                            width: 38; height: 24
+                            horizontalAlignment: Text.AlignHCenter
+                            text: index == 0 ? "Mo" : index == 1 ? "Tu" : index == 2 ? "We" : index == 3 ? "Th" : index == 4 ? "Fr" : index == 5 ? "Sa" : "Su"
+                            font: Nocturne.sans(10.5, 500)
+                            color: Nocturne.n600
+                        }
+                    }
+                    Repeater {
+                        model: side.cells
+                        Item {
+                            width: 38; height: 32
+                            Rectangle {
+                                visible: modelData.today
+                                anchors.centerIn: parent
+                                width: 28; height: 28
+                                radius: 14
+                                color: Nocturne.accent
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData.day
+                                font: Nocturne.sans(12, modelData.today ? 600 : 400)
+                                color: modelData.today ? Nocturne.bg : modelData.inMonth ? Nocturne.n200 : Nocturne.n700
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The to-do list.
+        Item {
+            visible: side.kind == 3
+            x: 16; y: 90
+            width: 288
+            height: 400
+            Text {
+                text: side.countLine
+                font: Nocturne.sans(12, 400)
+                color: Nocturne.n500
+            }
+            Column {
+                y: 26
+                spacing: 2
+                Repeater {
+                    model: side.tasks
+                    Rectangle {
+                        width: 288; height: 34
+                        radius: 8
+                        color: taskArea.containsMouse ? alpha(Nocturne.text, 0.05) : "transparent"
+                        MouseArea {
+                            id: taskArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: side.toggle(index)
+                        }
+                        Text {
+                            x: 8
+                            height: 34
+                            text: modelData.done ? side.icCheck : side.icBox
+                            font: Nocturne.icon(16)
+                            color: modelData.done ? Nocturne.a400 : Nocturne.n500
+                        }
+                        Text {
+                            x: 34
+                            width: 288 - 34 - 36
+                            height: 34
+                            elide: Text.ElideRight
+                            text: modelData.text
+                            font: Nocturne.sans(13, 400)
+                            color: modelData.done ? Nocturne.n500 : Nocturne.text
+                        }
+                        Rectangle {
+                            visible: taskArea.containsMouse || dropArea.containsMouse
+                            x: 288 - 30; y: 4
+                            width: 26; height: 26
+                            radius: 6
+                            color: dropArea.containsMouse ? Nocturne.n800 : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: side.icTrash
+                                font: Nocturne.icon(13)
+                                color: Nocturne.n400
+                            }
+                            MouseArea {
+                                id: dropArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: side.drop(index)
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                y: 30 + side.tasks.length * 36
+                width: 288; height: 34
+                radius: 10
+                color: alpha(Nocturne.bg, 0.6)
+                border.width: 1
+                border.color: taskInput.activeFocus ? Nocturne.a500 : Nocturne.n800
+                Text {
+                    x: 10
+                    height: 34
+                    visible: taskInput.text == ""
+                    text: "Add a task, ↵"
+                    font: Nocturne.sans(13, 400)
+                    color: Nocturne.n600
+                }
+                TextInput {
+                    id: taskInput
+                    x: 10
+                    width: 268
+                    height: 34
+                    font: Nocturne.sans(13, 400)
+                    color: Nocturne.text
+                    cursorColor: Nocturne.text
+                    selectionColor: alpha(Nocturne.accent, 0.35)
+                    onAccepted: { side.task(text); text = "" }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.IBeamCursor
+                    onPressed: taskInput.forceActiveFocus()
+                }
+            }
+        }
+
+        // What is not kept yet.
+        Text {
+            visible: side.kind == 1 || side.kind == 2
+            x: 16; y: 96
+            width: 288
+            text: side.kind == 1 ? "Not kept yet: weather is opt-in, and its widget comes next." : "Not kept yet: quick settings come next; Settings has them now."
+            font: Nocturne.sans(12.5, 400)
+            color: Nocturne.n500
+        }
+
+        // The widgets on neither side.
+        Flow {
+            x: 16
+            y: side.panelH - 16 - 30
+            width: 288
+            spacing: 6
+            Repeater {
+                model: side.adds
+                Rectangle {
+                    width: addRow.width + 20
+                    height: 30
+                    radius: 15
+                    color: "transparent"
+                    border.width: 1
+                    border.color: addArea.containsMouse ? Nocturne.a500 : Nocturne.n700
+                    Row {
+                        id: addRow
+                        x: 10
+                        height: 30
+                        spacing: 6
+                        Text {
+                            height: 30
+                            text: side.icPlus
+                            font: Nocturne.icon(12)
+                            color: Nocturne.n400
+                        }
+                        Text {
+                            height: 30
+                            text: modelData.label
+                            font: Nocturne.sans(12, 500)
+                            color: Nocturne.n300
+                        }
+                    }
+                    MouseArea {
+                        id: addArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: side.add(index)
+                    }
+                }
+            }
+        }
+    }
+}

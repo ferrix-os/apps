@@ -136,6 +136,40 @@ pub fn render_stash(size: (u32, u32), scale: f32) -> Option<tole::Frame> {
     Some(frame)
 }
 
+/// A sidebar as drawn for a picture: the left with the clock on
+/// 2026-10-25 21:40, or the right with three tasks.
+#[must_use]
+pub fn render_sidebar(todo: bool, scale: f32) -> Option<tole::Frame> {
+    use crate::widgets::{Arrangement, Side, Task};
+    let tasks = [
+        ("Water the plants", true),
+        ("Call the bank", false),
+        ("Pack for Sunday", false),
+    ]
+    .into_iter()
+    .map(|(text, done)| Task {
+        text: text.to_owned(),
+        done,
+    })
+    .collect();
+    let shown = crate::side::Shown {
+        side: if todo { Side::Right } else { Side::Left },
+        arrangement: Arrangement::default(),
+        tasks,
+        now: crate::widgets::days_from_civil(2026, 10, 25) * 86_400 + 21 * 3600 + 40 * 60 + 7,
+        open: true,
+    };
+    let size = (crate::side::OPEN, 900);
+    let mut view = crate::side::View::new(crate::look::fonts())?;
+    view.ui.set_scale(scale);
+    view.resize(size);
+    view.show(&shown);
+    view.ui.update();
+    let mut frame = tole::Frame::new(size, scale, tole::Color::hex(0x10_1220))?;
+    let _ = view.ui.render_into(&mut frame);
+    Some(frame)
+}
+
 /// The program.
 #[must_use]
 pub fn main() -> ExitCode {
@@ -143,6 +177,40 @@ pub fn main() -> ExitCode {
     if arguments.iter().any(|word| word == "--version") {
         println!("yoru-shell {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
+    }
+    if let Some(at) = arguments.iter().position(|word| word == "--render-sidebar") {
+        let Some(path) = arguments.get(at + 1) else {
+            eprintln!("yoru-shell: --render-sidebar needs a file");
+            return ExitCode::FAILURE;
+        };
+        let todo = arguments.iter().any(|word| word == "--todo");
+        let Some(frame) = render_sidebar(todo, 1.0) else {
+            eprintln!("yoru-shell: the sidebar could not be drawn");
+            return ExitCode::FAILURE;
+        };
+        let pixmap = frame.pixmap();
+        let png = tole::png::encode(pixmap.width(), pixmap.height(), pixmap.data());
+        return match std::fs::write(path, png) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("yoru-shell: {path}: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if let Some(at) = arguments.iter().position(|word| word == "--sidebar") {
+        let Some(side) = arguments
+            .get(at + 1)
+            .and_then(|word| crate::widgets::Side::of(word))
+        else {
+            eprintln!("yoru-shell: --sidebar left or --sidebar right");
+            return ExitCode::FAILURE;
+        };
+        return if crate::side::run(side) == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
     }
     if arguments.iter().any(|word| word == "--stash-panel") {
         return if crate::shelf::run() == 0 {
