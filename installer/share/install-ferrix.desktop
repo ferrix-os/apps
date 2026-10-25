@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Install Ferrix
+GenericName=System Installer
+Comment=Install Ferrix on this computer's disk
+Exec=/bin/ferrix-installer
+Icon=ferrix-installer
+Terminal=false
+Keywords=install;installer;setup;disk;partition;
+Categories=System;
+StartupWMClass=rocks.magical.installer

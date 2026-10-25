@@ -1,0 +1,74 @@
+# installer, an app (docs/APPS.md): "Install Ferrix", the live system's
+# installer, drawn with tole in Settings' faces and Nocturne's colours. It
+# asks the root daemon on /run/ferrix-installer.sock for the disks and to
+# install; it never writes a disk itself.
+
+[package]
+name = "installer"
+version = "0.1.0"
+description = "Install Ferrix: the live system's installer, one page at a time"
+license = "MIT AND OFL-1.1"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "ferrix-installer"
+to = "bin/ferrix-installer"
+mode = "755"
+
+# Its entry in a launcher and its icon, kept in this folder: fuzzel lists
+# every `.desktop` file in `usr/share/applications`.
+[[package.files]]
+from = "share/install-ferrix.desktop"
+source = "folder"
+to = "usr/share/applications/install-ferrix.desktop"
+mode = "644"
+
+[[package.files]]
+from = "share/ferrix-installer.svg"
+source = "folder"
+to = "usr/share/icons/hicolor/scalable/apps/ferrix-installer.svg"
+mode = "644"
+
+# Settings' faces, Figtree and JetBrains Mono, so the two read as one
+# family, and their licences, which a package carrying them must
+# reproduce.
+[[package.files]]
+from = "share/fonts"
+source = "folder"
+tree = true
+to = "usr/share/fonts/installer"
+
+[[package.files]]
+from = "LICENSE-figtree"
+source = "folder"
+to = "usr/share/licenses/installer/LICENSE-figtree"
+mode = "644"
+
+[[package.files]]
+from = "LICENSE-jetbrains-mono"
+source = "folder"
+to = "usr/share/licenses/installer/LICENSE-jetbrains-mono"
+mode = "644"
+
+[build]
+kind = "cargo"
+
+# Only on the live medium, which xtask builds with `--app installer`: an
+# installed system has nothing to install.
+[image]
+default = false
+
+[check]
+host-tests = true
+
+[[smoke]]
+run = "ferrix-installer --version"
+expect = "ferrix-installer 0.1.0"
+
+# Not booted live (no `ferrix.live` on the kernel's command line):
+# --autostart leaves at once, with success, and opens no window.
+[[smoke]]
+run = "ferrix-installer --autostart && echo autostart left"
+expect = "autostart left"

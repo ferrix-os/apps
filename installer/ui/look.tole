@@ -1,0 +1,42 @@
+// Nocturne, the desktop's design system (Ferrix's docs/DESKTOP.md §6,
+// yoru-shell's ui/nocturne.tole), as the installer's tokens, in Settings'
+// faces, Figtree and JetBrains Mono, so the two apps read as one family.
+// The installer is dark only, as the live session is.
+singleton Look {
+    // The ground, the surface, the text and the accent: Nocturne's four.
+    property color bg: "#161826"
+    property color card: "#232532"
+    property color text: "#e9e9ed"
+    property color accent: "#9184d9"
+
+    // What is set into a card (a field, a well), and a card hovered.
+    property color inset: "#11131d"
+    property color hover: "#2b2d3b"
+    property color sel: "#33364a"
+    // Lines: Nocturne's neutrals 800 and 700.
+    property color line: "#33364a"
+    property color line2: "#3f424d"
+    // Ink, strongest first: neutrals 400 and 500.
+    property color muted: "#b2b6ca"
+    property color faint: "#9397ab"
+    // The accent's ramp: 300 as ink, 900 behind it, 600 pressed.
+    property color accentText: "#d2cefd"
+    property color accentSoft: "#2b2741"
+    property color accentDeep: "#796cbf"
+    // Take care, erased or failed, and done.
+    property color warn: "#e6b45c"
+    property color warnSoft: "#2f2a22"
+    property color danger: "#f07178"
+    property color dangerLine: "#a8434b"
+    property color dangerSoft: "#33202a"
+    property color good: "#46cad0"
+
+    property string sansFamily: "Figtree, Inter, Liberation Sans, sans-serif"
+    property string monoFamily: "JetBrains Mono, Liberation Mono, monospace"
+    function sans(px: real = 14, weight: int = 400): font {
+        return font(sansFamily, px, weight)
+    }
+    function mono(px: real = 12, weight: int = 400): font {
+        return font(monoFamily, px, weight)
+    }
+}

@@ -1,0 +1,42 @@
+[package]
+name = "installer"
+description = "Install Ferrix: the live system's installer, a window of pages in the style of Ubuntu's"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# An app (Ferrix's docs/APPS.md): a workspace of its own, a static Linux
+# program built with std against the target's own musl. It builds inside a
+# Ferrix checkout, where the compositor's libraries and tole are beside it.
+[workspace]
+
+[lib]
+name = "installer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ferrix-installer"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+# The Wayland client's events, which tole's window hands back.
+compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
+# tole, Ferrix's UI framework: the window's tree, from the markup under
+# `ui/`, drawn on the CPU with the desktop's own text.
+tole = { path = "../../system/linux/tole/tole", features = ["wayland"] }
+
+[build-dependencies]
+# The markup, compiled into Rust when the installer is built.
+tole-compiler = { path = "../../system/linux/tole/tole-compiler" }
+
+# As the compositor's: overflow checks on everywhere.
+[profile.dev]
+overflow-checks = true
+opt-level = 2
+
+[profile.release]
+overflow-checks = true

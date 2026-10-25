@@ -1,0 +1,209 @@
+// The installer's parts, after Settings' (its ui/parts.tole), every
+// colour a Look token.
+import Fx
+
+// One of a few, side by side in a well: the keyboard's variant.
+component Segmented : Rectangle {
+    id: seg
+    property list<string> options
+    property int current: -1
+    signal picked(int option)
+
+    width: choices.implicitWidth + 8
+    height: 38
+    radius: 10
+    color: Look.inset
+    border.width: 1
+    border.color: Look.line
+    Row {
+        id: choices
+        x: 4; y: 3
+        spacing: 2
+        Repeater {
+            model: seg.options
+            Rectangle {
+                width: label.implicitWidth + 24
+                height: 32
+                radius: 7
+                color: index == seg.current ? Look.sel : pick.containsMouse ? Look.hover : "transparent"
+                Text {
+                    id: label
+                    anchors.centerIn: parent
+                    text: modelData
+                    font: Look.sans(13, 500)
+                    color: index == seg.current ? Look.text : Look.muted
+                }
+                MouseArea {
+                    id: pick
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: seg.picked(index)
+                }
+            }
+        }
+    }
+}
+
+// A choice's dot: a ring, filled in the accent when chosen.
+component Dot : Rectangle {
+    property bool on
+    width: 20; height: 20
+    radius: 10
+    color: "transparent"
+    border.width: on ? 2 : 1.5
+    border.color: on ? Look.accent : Look.line2
+    Rectangle {
+        visible: parent.on
+        x: 5; y: 5
+        width: 10; height: 10
+        radius: 5
+        color: Look.accent
+    }
+}
+
+// A tick, for what is chosen in a list.
+component Tick : Shape {
+    property color color
+    width: 16; height: 16
+    ShapePath {
+        strokeColor: color; strokeWidth: 2; fillColor: "transparent"
+        startX: 2.5; startY: 8.5
+        PathLine { x: 6.5; y: 12.5 }
+        PathLine { x: 13.5; y: 4 }
+    }
+}
+
+// A warning's mark: a triangle with a bar and a point.
+component Caution : Shape {
+    property color color
+    width: 20; height: 20
+    ShapePath {
+        strokeColor: color; strokeWidth: 1.6; fillColor: "transparent"
+        startX: 10; startY: 2.5
+        PathLine { x: 18.5; y: 17.5 }
+        PathLine { x: 1.5; y: 17.5 }
+        closed: true
+    }
+    ShapePath {
+        strokeColor: color; strokeWidth: 1.8
+        startX: 10; startY: 7.5
+        PathLine { x: 10; y: 12 }
+    }
+    ShapePath {
+        strokeColor: color; strokeWidth: 1.8
+        startX: 10; startY: 14.3
+        PathLine { x: 10; y: 15.3 }
+    }
+}
+
+// A chevron, down when `open` is false, up when true.
+component Chevron : Shape {
+    property bool open
+    property color color
+    width: 10; height: 6
+    ShapePath {
+        strokeColor: color
+        strokeWidth: 1.6
+        startX: 0.5; startY: open ? 5.5 : 0.5
+        PathLine { x: 5; y: open ? 1 : 5 }
+        PathLine { x: 9.5; y: open ? 5.5 : 0.5 }
+    }
+}
+
+// A button: filled in the accent when it is the one to press, outlined
+// when not; dimmed and deaf when not enabled.
+component Button : Rectangle {
+    id: button
+    property string label
+    property bool primary
+    property bool big
+    property bool live: true
+    signal clicked()
+
+    width: max(caption.implicitWidth + (big ? 56 : 36), big ? 200 : 104)
+    height: big ? 52 : 40
+    radius: big ? 12 : 10
+    opacity: live ? 1 : 0.45
+    color: primary ? (area.pressed ? Look.accentDeep : area.containsMouse && live ? "#a296e6" : Look.accent) : (area.containsMouse && live ? Look.hover : Look.card)
+    border.width: primary ? 0 : 1
+    border.color: Look.line2
+    Text {
+        id: caption
+        anchors.centerIn: parent
+        text: button.label
+        font: Look.sans(button.big ? 17 : 15, 600)
+        color: button.primary ? Look.bg : Look.text
+    }
+    MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: if (button.live) { button.clicked() }
+    }
+}
+
+// Lines of label and value in a card: the summary.
+component InfoCard : Rectangle {
+    id: info
+    property list<string> labels
+    property list<string> values
+    height: lines.implicitHeight + 16
+    radius: 12
+    color: Look.card
+    border.width: 1
+    border.color: Look.line
+    Column {
+        id: lines
+        y: 8
+        Repeater {
+            model: info.labels
+            Item {
+                width: info.width
+                height: 36
+                Rectangle {
+                    visible: index > 0
+                    x: 20
+                    width: info.width - 40
+                    height: 1
+                    color: Look.line
+                }
+                Text {
+                    x: 20
+                    height: 36
+                    text: modelData
+                    font: Look.sans(14)
+                    color: Look.muted
+                }
+                Text {
+                    x: 160
+                    width: info.width - 180
+                    height: 36
+                    elide: Text.ElideRight
+                    text: info.values[index]
+                    font: Look.sans(15, 500)
+                    color: Look.text
+                }
+            }
+        }
+    }
+}
+
+// Big buttons side by side, the one at `current` filled.
+component ButtonRow : Row {
+    id: buttons
+    property list<string> options
+    property int current: -1
+    signal picked(int option)
+    spacing: 16
+    Repeater {
+        model: buttons.options
+        Button {
+            big: true
+            label: modelData
+            primary: index == buttons.current
+            onClicked: buttons.picked(index)
+        }
+    }
+}
