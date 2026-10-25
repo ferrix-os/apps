@@ -4,32 +4,21 @@
 //! * Focus mode is `decoration:dim_inactive` for the session, as the dock's
 //!   button sets it (`hyprctl keyword`).
 //! * Auto-tile is `general:layout`, `dwindle` against Yoru's `floating`,
-//!   and the theme colour the focused border, the others' and the shadow,
-//!   in one of Settings' accents: kept as Settings keeps them, by
-//!   `hyprctl setting`, so Settings shows the same.
+//!   kept as Settings keeps it, by `hyprctl setting`.
+//! * The theme colour and the appearance are the theme engine's choice
+//!   (`crate::theme`), its file written; every shell program redraws in
+//!   it, and the dock hands the compositor the frames' colours.
 //! * Do not disturb is notifyd's file (`quiet_file`): while it is there a
 //!   notification goes to the list without a banner, unless it is critical.
 //! * Brightness is the first backlight under `/sys/class/backlight`, where
 //!   there is one.
-//! * Volume and the microphone, Wi-Fi, Bluetooth, night light and a light
-//!   appearance say why they are not here: no sound server is asked yet,
-//!   no wireless device or gamma is there, and Nocturne is dark only.
+//! * Volume and the microphone, Wi-Fi, Bluetooth and night light say why
+//!   they are not here: no sound server is asked yet, no wireless device
+//!   or gamma is there.
 
 use std::path::{Path, PathBuf};
 
 use crate::hypr::Hypr;
-use crate::json::Json;
-
-/// Settings' accents (Settings' `look::ACCENTS`): a name and an OKLCH hue.
-pub const ACCENTS: [(&str, f32); 7] = [
-    ("Blue", 250.0),
-    ("Teal", 195.0),
-    ("Green", 150.0),
-    ("Amber", 80.0),
-    ("Orange", 45.0),
-    ("Rose", 10.0),
-    ("Violet", 300.0),
-];
 
 /// An OKLCH colour as sRGB bytes, clipped into the gamut (as Settings').
 #[must_use]
@@ -52,17 +41,6 @@ pub fn oklch(l: f32, c: f32, h: f32) -> [u8; 3] {
         (v * 255.0).round().clamp(0.0, 255.0) as u8
     };
     [encode(r), encode(g), encode(bl)]
-}
-
-/// The colours an accent gives the desktop, as Settings writes them: the
-/// focused border, the others, the shadow.
-#[must_use]
-pub fn accent_colours(hue: f32) -> [String; 3] {
-    let hex = |l: f32, c: f32| {
-        let [r, g, b] = oklch(l, c, hue);
-        format!("rgb({r:02x}{g:02x}{b:02x})")
-    };
-    [hex(0.72, 0.13), hex(0.36, 0.03), hex(0.12, 0.03)]
 }
 
 /// A backlight: its folder, its brightness and the most it takes.
@@ -147,14 +125,14 @@ pub fn quiet_file() -> Option<PathBuf> {
 }
 
 /// What the quick settings show.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Quick {
     /// Focus mode: the other windows dimmed.
     pub focus: bool,
     /// Auto-tile: windows tiled rather than floating.
     pub tiled: bool,
-    /// The accent the focused border is in, if it is one of Settings'.
-    pub accent: Option<usize>,
+    /// The theme chosen.
+    pub theme: crate::theme::Theme,
     /// Do not disturb.
     pub quiet: bool,
     /// The backlight, if there is one.
@@ -174,8 +152,10 @@ pub enum Change {
     Tile,
     /// Do not disturb on or off.
     Quiet,
-    /// The theme colour: accent `n`.
-    Accent(usize),
+    /// The theme colour: `theme::Mode::all()`'s `n`.
+    Theme(usize),
+    /// The appearance: `theme::Appearance::ALL`'s `n`.
+    Appearance(usize),
     /// The brightness, a percentage.
     Brightness(u32),
 }
@@ -196,23 +176,6 @@ pub fn option_value(answer: &str) -> Option<String> {
     })
 }
 
-/// The accent of `settings` (`j/settings`: the kept keys and values), if
-/// its focused border is one of Settings' accents.
-#[must_use]
-pub fn accent_of(settings: &Json) -> Option<usize> {
-    let Json::Array(items) = settings else {
-        return None;
-    };
-    let border = items.iter().find_map(|item| {
-        (item.get("key").and_then(Json::str) == Some("general:col.active_border"))
-            .then(|| item.get("value").and_then(Json::str).map(str::to_owned))
-            .flatten()
-    })?;
-    ACCENTS
-        .iter()
-        .position(|(_, hue)| accent_colours(*hue)[0] == border)
-}
-
 /// What the compositor is asked for `change` from `quick`: its requests.
 #[must_use]
 pub fn requests(quick: &Quick, change: &Change) -> Vec<String> {
@@ -225,15 +188,9 @@ pub fn requests(quick: &Quick, change: &Change) -> Vec<String> {
             "setting general:layout {}",
             if quick.tiled { "floating" } else { "dwindle" }
         )],
-        Change::Accent(n) => ACCENTS.get(*n).map_or_else(Vec::new, |(_, hue)| {
-            let [active, inactive, shadow] = accent_colours(*hue);
-            vec![
-                format!("setting general:col.active_border {active}"),
-                format!("setting general:col.inactive_border {inactive}"),
-                format!("setting decoration:shadow:color {shadow}"),
-            ]
-        }),
-        Change::Quiet | Change::Brightness(_) => Vec::new(),
+        Change::Theme(_) | Change::Appearance(_) | Change::Quiet | Change::Brightness(_) => {
+            Vec::new()
+        }
     }
 }
 
@@ -248,10 +205,11 @@ pub fn read(hypr: Option<&Hypr>) -> Quick {
     Quick {
         focus: option("decoration:dim_inactive").is_some_and(|v| v != "0"),
         tiled: option("general:layout").is_some_and(|v| v != "floating"),
-        accent: hypr
-            .and_then(|h| h.ask("j/settings"))
-            .and_then(|text| Json::parse(&text))
-            .and_then(|json| accent_of(&json)),
+        theme: crate::theme::theme_file()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .map_or_else(crate::theme::Theme::default, |text| {
+                crate::theme::Theme::read(&text)
+            }),
         quiet: quiet_file().is_some_and(|f| f.exists()),
         backlight: backlight(Path::new("/sys/class/backlight")),
         wireless: has_wireless(Path::new("/sys/class/net")),
@@ -285,6 +243,27 @@ pub fn change(hypr: Option<&Hypr>, quick: &Quick, change: &Change) -> String {
                 Err(e) => format!("do not disturb: {}: {e}", file.display()),
             }
         }
+        Change::Theme(n) | Change::Appearance(n) => {
+            let mut theme = quick.theme;
+            let named = if let Change::Theme(_) = change {
+                let Some(mode) = crate::theme::Mode::all().get(*n).copied() else {
+                    return "theme: no such theme".to_owned();
+                };
+                theme.mode = mode;
+                format!("theme {}", mode.name())
+            } else {
+                let Some(look) = crate::theme::Appearance::ALL.get(*n).copied() else {
+                    return "appearance: no such appearance".to_owned();
+                };
+                theme.appearance = look;
+                format!("appearance {}", look.name())
+            };
+            let Some(file) = crate::theme::theme_file() else {
+                return format!("{named}: no $HOME");
+            };
+            crate::widgets::keep(&file, &theme.text());
+            named
+        }
         Change::Brightness(percent) => {
             let Some(light) = &quick.backlight else {
                 return "brightness: no backlight".to_owned();
@@ -313,11 +292,7 @@ pub fn change(hypr: Option<&Hypr>, quick: &Quick, change: &Change) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ACCENTS, Backlight, Change, Quick, accent_colours, accent_of, backlight, option_value,
-        requests,
-    };
-    use crate::json::Json;
+    use super::{Backlight, Change, Quick, backlight, option_value, requests};
 
     #[test]
     fn an_options_answer_is_its_value() {
@@ -331,29 +306,6 @@ mod tests {
             Some("ff796cbf")
         );
         assert_eq!(option_value("no such option"), None);
-    }
-
-    /// The accents are Settings': Blue's focused border is what Settings
-    /// writes for it.
-    #[test]
-    fn the_accent_is_found_by_the_border_settings_keeps() {
-        let blue = accent_colours(ACCENTS[0].1);
-        assert!(
-            blue[0].starts_with("rgb(") && blue[0].len() == 11,
-            "{blue:?}"
-        );
-        let teal = &accent_colours(195.0)[0];
-        let kept = Json::parse(&format!(
-            "[{{\"key\": \"general:gaps_in\", \"value\": \"5\"}}, \
-             {{\"key\": \"general:col.active_border\", \"value\": \"{teal}\"}}]"
-        ))
-        .expect("json");
-        assert_eq!(accent_of(&kept), Some(1));
-        let own = Json::parse(
-            "[{\"key\": \"general:col.active_border\", \"value\": \"rgba(796cbfff)\"}]",
-        )
-        .expect("json");
-        assert_eq!(accent_of(&own), None);
     }
 
     #[test]
@@ -380,11 +332,10 @@ mod tests {
             requests(&on, &Change::Tile),
             ["setting general:layout floating"]
         );
-        let accent = requests(&off, &Change::Accent(1));
-        assert_eq!(accent.len(), 3);
-        assert!(accent[0].starts_with("setting general:col.active_border rgb("));
-        assert!(accent[2].starts_with("setting decoration:shadow:color rgb("));
-        assert!(requests(&off, &Change::Accent(99)).is_empty());
+        assert!(
+            requests(&off, &Change::Theme(1)).is_empty(),
+            "a file, not a request"
+        );
         assert!(requests(&off, &Change::Quiet).is_empty());
     }
 

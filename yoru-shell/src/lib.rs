@@ -15,6 +15,7 @@ pub mod shelf;
 pub mod side;
 pub mod stash;
 pub mod switch;
+pub mod theme;
 pub mod ui;
 pub mod walls;
 pub mod weather;
