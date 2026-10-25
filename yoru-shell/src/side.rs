@@ -18,8 +18,8 @@ use tole::{Color, Ui};
 use crate::look::icon;
 use crate::quick::{Change, Quick};
 use crate::ui::{
-    AddRow, Cell, DayRow, HourRow, QuickAccent, QuickSlider, QuickTile, Sidebar, SidebarSignal,
-    Tab, TaskRow,
+    AddRow, Cell, DayRow, HourRow, QuickAccent, QuickLook, QuickSlider, QuickTile, Sidebar,
+    SidebarSignal, Tab, TaskRow,
 };
 use crate::widgets::{self, Arrangement, Kind, Side, Task};
 use crate::window::say;
@@ -349,18 +349,37 @@ impl View {
                 ),
             ],
         );
-        let accents = crate::quick::ACCENTS
-            .iter()
-            .enumerate()
-            .map(|(n, (name, hue))| {
-                let [r, g, b] = crate::quick::oklch(0.72, 0.13, *hue);
+        let theme = &quick.theme;
+        let accents = crate::theme::Mode::all()
+            .into_iter()
+            .map(|mode| {
+                let hue = match mode {
+                    crate::theme::Mode::Named(n) => {
+                        crate::theme::TRIADS.get(n).map_or(289.0, |t| t.1[0])
+                    }
+                    crate::theme::Mode::Wallpaper => 289.0,
+                };
+                let [r, g, b] = crate::quick::oklch(0.72, (0.14 * theme.vibrance).min(0.26), hue);
                 QuickAccent {
-                    name: s(name),
+                    name: s(mode.name()),
                     colour: Color::rgba(r, g, b, 0xff),
-                    on: quick.accent == Some(n),
+                    icon: s(if mode == crate::theme::Mode::Wallpaper {
+                        icon("image")
+                    } else {
+                        String::new()
+                    }),
+                    on: theme.mode == mode,
                 }
             })
             .collect::<Vec<_>>();
+        let looks = crate::theme::Appearance::ALL
+            .into_iter()
+            .map(|look| QuickLook {
+                name: s(look.name()),
+                on: theme.appearance == look,
+            })
+            .collect::<Vec<_>>();
+        v.q_looks.set(ui, looks);
         v.q_accents.set(ui, accents);
         v.q_line.set(ui, s(&quick.said));
     }
@@ -467,7 +486,10 @@ impl View {
                     5 => Some(Asked::Quick(Change::Tile)),
                     _ => None,
                 },
-                SidebarSignal::QuickAccent(i) => index(i).map(|n| Asked::Quick(Change::Accent(n))),
+                SidebarSignal::QuickAccent(i) => index(i).map(|n| Asked::Quick(Change::Theme(n))),
+                SidebarSignal::QuickLook(i) => {
+                    index(i).map(|n| Asked::Quick(Change::Appearance(n)))
+                }
             });
         }
         asked
@@ -640,6 +662,9 @@ pub fn run(side: Side) -> i32 {
         say("err: the sidebar's tree could not be made");
         return 1;
     };
+    let mut theme = crate::theme::Live::new();
+    theme.tokens.apply(&mut view.ui);
+    shown.quick.theme = theme.theme;
     view.show(&shown);
     let options = WindowOptions {
         title: format!("Yoru {} sidebar", side.id()),
@@ -737,13 +762,24 @@ pub fn run(side: Side) -> i32 {
                 Event::Closed(_) | Event::CloseRequested(_) => return 0,
                 Event::Timer(timer) if timer == tick => {
                     shown.now = now();
+                    let mut themed = false;
+                    if let Some(tokens) = theme.poll() {
+                        tokens.apply(&mut view.ui);
+                        say(&format!(
+                            "{} sidebar: {}",
+                            side.id(),
+                            crate::theme::said(&theme.theme, &tokens)
+                        ));
+                        themed = true;
+                    }
+                    shown.quick.theme = theme.theme;
                     let stamps = (stamp(file.as_deref()), stamp(todo.as_deref()));
                     if stamps != seen {
                         seen = stamps;
                         shown.arrangement = read_arrangement();
                         shown.tasks = read_tasks();
                     }
-                    changed = shown.open;
+                    changed = shown.open || themed;
                 }
                 _ => {}
             }
@@ -773,10 +809,11 @@ pub fn run(side: Side) -> i32 {
                     )
                 };
                 say(&format!(
-                    "quick: {said}; now focus {}, tiled {}, accent {:?}, quiet {}, volume {}, microphone {}",
+                    "quick: {said}; now focus {}, tiled {}, theme {} {}, quiet {}, volume {}, microphone {}",
                     q.focus,
                     q.tiled,
-                    q.accent,
+                    q.theme.mode.name(),
+                    q.theme.appearance.name(),
                     q.quiet,
                     level(q.sink.as_ref()),
                     level(q.source.as_ref())
@@ -927,8 +964,12 @@ mod tests {
             "night light"
         );
         assert_eq!(
-            click(8.0 + 16.0 + 40.0 * 2.0 + 14.0, 8.0 + 90.0 + 402.0 + 14.0),
-            vec![Asked::Quick(Change::Accent(2))]
+            click(8.0 + 16.0 + 49.0 * 2.0 + 20.0, 8.0 + 90.0 + 402.0 + 14.0),
+            vec![Asked::Quick(Change::Theme(2))]
+        );
+        assert_eq!(
+            click(8.0 + 16.0 + 98.0 * 2.0 + 46.0, 8.0 + 90.0 + 342.0 + 14.0),
+            vec![Asked::Quick(Change::Appearance(2))]
         );
         assert_eq!(
             click(8.0 + 16.0 + 144.0, 8.0 + 90.0 + 26.0),

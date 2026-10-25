@@ -140,7 +140,13 @@ pub fn render_stash(size: (u32, u32), scale: f32) -> Option<tole::Frame> {
 /// 2026-10-25 21:40 (or the weather), or the right with three tasks (or
 /// the quick settings, focus mode and do not disturb on).
 #[must_use]
-pub fn render_sidebar(todo: bool, weather: bool, quick: bool, scale: f32) -> Option<tole::Frame> {
+pub fn render_sidebar(
+    todo: bool,
+    weather: bool,
+    quick: bool,
+    theme: Option<crate::theme::Theme>,
+    scale: f32,
+) -> Option<tole::Frame> {
     use crate::widgets::{Arrangement, Side, Task};
     let tasks = [
         ("Water the plants", true),
@@ -182,7 +188,7 @@ pub fn render_sidebar(todo: bool, weather: bool, quick: bool, scale: f32) -> Opt
         quick: crate::quick::Quick {
             focus: true,
             quiet: true,
-            accent: Some(0),
+            theme: theme.unwrap_or_default(),
             ..crate::quick::Quick::default()
         },
     };
@@ -190,9 +196,15 @@ pub fn render_sidebar(todo: bool, weather: bool, quick: bool, scale: f32) -> Opt
     let mut view = crate::side::View::new(crate::look::fonts())?;
     view.ui.set_scale(scale);
     view.resize(size);
+    let tokens = theme.map_or(crate::theme::Tokens::NOCTURNE, |theme| {
+        crate::theme::Tokens::of(&theme, &crate::theme::Wallpaper::default())
+    });
+    tokens.apply(&mut view.ui);
     view.show(&shown);
     view.ui.update();
-    let mut frame = tole::Frame::new(size, scale, tole::Color::hex(0x10_1220))?;
+    let [r, g, b] = tokens.bg;
+    let ground = tole::Color::rgba(r / 2, g / 2, b / 2, 0xff);
+    let mut frame = tole::Frame::new(size, scale, ground)?;
     let _ = view.ui.render_into(&mut frame);
     Some(frame)
 }
@@ -220,7 +232,16 @@ pub fn main() -> ExitCode {
         let todo = arguments.iter().any(|word| word == "--todo");
         let weather = arguments.iter().any(|word| word == "--weather");
         let quick = arguments.iter().any(|word| word == "--quick");
-        let Some(frame) = render_sidebar(todo, weather, quick, 1.0) else {
+        // `--theme Sakura` or `--theme Sakura,Light`: drawn in that theme.
+        let theme = arguments
+            .iter()
+            .position(|word| word == "--theme")
+            .and_then(|at| arguments.get(at + 1))
+            .map(|word| {
+                let (mode, look) = word.split_once(',').unwrap_or((word, "Dark"));
+                crate::theme::Theme::read(&format!("mode {mode}\nappearance {look}\n"))
+            });
+        let Some(frame) = render_sidebar(todo, weather, quick, theme, 1.0) else {
             eprintln!("yoru-shell: the sidebar could not be drawn");
             return ExitCode::FAILURE;
         };
