@@ -41,14 +41,15 @@ what its `app.toml` says; `cargo xtask apps` lists them.
   <tr>
     <td width="33%"><a href="shelf/"><img src="shelf/screenshot.png" alt="shelf, drawn headless"></a><br><b><a href="shelf/">shelf</a></b></td>
     <td width="33%"><a href="yoru-shell/"><img src="yoru-shell/screenshot.png" alt="yoru-shell on Ferrix"></a><br><b><a href="yoru-shell/">yoru-shell</a></b></td>
-    <td width="33%"></td>
+    <td width="33%"><a href="chooser/"><img src="chooser/screenshot.png" alt="chooser, drawn headless"></a><br><b><a href="chooser/">chooser</a></b></td>
   </tr>
 </table>
 
-*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM): the desktop's clients and foot at main def906ba2 (2026-10-04), the others at 2f067e40f and badapple at fee29d168 (2026-10-03), settings on its branch `settings-app` (2026-10-11), lode-viewer on its branch `feature/lode-viewer` (2026-10-23); shelf drawn headless by its own `--render`, a test keeping it current (2026-10-24); yoru-shell in `test-compositor`'s yoru boot (2026-10-24).*
+*Each app's own `screenshot.png`, on Ferrix (x86-64 under KVM): the desktop's clients and foot at main def906ba2 (2026-10-04), the others at 2f067e40f and badapple at fee29d168 (2026-10-03), settings on its branch `settings-app` (2026-10-11), lode-viewer on its branch `feature/lode-viewer` (2026-10-23); shelf drawn headless by its own `--render`, a test keeping it current (2026-10-24); yoru-shell in `test-compositor`'s yoru boot (2026-10-24); chooser drawn headless by its own `--render` (2026-10-25).*
 
 - **The desktop's:** `term`, `waybar`, `fuzzel`, `hyprlock`, `hypridle`, and
-  Yoru's dock `yoru-shell`, which every desktop carries.
+  Yoru's dock `yoru-shell`, which every desktop carries, and `chooser`, the
+  file chooser the desktop portal opens for GTK and Chrome.
 - **Ferrix's own:** `badapple`, `ferrofetch`, `lode-viewer`, `settings`, `shelf`, `statd`.
 - **Ported onto ferrousli**, Ferrix's C library, with its `tools/ports/`:
   `alsa-lib`, `alsa-utils`, `btop`, `curl`, `foot`, `git`, `sshdt`, `vkgears`.

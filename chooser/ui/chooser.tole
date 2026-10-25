@@ -1,0 +1,36 @@
+// The chooser's window: tole's FileDialog filling it. Rust opens the
+// dialog, says what it is for, and turns its answer into the program's
+// (`src/lib.rs`).
+import Fx
+import Fx.Controls
+
+export component Chooser : FileDialog {
+    id: chooser
+    property string heading: "Choose a file"
+    property bool save
+    property string name
+    property string start: "~"
+    property string accepts
+    property string acceptsLabel: "Accepted files"
+    property string acceptsNoun: "accepted files"
+    property string action: "Open"
+    property list<string> names
+    property list<string> paths
+
+    signal picked(string path)
+    signal cancelled()
+
+    x: 0; y: 0
+    title: chooser.heading
+    saving: chooser.save
+    saveName: chooser.name
+    folder: chooser.start
+    acceptedTypes: chooser.accepts
+    acceptedLabel: chooser.acceptsLabel
+    acceptedNoun: chooser.acceptsNoun
+    openLabel: chooser.action
+    placeNames: chooser.names
+    placePaths: chooser.paths
+    onAccepted: chooser.picked(path)
+    onRejected: chooser.cancelled()
+}

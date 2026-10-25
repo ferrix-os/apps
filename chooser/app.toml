@@ -1,0 +1,18 @@
+# chooser, an app (docs/APPS.md): Ferrix's file chooser -- tole's
+# FileDialog, after the customer's Key File Dialog design, in a window of
+# its own. portald opens it for org.freedesktop.portal.FileChooser, so
+# GTK's and Chrome's Open and Save dialogs on Yoru are this one.
+
+[package]
+name = "chooser"
+version = "0.1.0"
+description = "The file chooser: tole's FileDialog in a window, for the desktop portal"
+license = "MIT"
+abi = "linux"
+arches = ["x86_64", "aarch64", "armv7a"]
+depends = []
+
+[[package.files]]
+from = "chooser"
+to = "bin/chooser"
+mode = "755"
