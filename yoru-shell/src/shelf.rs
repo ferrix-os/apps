@@ -234,7 +234,6 @@ fn shown(listener: Option<&UnixListener>) -> i32 {
         say("err: the stash's tree could not be made");
         return 1;
     };
-    crate::theme::Live::new().tokens.apply(&mut view.ui);
     view.show(&items);
     let layer = LayerOptions {
         output: None,

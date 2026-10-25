@@ -53,12 +53,6 @@ struct QuickTile {
 struct QuickAccent {
     name: string
     colour: color
-    icon: string
-    on: bool
-}
-
-struct QuickLook {
-    name: string
     on: bool
 }
 
@@ -107,7 +101,6 @@ export component Sidebar : Item {
     property list<QuickSlider> qSliders
     property list<QuickTile> qTiles
     property list<QuickAccent> qAccents
-    property list<QuickLook> qLooks
     property string qLine
 
     signal tab(int index)
@@ -124,7 +117,6 @@ export component Sidebar : Item {
     signal quickTile(int index)
     signal quickMute(int index)
     signal quickAccent(int index)
-    signal quickLook(int index)
 
     // The edge's hint while closed.
     Rectangle {
@@ -664,41 +656,41 @@ export component Sidebar : Item {
             Row {
                 y: 342
                 spacing: 6
-                Repeater {
-                    model: side.qLooks
-                    Rectangle {
-                        width: 92; height: 28; radius: 8
-                        color: modelData.on ? alpha(Nocturne.accent, 0.18) : "transparent"
-                        border.width: 1
-                        border.color: modelData.on ? Nocturne.a600 : (lookArea.containsMouse ? Nocturne.n700 : Nocturne.n800)
-                        Text { width: 92; height: 28; horizontalAlignment: Text.AlignHCenter; text: modelData.name; font: Nocturne.sans(12, 500); color: modelData.on ? Nocturne.a200 : Nocturne.n400 }
-                        MouseArea {
-                            id: lookArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: side.quickLook(index)
-                        }
-                    }
+                Rectangle {
+                    width: 92; height: 28; radius: 8
+                    opacity: 0.45
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Nocturne.n800
+                    Text { width: 92; height: 28; horizontalAlignment: Text.AlignHCenter; text: "Auto"; font: Nocturne.sans(12, 500); color: Nocturne.n400 }
+                }
+                Rectangle {
+                    width: 92; height: 28; radius: 8
+                    color: alpha(Nocturne.accent, 0.18)
+                    border.width: 1
+                    border.color: Nocturne.a600
+                    Text { width: 92; height: 28; horizontalAlignment: Text.AlignHCenter; text: "Dark"; font: Nocturne.sans(12, 500); color: Nocturne.a200 }
+                }
+                Rectangle {
+                    width: 92; height: 28; radius: 8
+                    opacity: 0.45
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Nocturne.n800
+                    Text { width: 92; height: 28; horizontalAlignment: Text.AlignHCenter; text: "Light"; font: Nocturne.sans(12, 500); color: Nocturne.n400 }
                 }
             }
             Text { y: 384; text: "THEME COLOUR"; font: Nocturne.sans(11, 600); color: Nocturne.n500 }
             Row {
                 y: 402
-                spacing: 8
+                spacing: 12
                 Repeater {
                     model: side.qAccents
-                    Item {
-                        width: 41; height: 46
-                        Rectangle {
-                            x: 6
-                            width: 28; height: 28; radius: 14
-                            color: modelData.colour
-                            border.width: modelData.on ? 2 : 1
-                            border.color: modelData.on ? Nocturne.text : alpha(Nocturne.text, 0.14)
-                            Text { width: 28; height: 28; horizontalAlignment: Text.AlignHCenter; text: modelData.icon; font: Nocturne.icon(13); color: Nocturne.bg }
-                        }
-                        Text { y: 32; width: 41; horizontalAlignment: Text.AlignHCenter; text: modelData.name; font: Nocturne.sans(9.5, 500); color: modelData.on ? Nocturne.text : Nocturne.n500 }
+                    Rectangle {
+                        width: 28; height: 28; radius: 14
+                        color: modelData.colour
+                        border.width: modelData.on ? 2 : 1
+                        border.color: modelData.on ? Nocturne.text : alpha(Nocturne.text, 0.14)
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
@@ -707,7 +699,7 @@ export component Sidebar : Item {
                     }
                 }
             }
-            Text { y: 458; width: 288; text: side.qLine; font: Nocturne.sans(11, 400); color: Nocturne.n600 }
+            Text { y: 440; width: 288; text: side.qLine; font: Nocturne.sans(11, 400); color: Nocturne.n600 }
         }
 
         // The widgets on neither side.

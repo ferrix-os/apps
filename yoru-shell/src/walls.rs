@@ -139,13 +139,6 @@ fn oklch_hue(hsl: f32) -> f32 {
 /// grid; `None` when it cannot be read.
 #[must_use]
 pub fn look_of(path: &Path) -> Option<Look> {
-    sample_of(path).map(|sample| look(&sample))
-}
-
-/// The picture at `path` sampled on a 48 by 27 grid, RGBA; `None` when it
-/// cannot be read.
-#[must_use]
-pub fn sample_of(path: &Path) -> Option<Vec<[u8; 4]>> {
     let pixmap = compositor_image::load(path, compositor_image::Fit::Within(96, 54)).ok()?;
     let (width, height) = (pixmap.width(), pixmap.height());
     if width == 0 || height == 0 {
@@ -162,66 +155,7 @@ pub fn sample_of(path: &Path) -> Option<Vec<[u8; 4]>> {
             sample.push([pixel.red(), pixel.green(), pixel.blue(), pixel.alpha()]);
         }
     }
-    Some(sample)
-}
-
-/// Up to three hues of `pixels`, the strongest first and each at least
-/// 45° from the others, in OKLCH degrees: the design's `analyze` picks, on
-/// 24 bins of 15° weighted as `look` weighs a pixel and smoothed with
-/// their neighbours, a bin below 6 % of the strongest left out.
-#[must_use]
-pub fn hues(pixels: &[[u8; 4]]) -> Vec<f32> {
-    let mut bins = [0.0_f32; 24];
-    for [r, g, b, _] in pixels {
-        let (r, g, b) = (
-            f32::from(*r) / 255.0,
-            f32::from(*g) / 255.0,
-            f32::from(*b) / 255.0,
-        );
-        let max = r.max(g).max(b);
-        let ch = max - r.min(g).min(b);
-        if ch < 0.14 {
-            continue;
-        }
-        let sector = if (max - r).abs() < f32::EPSILON {
-            ((g - b) / ch).rem_euclid(6.0)
-        } else if (max - g).abs() < f32::EPSILON {
-            (b - r) / ch + 2.0
-        } else {
-            (r - g) / ch + 4.0
-        };
-        let hue = (sector * 60.0).rem_euclid(360.0);
-        let bin = ((hue / 15.0) as usize) % 24;
-        if let Some(slot) = bins.get_mut(bin) {
-            *slot += ch * ch * max;
-        }
-    }
-    let smooth: Vec<(f32, usize)> = (0..24)
-        .map(|i| {
-            let at = |j: usize| bins.get(j % 24).copied().unwrap_or(0.0);
-            (at(i) + 0.5 * (at(i + 23) + at(i + 1)), i)
-        })
-        .collect();
-    let mut order = smooth;
-    order.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let top = order.first().map_or(0.0, |o| o.0);
-    let mut picks: Vec<f32> = Vec::new();
-    for (value, i) in order {
-        if value <= 0.0 || value < top * 0.06 {
-            break;
-        }
-        let hue = i as f32 * 15.0 + 7.5;
-        if picks
-            .iter()
-            .all(|p| ((p - hue + 540.0).rem_euclid(360.0) - 180.0).abs() >= 45.0)
-        {
-            picks.push(hue);
-        }
-        if picks.len() == 3 {
-            break;
-        }
-    }
-    picks.into_iter().map(oklch_hue).collect()
+    Some(look(&sample))
 }
 
 /// One wallpaper.

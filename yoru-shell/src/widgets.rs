@@ -317,12 +317,6 @@ fn config_dir() -> Option<PathBuf> {
         .map(|d| d.join("yoru-shell"))
 }
 
-/// The shell's file `name` in the person's configuration folder.
-#[must_use]
-pub fn config_file(name: &str) -> Option<PathBuf> {
-    config_dir().map(|d| d.join(name))
-}
-
 /// The person's data folder for the shell.
 fn data_dir() -> Option<PathBuf> {
     std::env::var("XDG_DATA_HOME")

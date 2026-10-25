@@ -16,7 +16,6 @@ pub mod side;
 pub mod sound;
 pub mod stash;
 pub mod switch;
-pub mod theme;
 pub mod ui;
 pub mod walls;
 pub mod weather;
