@@ -96,7 +96,10 @@ fn s(value: impl AsRef<str>) -> Rc<str> {
 /// it.
 fn fonts() -> tole::Fonts {
     let mut fonts = tole::Fonts::system();
-    let tree = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../assets/fonts/inter");
+    let tree = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../assets/fonts/inter"
+    );
     for dir in ["/usr/share/fonts/inter", tree] {
         let path = std::path::Path::new(dir);
         if path.is_dir() {
@@ -120,7 +123,9 @@ pub fn view(asked: &Asked) -> Result<(Ui, Chooser), String> {
     chooser.start.set(&mut ui, s(&asked.folder));
     chooser.accepts.set(&mut ui, s(&asked.accept));
     chooser.accepts_label.set(&mut ui, s(&asked.accept_label));
-    chooser.accepts_noun.set(&mut ui, s(asked.accept_label.to_lowercase()));
+    chooser
+        .accepts_noun
+        .set(&mut ui, s(asked.accept_label.to_lowercase()));
     chooser.action.set(&mut ui, s(&asked.action));
     let places: [(&str, &str); 5] = [
         ("Home", "~"),
@@ -183,7 +188,10 @@ pub fn main() -> ExitCode {
         }
     };
     if let Some(at) = args.iter().position(|w| w == "--render") {
-        return render(&asked, args.get(at + 1).map_or("chooser.png", String::as_str));
+        return render(
+            &asked,
+            args.get(at + 1).map_or("chooser.png", String::as_str),
+        );
     }
     let (mut ui, chooser) = match view(&asked) {
         Ok(made) => made,
@@ -242,7 +250,14 @@ mod tests {
 
     #[test]
     fn the_arguments_say_what_it_is_for() {
-        let asked = read(&args(&["--save", "--name", "page.html", "--folder", "/tmp"])).expect("read");
+        let asked = read(&args(&[
+            "--save",
+            "--name",
+            "page.html",
+            "--folder",
+            "/tmp",
+        ]))
+        .expect("read");
         assert_eq!(
             asked,
             Asked {
@@ -261,7 +276,10 @@ mod tests {
 
     #[test]
     fn the_home_is_spelled_out() {
-        assert_eq!(expanded("~/Downloads/a.txt", Some("/home/ada")), "/home/ada/Downloads/a.txt");
+        assert_eq!(
+            expanded("~/Downloads/a.txt", Some("/home/ada")),
+            "/home/ada/Downloads/a.txt"
+        );
         assert_eq!(expanded("~", Some("/home/ada/")), "/home/ada");
         assert_eq!(expanded("~ada/x", Some("/home/ada")), "~ada/x");
         assert_eq!(expanded("/etc/x", None), "/etc/x");
@@ -272,7 +290,14 @@ mod tests {
     fn a_name_typed_is_the_answer() {
         let dir = std::env::temp_dir().join(format!("chooser-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("made");
-        let asked = read(&args(&["--save", "--name", "page.html", "--folder", dir.to_str().expect("utf-8")])).expect("read");
+        let asked = read(&args(&[
+            "--save",
+            "--name",
+            "page.html",
+            "--folder",
+            dir.to_str().expect("utf-8"),
+        ]))
+        .expect("read");
         let (mut ui, chooser) = view(&asked).expect("made");
         ui.set_window_active(true);
         ui.update();
