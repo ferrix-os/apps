@@ -122,6 +122,7 @@ export component Sidebar : Item {
     signal weatherStop()
     signal quickSlide(int index, real value)
     signal quickTile(int index)
+    signal quickMute(int index)
     signal quickAccent(int index)
     signal quickLook(int index)
 
@@ -598,6 +599,12 @@ export component Sidebar : Item {
                             spacing: 8
                             Text { text: modelData.icon; font: Nocturne.icon(13); color: Nocturne.n400 }
                             Text { text: modelData.label; font: Nocturne.sans(12, 500); color: Nocturne.n300 }
+                        }
+                        MouseArea {
+                            width: 110; height: 16
+                            enabled: modelData.enabled
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: side.quickMute(index)
                         }
                         Text { x: 168; width: 120; horizontalAlignment: Text.AlignRight; text: modelData.shown; font: Nocturne.sans(11, 400); color: Nocturne.n500 }
                         Rectangle { y: 24; width: 288; height: 4; radius: 2; color: Nocturne.n800 }

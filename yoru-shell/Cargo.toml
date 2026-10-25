@@ -30,6 +30,9 @@ compositor-image = { path = "../../system/linux/compositor/image" }
 # The Wayland client's events, which tole's window hands back: the
 # compositor's event socket watched, the clock's timer.
 compositor-toolkit = { path = "../../system/linux/compositor/toolkit" }
+# The PulseAudio native protocol, which Ferrix's pulsed speaks: the quick
+# settings' volume and microphone. The revision pulsed stands on.
+pulseaudio = { git = "https://github.com/colinmarc/pulseaudio-rs", rev = "3c0325feceb35c8356dfb1e0da5ede6e85aa409c" }
 # tole, Ferrix's UI framework: the dock's tree, from the markup under
 # `ui/`, in a layer-shell surface.
 tole = { path = "../../system/linux/tole/tole", features = ["wayland"] }

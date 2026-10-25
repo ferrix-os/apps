@@ -245,6 +245,33 @@ impl View {
             .backlight
             .as_ref()
             .map(crate::quick::Backlight::percent);
+        let sound_slider =
+            |name: &str, label: &str, device: Option<&crate::sound::Device>, none: &str| {
+                QuickSlider {
+                    icon: s(icon(if device.is_some_and(|d| d.muted) {
+                        if name == "microphone" {
+                            "microphone-slash"
+                        } else {
+                            "speaker-slash"
+                        }
+                    } else {
+                        name
+                    })),
+                    label: s(label),
+                    value: device.map_or(0.0, |d| d.percent.min(100) as f32),
+                    shown: s(device.map_or_else(
+                        || none.to_owned(),
+                        |d| {
+                            if d.muted {
+                                "Muted".to_owned()
+                            } else {
+                                format!("{}%", d.percent)
+                            }
+                        },
+                    )),
+                    enabled: device.is_some(),
+                }
+            };
         v.q_sliders.set(
             ui,
             vec![
@@ -255,19 +282,23 @@ impl View {
                     brightness.map_or_else(|| "No backlight".to_owned(), |p| format!("{p}%")),
                     brightness.is_some(),
                 ),
-                slider(
+                sound_slider(
                     "speaker-high",
                     "Volume",
-                    0,
-                    "Not here yet".to_owned(),
-                    false,
+                    quick.sink.as_ref(),
+                    quick
+                        .sound
+                        .as_ref()
+                        .map_or("No sound card", |_| "No sound server"),
                 ),
-                slider(
+                sound_slider(
                     "microphone",
                     "Microphone",
-                    0,
-                    "No capture yet".to_owned(),
-                    false,
+                    quick.source.as_ref(),
+                    quick
+                        .sound
+                        .as_ref()
+                        .map_or("No microphone", |_| "No sound server"),
                 ),
             ],
         );
@@ -435,10 +466,18 @@ impl View {
                 }
                 SidebarSignal::WeatherStart(text) => Some(Asked::WeatherOn(text.trim().to_owned())),
                 SidebarSignal::WeatherStop => Some(Asked::WeatherOff),
-                SidebarSignal::QuickSlide(i, value) => match i {
-                    0 => Some(Asked::Quick(Change::Brightness(
-                        value.clamp(0.0, 100.0).round() as u32,
-                    ))),
+                SidebarSignal::QuickSlide(i, value) => {
+                    let percent = value.clamp(0.0, 100.0).round() as u32;
+                    match i {
+                        0 => Some(Asked::Quick(Change::Brightness(percent))),
+                        1 => Some(Asked::Quick(Change::Volume(percent))),
+                        2 => Some(Asked::Quick(Change::Mic(percent))),
+                        _ => None,
+                    }
+                }
+                SidebarSignal::QuickMute(i) => match i {
+                    1 => Some(Asked::Quick(Change::Mute)),
+                    2 => Some(Asked::Quick(Change::MicMute)),
                     _ => None,
                 },
                 SidebarSignal::QuickTile(i) => match i {
@@ -763,13 +802,21 @@ pub fn run(side: Side) -> i32 {
                 let said = crate::quick::change(hypr.as_ref(), &shown.quick, change);
                 shown.quick = crate::quick::read(hypr.as_ref());
                 let q = &shown.quick;
+                let level = |d: Option<&crate::sound::Device>| {
+                    d.map_or_else(
+                        || "none".to_owned(),
+                        |d| format!("{}%{}", d.percent, if d.muted { " muted" } else { "" }),
+                    )
+                };
                 say(&format!(
-                    "quick: {said}; now focus {}, tiled {}, theme {} {}, quiet {}",
+                    "quick: {said}; now focus {}, tiled {}, theme {} {}, quiet {}, volume {}, microphone {}",
                     q.focus,
                     q.tiled,
                     q.theme.mode.name(),
                     q.theme.appearance.name(),
-                    q.quiet
+                    q.quiet,
+                    level(q.sink.as_ref()),
+                    level(q.source.as_ref())
                 ));
                 shown.quick.said = said;
             }
@@ -928,6 +975,35 @@ mod tests {
             click(8.0 + 16.0 + 144.0, 8.0 + 90.0 + 26.0),
             Vec::<Asked>::new(),
             "no backlight"
+        );
+        // With a sink: its track sets the volume, its name mutes it; no
+        // source, so the microphone asks nothing.
+        state.quick.sink = Some(crate::sound::Device {
+            index: 0,
+            percent: 100,
+            muted: false,
+            channels: 2,
+        });
+        view.show(&state);
+        let mut click = |x: f32, y: f32| {
+            view.ui.update();
+            view.ui.pointer_move(x, y);
+            view.ui.pointer_press();
+            view.ui.pointer_release();
+            view.take()
+        };
+        assert_eq!(
+            click(8.0 + 16.0 + 144.0, 8.0 + 90.0 + 46.0 + 26.0),
+            vec![Asked::Quick(Change::Volume(50))]
+        );
+        assert_eq!(
+            click(8.0 + 16.0 + 40.0, 8.0 + 90.0 + 46.0 + 6.0),
+            vec![Asked::Quick(Change::Mute)]
+        );
+        assert_eq!(
+            click(8.0 + 16.0 + 144.0, 8.0 + 90.0 + 92.0 + 26.0),
+            Vec::<Asked>::new(),
+            "no microphone"
         );
     }
 }

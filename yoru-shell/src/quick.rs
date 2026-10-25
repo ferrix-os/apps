@@ -12,9 +12,12 @@
 //!   notification goes to the list without a banner, unless it is critical.
 //! * Brightness is the first backlight under `/sys/class/backlight`, where
 //!   there is one.
-//! * Volume and the microphone, Wi-Fi, Bluetooth and night light say why
-//!   they are not here: no sound server is asked yet, no wireless device
-//!   or gamma is there.
+//! * Volume and the microphone are the sound server's default sink and
+//!   source (`crate::sound`, the PulseAudio protocol `pulsed` speaks): a
+//!   slider sets the volume, the icon mutes. Without a server, or with no
+//!   source (`pulsed` has none: there is no capture yet), they say so.
+//! * Wi-Fi, Bluetooth and night light say why they are not here: Ferrix
+//!   has no wireless or Bluetooth stack, and the compositor no gamma.
 
 use std::path::{Path, PathBuf};
 
@@ -139,6 +142,12 @@ pub struct Quick {
     pub backlight: Option<Backlight>,
     /// Whether a wireless device is there.
     pub wireless: bool,
+    /// The sound server's sink: the volume.
+    pub sink: Option<crate::sound::Device>,
+    /// Its source: the microphone.
+    pub source: Option<crate::sound::Device>,
+    /// Why there is no sink or source to show: no server, or none listed.
+    pub sound: Option<String>,
     /// What the last change did, or why not.
     pub said: String,
 }
@@ -158,6 +167,14 @@ pub enum Change {
     Appearance(usize),
     /// The brightness, a percentage.
     Brightness(u32),
+    /// The volume, a percentage.
+    Volume(u32),
+    /// The microphone's volume, a percentage.
+    Mic(u32),
+    /// The volume muted or not.
+    Mute,
+    /// The microphone muted or not.
+    MicMute,
 }
 
 /// The value of a `getoption` answer (`int: 1`, then `set: true`): `1`.
@@ -188,9 +205,7 @@ pub fn requests(quick: &Quick, change: &Change) -> Vec<String> {
             "setting general:layout {}",
             if quick.tiled { "floating" } else { "dwindle" }
         )],
-        Change::Theme(_) | Change::Appearance(_) | Change::Quiet | Change::Brightness(_) => {
-            Vec::new()
-        }
+        _ => Vec::new(),
     }
 }
 
@@ -198,6 +213,10 @@ pub fn requests(quick: &Quick, change: &Change) -> Vec<String> {
 /// machine's devices.
 #[must_use]
 pub fn read(hypr: Option<&Hypr>) -> Quick {
+    let (sink, source, sound) = match crate::sound::devices() {
+        Ok((sink, source)) => (sink, source, None),
+        Err(why) => (None, None, Some(why)),
+    };
     let option = |key: &str| {
         hypr.and_then(|h| h.ask(&format!("getoption {key}")))
             .and_then(|answer| option_value(&answer))
@@ -213,7 +232,30 @@ pub fn read(hypr: Option<&Hypr>) -> Quick {
         quiet: quiet_file().is_some_and(|f| f.exists()),
         backlight: backlight(Path::new("/sys/class/backlight")),
         wireless: has_wireless(Path::new("/sys/class/net")),
+        sink,
+        source,
+        sound,
         said: String::new(),
+    }
+}
+
+/// The device `change` is for, and its name.
+fn sound_of<'a>(
+    quick: &'a Quick,
+    change: &Change,
+) -> (
+    crate::sound::Which,
+    Option<&'a crate::sound::Device>,
+    &'static str,
+) {
+    if matches!(change, Change::Mic(_) | Change::MicMute) {
+        (
+            crate::sound::Which::Source,
+            quick.source.as_ref(),
+            "microphone",
+        )
+    } else {
+        (crate::sound::Which::Sink, quick.sink.as_ref(), "volume")
     }
 }
 
@@ -263,6 +305,26 @@ pub fn change(hypr: Option<&Hypr>, quick: &Quick, change: &Change) -> String {
             };
             crate::widgets::keep(&file, &theme.text());
             named
+        }
+        Change::Volume(percent) | Change::Mic(percent) => {
+            let (which, device, name) = sound_of(quick, change);
+            let Some(device) = device else {
+                return format!("{name}: none");
+            };
+            match crate::sound::set_volume(which, device, *percent) {
+                Ok(()) => format!("{name} {percent}%"),
+                Err(e) => format!("{name}: {e}"),
+            }
+        }
+        Change::Mute | Change::MicMute => {
+            let (which, device, name) = sound_of(quick, change);
+            let Some(device) = device else {
+                return format!("{name}: none");
+            };
+            match crate::sound::set_mute(which, device, !device.muted) {
+                Ok(()) => format!("{name} {}", if device.muted { "unmuted" } else { "muted" }),
+                Err(e) => format!("{name}: {e}"),
+            }
         }
         Change::Brightness(percent) => {
             let Some(light) = &quick.backlight else {

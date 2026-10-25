@@ -4,7 +4,7 @@
 
 /// Phosphor's code point for each icon the shell draws, from the
 /// package's `src/regular/style.css` (`@phosphor-icons/web` 2.1.1).
-const ICONS: [(&str, u32); 62] = [
+const ICONS: [(&str, u32); 64] = [
     ("clock", 0xe19a),
     ("folder-simple", 0xe25a),
     ("crosshair-simple", 0xe1d8),
@@ -62,6 +62,8 @@ const ICONS: [(&str, u32); 62] = [
     ("plus", 0xe3d4),
     ("calendar-blank", 0xe10a),
     ("speaker-high", 0xe44a),
+    ("speaker-slash", 0xe45a),
+    ("microphone-slash", 0xe328),
     ("microphone", 0xe326),
     ("wifi-high", 0xe4ea),
     ("bluetooth", 0xe0da),
