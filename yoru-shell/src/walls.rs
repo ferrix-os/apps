@@ -201,9 +201,10 @@ fn picture(name: &str) -> bool {
     matches!(extension(name).as_str(), "png" | "jpg" | "jpeg" | "svg")
 }
 
-/// Whether `name` is a video `pattern --video` plays.
+/// Whether `name` is a video `pattern --video` plays: AV1 in IVF, as
+/// `cargo xtask wallpapers` converts a person's MP4 or WebM.
 fn video(name: &str) -> bool {
-    matches!(extension(name).as_str(), "mp4" | "webm" | "mkv" | "mov")
+    extension(name) == "ivf"
 }
 
 /// `name`'s extension, lower case.
@@ -624,7 +625,7 @@ mod tests {
     #[test]
     fn names_read_as_words() {
         assert_eq!(shown_name("pink-dusk.jpg"), "Pink dusk");
-        assert_eq!(shown_name("late_night.mp4"), "Late night");
+        assert_eq!(shown_name("late_night.ivf"), "Late night");
         assert_eq!(folder_name("settings"), "Ferrix");
     }
 
@@ -634,8 +635,8 @@ mod tests {
         assert_eq!(in_force(text).as_deref(), Some("/a/b.jpg"));
         assert_eq!(in_force("wallpaper = DP-1, picture /x.png\n"), None);
         assert_eq!(
-            in_force("wallpaper = , video /v.mp4\n").as_deref(),
-            Some("/v.mp4")
+            in_force("wallpaper = , video /v.ivf\n").as_deref(),
+            Some("/v.ivf")
         );
         let w = wall("b", "Art", None);
         assert_eq!(w.setting(), ", picture /w/b.jpg, fit fill");
@@ -720,7 +721,7 @@ mod tests {
             system.join("settings/tide.jpg"),
             system.join("settings/notes.txt"),
             own.join("loose.png"),
-            own.join("space-art/rain.mp4"),
+            own.join("space-art/rain.ivf"),
         ] {
             std::fs::write(file, b"x").expect("written");
         }
