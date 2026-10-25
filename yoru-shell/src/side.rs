@@ -16,7 +16,11 @@ use tole::window::{
 use tole::{Color, Ui};
 
 use crate::look::icon;
-use crate::ui::{AddRow, Cell, DayRow, HourRow, Sidebar, SidebarSignal, Tab, TaskRow};
+use crate::quick::{Change, Quick};
+use crate::ui::{
+    AddRow, Cell, DayRow, HourRow, QuickAccent, QuickSlider, QuickTile, Sidebar, SidebarSignal,
+    Tab, TaskRow,
+};
 use crate::widgets::{self, Arrangement, Kind, Side, Task};
 use crate::window::say;
 
@@ -55,6 +59,8 @@ pub struct Shown {
     pub forecast: Option<crate::weather::Forecast>,
     /// When it was read, or why it could not be.
     pub status: String,
+    /// The quick settings, as last read.
+    pub quick: Quick,
 }
 
 /// The tree.
@@ -94,6 +100,8 @@ pub enum Asked {
     WeatherOn(String),
     /// Weather off: no request from now on.
     WeatherOff,
+    /// A quick setting changed.
+    Quick(Change),
 }
 
 impl View {
@@ -218,6 +226,112 @@ impl View {
             .collect::<Vec<_>>();
         v.adds.set(ui, adds);
         self.show_weather(shown);
+        self.show_quick(&shown.quick);
+    }
+
+    /// The quick settings' part: the sliders, the tiles, the accents.
+    fn show_quick(&mut self, quick: &Quick) {
+        let ui = &mut self.ui;
+        let v = &self.side;
+        let slider =
+            |name: &str, label: &str, value: u32, shown: String, enabled: bool| QuickSlider {
+                icon: s(icon(name)),
+                label: s(label),
+                value: value as f32,
+                shown: s(shown),
+                enabled,
+            };
+        let brightness = quick
+            .backlight
+            .as_ref()
+            .map(crate::quick::Backlight::percent);
+        v.q_sliders.set(
+            ui,
+            vec![
+                slider(
+                    "sun",
+                    "Brightness",
+                    brightness.unwrap_or(0),
+                    brightness.map_or_else(|| "No backlight".to_owned(), |p| format!("{p}%")),
+                    brightness.is_some(),
+                ),
+                slider(
+                    "speaker-high",
+                    "Volume",
+                    0,
+                    "Not here yet".to_owned(),
+                    false,
+                ),
+                slider(
+                    "microphone",
+                    "Microphone",
+                    0,
+                    "No capture yet".to_owned(),
+                    false,
+                ),
+            ],
+        );
+        let on_off = |on: bool| if on { "On" } else { "Off" };
+        let tile = |name: &str, label: &str, sub: &str, on: bool, enabled: bool| QuickTile {
+            icon: s(icon(name)),
+            label: s(label),
+            sub: s(sub),
+            on,
+            enabled,
+        };
+        v.q_tiles.set(
+            ui,
+            vec![
+                tile(
+                    "wifi-high",
+                    "Wi-Fi",
+                    if quick.wireless {
+                        "Not yet"
+                    } else {
+                        "None found"
+                    },
+                    false,
+                    false,
+                ),
+                tile("bluetooth", "Bluetooth", "Not yet", false, false),
+                tile(
+                    "bell-slash",
+                    "Do not disturb",
+                    on_off(quick.quiet),
+                    quick.quiet,
+                    true,
+                ),
+                tile("moon", "Night light", "Not yet", false, false),
+                tile(
+                    "crosshair-simple",
+                    "Focus mode",
+                    on_off(quick.focus),
+                    quick.focus,
+                    true,
+                ),
+                tile(
+                    "squares-four",
+                    "Auto-tile",
+                    if quick.tiled { "Tiling" } else { "Off" },
+                    quick.tiled,
+                    true,
+                ),
+            ],
+        );
+        let accents = crate::quick::ACCENTS
+            .iter()
+            .enumerate()
+            .map(|(n, (name, hue))| {
+                let [r, g, b] = crate::quick::oklch(0.72, 0.13, *hue);
+                QuickAccent {
+                    name: s(name),
+                    colour: Color::rgba(r, g, b, 0xff),
+                    on: quick.accent == Some(n),
+                }
+            })
+            .collect::<Vec<_>>();
+        v.q_accents.set(ui, accents);
+        v.q_line.set(ui, s(&quick.said));
     }
 
     /// The weather tab's part of `shown`.
@@ -302,6 +416,19 @@ impl View {
                 }
                 SidebarSignal::WeatherStart(text) => Some(Asked::WeatherOn(text.trim().to_owned())),
                 SidebarSignal::WeatherStop => Some(Asked::WeatherOff),
+                SidebarSignal::QuickSlide(i, value) => match i {
+                    0 => Some(Asked::Quick(Change::Brightness(
+                        value.clamp(0.0, 100.0).round() as u32,
+                    ))),
+                    _ => None,
+                },
+                SidebarSignal::QuickTile(i) => match i {
+                    2 => Some(Asked::Quick(Change::Quiet)),
+                    4 => Some(Asked::Quick(Change::Focus)),
+                    5 => Some(Asked::Quick(Change::Tile)),
+                    _ => None,
+                },
+                SidebarSignal::QuickAccent(i) => index(i).map(|n| Asked::Quick(Change::Accent(n))),
             });
         }
         asked
@@ -371,6 +498,7 @@ pub fn apply(shown: &mut Shown, asked: &Asked) -> (bool, bool) {
             shown.status.clear();
             (false, false)
         }
+        Asked::Quick(_) => (false, false),
     }
 }
 
@@ -452,7 +580,10 @@ pub fn run(side: Side) -> i32 {
         place: String::new(),
         forecast: None,
         status: String::new(),
+        quick: Quick::default(),
     };
+    let hypr = crate::hypr::Hypr::from_env();
+    shown.quick = crate::quick::read(hypr.as_ref());
     let weather_file = widgets::weather_file();
     let (weather, place) = crate::weather::Weather::read(
         &weather_file
@@ -592,6 +723,16 @@ pub fn run(side: Side) -> i32 {
             false
         };
         for asked in view.take() {
+            if let Asked::Quick(change) = &asked {
+                let said = crate::quick::change(hypr.as_ref(), &shown.quick, change);
+                shown.quick = crate::quick::read(hypr.as_ref());
+                let q = &shown.quick;
+                say(&format!(
+                    "quick: {said}; now focus {}, tiled {}, accent {:?}, quiet {}",
+                    q.focus, q.tiled, q.accent, q.quiet
+                ));
+                shown.quick.said = said;
+            }
             let (arranged, tasked) = apply(&mut shown, &asked);
             if arranged && let Some(f) = &file {
                 widgets::keep(f, &shown.arrangement.text());
@@ -612,6 +753,12 @@ pub fn run(side: Side) -> i32 {
         let pinned_now = shown.arrangement.is_pinned(side);
         if wanted != shown.open || pinned_now != pinned {
             shown.open = wanted || pinned_now;
+            if shown.open {
+                // What another program changed since, read again.
+                let said = std::mem::take(&mut shown.quick.said);
+                shown.quick = crate::quick::read(hypr.as_ref());
+                shown.quick.said = said;
+            }
             window.set_layer(layer(side, shown.open, pinned_now));
             say(&format!(
                 "the {} sidebar {}",
@@ -649,6 +796,7 @@ mod tests {
             place: String::new(),
             forecast: None,
             status: String::new(),
+            quick: crate::quick::Quick::default(),
         }
     }
 
@@ -686,5 +834,56 @@ mod tests {
         assert_eq!(state.arrangement.left.last(), Some(&Kind::Todo));
         let _ = apply(&mut state, &Asked::Task("Call the bank".to_owned()));
         assert_eq!(state.tasks.len(), 2);
+    }
+
+    /// The quick settings' tiles and colours ask their changes; the tiles
+    /// this machine lacks, and a slider without a backlight, ask nothing.
+    #[test]
+    fn quick_settings_ask_what_they_change() {
+        use crate::quick::Change;
+        let mut view = View::new(crate::look::fonts()).expect("made");
+        view.resize((super::OPEN, 900));
+        let mut state = shown();
+        state.arrangement.show(Side::Right, Kind::Settings);
+        view.show(&state);
+        let mut click = |x: f32, y: f32| {
+            view.ui.update();
+            view.ui.pointer_move(x, y);
+            view.ui.pointer_press();
+            view.ui.pointer_release();
+            view.take()
+        };
+        let (left, right, top) = (
+            8.0 + 16.0 + 70.0,
+            8.0 + 16.0 + 147.0 + 70.0,
+            8.0 + 90.0 + 148.0,
+        );
+        assert_eq!(
+            click(left, top + 112.0 + 25.0),
+            vec![Asked::Quick(Change::Focus)]
+        );
+        assert_eq!(
+            click(right, top + 112.0 + 25.0),
+            vec![Asked::Quick(Change::Tile)]
+        );
+        assert_eq!(
+            click(left, top + 56.0 + 25.0),
+            vec![Asked::Quick(Change::Quiet)]
+        );
+        assert_eq!(click(left, top + 25.0), Vec::<Asked>::new(), "Wi-Fi");
+        assert_eq!(
+            click(right, top + 56.0 + 25.0),
+            Vec::<Asked>::new(),
+            "night light"
+        );
+        assert_eq!(
+            click(8.0 + 16.0 + 40.0 * 2.0 + 14.0, 8.0 + 90.0 + 402.0 + 14.0),
+            vec![Asked::Quick(Change::Accent(2))]
+        );
+        assert_eq!(
+            click(8.0 + 16.0 + 144.0, 8.0 + 90.0 + 26.0),
+            Vec::<Asked>::new(),
+            "no backlight"
+        );
     }
 }

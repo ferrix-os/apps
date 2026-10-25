@@ -137,9 +137,10 @@ pub fn render_stash(size: (u32, u32), scale: f32) -> Option<tole::Frame> {
 }
 
 /// A sidebar as drawn for a picture: the left with the clock on
-/// 2026-10-25 21:40, or the right with three tasks.
+/// 2026-10-25 21:40 (or the weather), or the right with three tasks (or
+/// the quick settings, focus mode and do not disturb on).
 #[must_use]
-pub fn render_sidebar(todo: bool, weather: bool, scale: f32) -> Option<tole::Frame> {
+pub fn render_sidebar(todo: bool, weather: bool, quick: bool, scale: f32) -> Option<tole::Frame> {
     use crate::widgets::{Arrangement, Side, Task};
     let tasks = [
         ("Water the plants", true),
@@ -156,10 +157,17 @@ pub fn render_sidebar(todo: bool, weather: bool, scale: f32) -> Option<tole::Fra
     if weather {
         arrangement.show(Side::Left, crate::widgets::Kind::Weather);
     }
+    if quick {
+        arrangement.show(Side::Right, crate::widgets::Kind::Settings);
+    }
     let sample =
         crate::json::Json::parse(SAMPLE_FORECAST).and_then(|j| crate::weather::forecast(&j));
     let shown = crate::side::Shown {
-        side: if todo { Side::Right } else { Side::Left },
+        side: if todo || quick {
+            Side::Right
+        } else {
+            Side::Left
+        },
         arrangement,
         tasks,
         now: crate::widgets::days_from_civil(2026, 10, 25) * 86_400 + 21 * 3600 + 40 * 60 + 7,
@@ -171,6 +179,12 @@ pub fn render_sidebar(todo: bool, weather: bool, scale: f32) -> Option<tole::Fra
         place: "Hamburg, Germany".to_owned(),
         forecast: sample,
         status: "From Open-Meteo at 21:40".to_owned(),
+        quick: crate::quick::Quick {
+            focus: true,
+            quiet: true,
+            accent: Some(0),
+            ..crate::quick::Quick::default()
+        },
     };
     let size = (crate::side::OPEN, 900);
     let mut view = crate::side::View::new(crate::look::fonts())?;
@@ -205,7 +219,8 @@ pub fn main() -> ExitCode {
         };
         let todo = arguments.iter().any(|word| word == "--todo");
         let weather = arguments.iter().any(|word| word == "--weather");
-        let Some(frame) = render_sidebar(todo, weather, 1.0) else {
+        let quick = arguments.iter().any(|word| word == "--quick");
+        let Some(frame) = render_sidebar(todo, weather, quick, 1.0) else {
             eprintln!("yoru-shell: the sidebar could not be drawn");
             return ExitCode::FAILURE;
         };

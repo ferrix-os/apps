@@ -122,7 +122,12 @@ fn act(hypr: Option<&Hypr>, state: &mut State, action: Action) {
         Action::Tool(Tool::Settings) => dispatch("exec settings"),
         Action::Tool(Tool::Walls) => dispatch(&format!("exec {} --walls", own_path())),
         Action::Focus => {
-            state.focus = !state.focus;
+            // As the compositor has it: the sidebar's quick settings set it too.
+            let now = hypr
+                .and_then(|hypr| hypr.ask("getoption decoration:dim_inactive"))
+                .and_then(|answer| crate::quick::option_value(&answer))
+                .map(|value| value != "0");
+            state.focus = !now.unwrap_or(state.focus);
             let line = format!("decoration:dim_inactive {}", i32::from(state.focus));
             let done = hypr.is_some_and(|hypr| hypr.keyword(&line));
             say(&format!(

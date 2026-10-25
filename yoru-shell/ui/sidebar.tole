@@ -34,6 +34,28 @@ struct DayRow {
     low: string
 }
 
+struct QuickSlider {
+    icon: string
+    label: string
+    value: real
+    shown: string
+    enabled: bool
+}
+
+struct QuickTile {
+    icon: string
+    label: string
+    sub: string
+    on: bool
+    enabled: bool
+}
+
+struct QuickAccent {
+    name: string
+    colour: color
+    on: bool
+}
+
 struct HourRow {
     hour: string
     icon: string
@@ -76,6 +98,10 @@ export component Sidebar : Item {
     property string wStatus
     property string icPin
     property string icClock
+    property list<QuickSlider> qSliders
+    property list<QuickTile> qTiles
+    property list<QuickAccent> qAccents
+    property string qLine
 
     signal tab(int index)
     signal pin()
@@ -87,6 +113,9 @@ export component Sidebar : Item {
     signal task(string text)
     signal weatherStart(string place)
     signal weatherStop()
+    signal quickSlide(int index, real value)
+    signal quickTile(int index)
+    signal quickAccent(int index)
 
     // The edge's hint while closed.
     Rectangle {
@@ -543,14 +572,127 @@ export component Sidebar : Item {
             }
         }
 
-        // What is not kept yet.
-        Text {
+        // Quick settings: the sliders, the tiles, the appearance and the
+        // theme colour; what is not on this machine is drawn faint.
+        Item {
             visible: side.kind == 2
-            x: 16; y: 96
+            x: 16; y: 90
             width: 288
-            text: "Not kept yet: quick settings come next; Settings has them now."
-            font: Nocturne.sans(12.5, 400)
-            color: Nocturne.n500
+            height: 440
+            Column {
+                spacing: 8
+                Repeater {
+                    model: side.qSliders
+                    Item {
+                        width: 288; height: 38
+                        opacity: modelData.enabled ? 1 : 0.45
+                        Row {
+                            spacing: 8
+                            Text { text: modelData.icon; font: Nocturne.icon(13); color: Nocturne.n400 }
+                            Text { text: modelData.label; font: Nocturne.sans(12, 500); color: Nocturne.n300 }
+                        }
+                        Text { x: 168; width: 120; horizontalAlignment: Text.AlignRight; text: modelData.shown; font: Nocturne.sans(11, 400); color: Nocturne.n500 }
+                        Rectangle { y: 24; width: 288; height: 4; radius: 2; color: Nocturne.n800 }
+                        Rectangle { y: 24; width: 288 * clamp(modelData.value / 100, 0, 1); height: 4; radius: 2; color: Nocturne.a500 }
+                        Rectangle {
+                            visible: modelData.enabled
+                            x: 274 * clamp(modelData.value / 100, 0, 1)
+                            y: 19
+                            width: 14; height: 14; radius: 7
+                            color: Nocturne.a300
+                        }
+                        MouseArea {
+                            id: track
+                            y: 14
+                            width: 288; height: 24
+                            enabled: modelData.enabled
+                            cursorShape: Qt.PointingHandCursor
+                            onPressed: side.quickSlide(index, round(clamp(track.mouseX / 288, 0, 1) * 20) * 5)
+                        }
+                    }
+                }
+            }
+            Grid {
+                y: 148
+                columns: 2
+                columnSpacing: 6
+                rowSpacing: 6
+                Repeater {
+                    model: side.qTiles
+                    Rectangle {
+                        width: 141; height: 50
+                        radius: 12
+                        opacity: modelData.enabled ? 1 : 0.45
+                        color: modelData.on ? alpha(Nocturne.accent, 0.18) : alpha(Nocturne.bg, 0.55)
+                        border.width: 1
+                        border.color: modelData.on ? Nocturne.a600 : (tileArea.containsMouse && modelData.enabled ? Nocturne.n700 : Nocturne.n800)
+                        Rectangle {
+                            x: 9; y: 10
+                            width: 30; height: 30; radius: 15
+                            color: modelData.on ? Nocturne.a600 : Nocturne.n800
+                            Text { width: 30; height: 30; horizontalAlignment: Text.AlignHCenter; text: modelData.icon; font: Nocturne.icon(14); color: modelData.on ? Nocturne.a100 : Nocturne.n400 }
+                        }
+                        Text { x: 47; y: 9; width: 90; text: modelData.label; font: Nocturne.sans(12, 500); color: Nocturne.text }
+                        Text { x: 47; y: 26; width: 90; text: modelData.sub; font: Nocturne.sans(11, 400); color: Nocturne.n500 }
+                        MouseArea {
+                            id: tileArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: modelData.enabled
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: side.quickTile(index)
+                        }
+                    }
+                }
+            }
+            Text { y: 324; text: "APPEARANCE"; font: Nocturne.sans(11, 600); color: Nocturne.n500 }
+            Row {
+                y: 342
+                spacing: 6
+                Rectangle {
+                    width: 92; height: 28; radius: 8
+                    opacity: 0.45
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Nocturne.n800
+                    Text { width: 92; height: 28; horizontalAlignment: Text.AlignHCenter; text: "Auto"; font: Nocturne.sans(12, 500); color: Nocturne.n400 }
+                }
+                Rectangle {
+                    width: 92; height: 28; radius: 8
+                    color: alpha(Nocturne.accent, 0.18)
+                    border.width: 1
+                    border.color: Nocturne.a600
+                    Text { width: 92; height: 28; horizontalAlignment: Text.AlignHCenter; text: "Dark"; font: Nocturne.sans(12, 500); color: Nocturne.a200 }
+                }
+                Rectangle {
+                    width: 92; height: 28; radius: 8
+                    opacity: 0.45
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Nocturne.n800
+                    Text { width: 92; height: 28; horizontalAlignment: Text.AlignHCenter; text: "Light"; font: Nocturne.sans(12, 500); color: Nocturne.n400 }
+                }
+            }
+            Text { y: 384; text: "THEME COLOUR"; font: Nocturne.sans(11, 600); color: Nocturne.n500 }
+            Row {
+                y: 402
+                spacing: 12
+                Repeater {
+                    model: side.qAccents
+                    Rectangle {
+                        width: 28; height: 28; radius: 14
+                        color: modelData.colour
+                        border.width: modelData.on ? 2 : 1
+                        border.color: modelData.on ? Nocturne.text : alpha(Nocturne.text, 0.14)
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: side.quickAccent(index)
+                        }
+                    }
+                }
+            }
+            Text { y: 440; width: 288; text: side.qLine; font: Nocturne.sans(11, 400); color: Nocturne.n600 }
         }
 
         // The widgets on neither side.
