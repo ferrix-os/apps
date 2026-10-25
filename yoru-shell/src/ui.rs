@@ -15,7 +15,7 @@ tole::include_ui!();
 pub const HEIGHT: u32 = 60;
 
 /// What a press in the dock asks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     /// The search: the palette.
     Search,
@@ -31,6 +31,9 @@ pub enum Action {
     Timer,
     /// The stash's panel.
     Stash,
+    /// The pointer came over a launcher or a tool (its title), or left
+    /// one (empty).
+    Hover(String),
 }
 
 /// A string as the tree holds it.
@@ -211,6 +214,7 @@ impl View {
                 DockSignal::FocusMode => Some(Action::Focus),
                 DockSignal::Timer => Some(Action::Timer),
                 DockSignal::Stash => Some(Action::Stash),
+                DockSignal::Hover(title) => Some(Action::Hover(title.to_string())),
             };
             actions.extend(action);
         }

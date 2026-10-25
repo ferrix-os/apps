@@ -1,8 +1,9 @@
 //! The stash panel on the screen (`yoru-shell --stash-panel`, the dock's
 //! Stash button): an overlay layer whose panel sits over the dock, the
-//! stash's files as tiles (`ui/stash.tole`). A pick opens the file with
-//! `xdg-open` and closes the panel; the folder button opens the stash's
-//! folder the same way; clear empties it. Started again while it is up, it
+//! stash's files as tiles (`ui/stash.tole`). A pick opens the file -- a
+//! folder in Files (shelf), anything else with `xdg-open` -- and closes the
+//! panel; the folder button opens the stash's folder in Files; clear
+//! empties it. Started again while it is up, it
 //! closes, as the switcher does.
 
 use std::os::fd::AsRawFd as _;
@@ -175,9 +176,25 @@ impl View {
     }
 }
 
-/// Open `path` with `xdg-open`; whether it started.
+/// Files, the file manager (shelf), which opens a folder on Yoru (the
+/// customer's choice: Files is shelf).
+pub const FILES: &str = "/bin/shelf";
+
+/// What opens `path`: shelf for a folder where the image has it, else
+/// `xdg-open`.
+#[must_use]
+pub fn opener(path: &Path, files: &Path) -> std::path::PathBuf {
+    if path.is_dir() && files.is_file() {
+        files.to_path_buf()
+    } else {
+        std::path::PathBuf::from("xdg-open")
+    }
+}
+
+/// Open `path`, a folder in Files, anything else with `xdg-open`; whether
+/// it started.
 fn open(path: &Path) -> bool {
-    std::process::Command::new("xdg-open")
+    std::process::Command::new(opener(path, Path::new(FILES)))
         .arg(path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -349,6 +366,22 @@ pub fn add(files: &[String]) -> i32 {
             eprintln!("yoru-shell: {}: {error}", dir.display());
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod opens {
+    use super::opener;
+    use std::path::Path;
+
+    /// A folder opens in Files where shelf is there, a file with xdg-open.
+    #[test]
+    fn a_folder_opens_in_files() {
+        let dir = std::env::temp_dir();
+        let me = std::env::current_exe().expect("this test");
+        assert_eq!(opener(&dir, &me), me);
+        assert_eq!(opener(&dir, Path::new("/no/shelf")), Path::new("xdg-open"));
+        assert_eq!(opener(&me, &me), Path::new("xdg-open"));
     }
 }
 

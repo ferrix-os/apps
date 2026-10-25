@@ -47,6 +47,9 @@ export component Dock : Item {
     signal focusMode()
     signal timer()
     signal stash()
+    // What the pointer is over: a launcher's or a tool's title, said for
+    // its tooltip (empty when it leaves).
+    signal hover(string title)
 
     // The frame: the accents' gradient under the compositor's blur.
     Canvas {
@@ -174,6 +177,8 @@ export component Dock : Item {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: dock.launch(index)
+                        onEntered: dock.hover(modelData.title)
+                        onExited: dock.hover("")
                     }
                 }
             }
@@ -203,6 +208,8 @@ export component Dock : Item {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: dock.tool(index)
+                        onEntered: dock.hover(modelData.title)
+                        onExited: dock.hover("")
                     }
                 }
             }
@@ -242,6 +249,8 @@ export component Dock : Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: dock.stash()
+                    onEntered: dock.hover("Stash · drop files here")
+                    onExited: dock.hover("")
                 }
             }
         }

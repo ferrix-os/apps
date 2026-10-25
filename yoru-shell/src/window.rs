@@ -132,6 +132,13 @@ fn act(hypr: Option<&Hypr>, state: &mut State, action: Action) {
             ));
         }
         Action::Stash => dispatch(&format!("exec {} --stash-panel", own_path())),
+        // Said for the tooltip's sake, and for a boot that finds a launcher
+        // by moving the pointer along the dock.
+        Action::Hover(title) => {
+            if !title.is_empty() {
+                say(&format!("over {title}"));
+            }
+        }
         Action::Timer => {
             state.pomodoro.toggle();
             say(&format!(
@@ -323,9 +330,13 @@ pub fn run() -> i32 {
             }
         }
         for action in view.actions() {
+            let hover = matches!(action, Action::Hover(_));
             act(hypr.as_ref(), &mut state, action);
-            refresh(hypr.as_ref(), &mut state);
-            changed = true;
+            // A hover asks nothing of hyprix and changes nothing drawn.
+            if !hover {
+                refresh(hypr.as_ref(), &mut state);
+                changed = true;
+            }
         }
         if changed {
             view.show(&state);
