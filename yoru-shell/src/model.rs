@@ -223,6 +223,8 @@ pub struct State {
     pub pomodoro: Pomodoro,
     /// The time.
     pub clock: Clock,
+    /// How many files the stash holds.
+    pub stashed: usize,
 }
 
 impl State {
@@ -235,6 +237,7 @@ impl State {
             focus: false,
             pomodoro: Pomodoro::new(25),
             clock: Clock::at(now),
+            stashed: 0,
         };
         state.workspaces(&Json::Array(Vec::new()), 1);
         state

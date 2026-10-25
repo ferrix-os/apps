@@ -29,6 +29,8 @@ pub enum Action {
     Focus,
     /// The pomodoro started or paused.
     Timer,
+    /// The stash's panel.
+    Stash,
 }
 
 /// A string as the tree holds it.
@@ -119,6 +121,7 @@ impl View {
         dock.frame.set(&mut ui, frame());
         dock.search_icon.set(&mut ui, s(icon("magnifying-glass")));
         dock.focus_icon.set(&mut ui, s(icon("crosshair-simple")));
+        dock.stash_icon.set(&mut ui, s(icon("archive")));
         Some(View {
             ui,
             dock,
@@ -181,6 +184,9 @@ impl View {
         self.dock.timer_mode.set(ui, s(timer.mode()));
         self.dock.timer_done.set(ui, timer.done());
         self.dock.timer_running.set(ui, timer.running);
+        self.dock
+            .stash_badge
+            .set(ui, s(crate::stash::badge(state.stashed)));
         self.dock.clock.set(ui, s(&state.clock.time));
         self.dock.date.set(ui, s(&state.clock.date));
         self.shown = Some(state.clone());
@@ -204,6 +210,7 @@ impl View {
                     .map(|(tool, _, _)| Action::Tool(*tool)),
                 DockSignal::FocusMode => Some(Action::Focus),
                 DockSignal::Timer => Some(Action::Timer),
+                DockSignal::Stash => Some(Action::Stash),
             };
             actions.extend(action);
         }

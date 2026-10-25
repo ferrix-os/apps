@@ -36,6 +36,9 @@ export component Dock : Item {
     property string searchIcon
     property string focusIcon
     property painter frame
+    property string stashIcon
+    property string stashBadge
+    property bool overStash: stashArea.containsMouse
 
     signal search()
     signal space(int index)
@@ -43,6 +46,7 @@ export component Dock : Item {
     signal tool(int index)
     signal focusMode()
     signal timer()
+    signal stash()
 
     // The frame: the accents' gradient under the compositor's blur.
     Canvas {
@@ -200,6 +204,44 @@ export component Dock : Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: dock.tool(index)
                     }
+                }
+            }
+            // The stash: files dropped here are put aside; a press opens
+            // the panel of them.
+            Rectangle {
+                y: 2
+                width: 32; height: 32
+                radius: 8
+                color: stashArea.containsMouse ? Nocturne.n900 : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: dock.stashIcon
+                    font: Nocturne.icon(17)
+                    color: stashArea.containsMouse ? Nocturne.text : Nocturne.n400
+                }
+                Rectangle {
+                    visible: dock.stashBadge != ""
+                    x: 32 - width + 2; y: -2
+                    width: max(16, badgeText.implicitWidth + 8)
+                    height: 16
+                    radius: 8
+                    color: Nocturne.b600
+                    border.width: 2
+                    border.color: Nocturne.bg
+                    Text {
+                        id: badgeText
+                        anchors.centerIn: parent
+                        text: dock.stashBadge
+                        font: Nocturne.sans(9.5, 600)
+                        color: "#e6fbfc"
+                    }
+                }
+                MouseArea {
+                    id: stashArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: dock.stash()
                 }
             }
         }

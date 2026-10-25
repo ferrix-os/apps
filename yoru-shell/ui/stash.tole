@@ -1,0 +1,197 @@
+// Yoru's stash panel, over the dock's Stash button as the design has it:
+// a diamond and "Stash", open the folder, clear and close; "Pick one to
+// open it" and the count; the files as tiles tinted by what they are, four
+// to a row, each name on two lines. A press outside closes it. Rust lists
+// the files and does what was pressed (`src/shelf.rs`).
+import Fx
+
+struct Tile {
+    icon: string
+    tint: color
+    first: string
+    second: string
+    gone: bool
+}
+
+export component Stash : FocusScope {
+    id: stash
+    property list<Tile> tiles
+    property string count
+    property bool empty
+    property real panelX
+    property real panelY
+    property real panelH
+    property string icFolder
+    property string icTrash
+    property string icClose
+    property string icDiamond
+
+    signal closed()
+    signal openFolder()
+    signal clearAll()
+    signal pick(int index)
+    signal remove(int index)
+
+    focus: true
+    Keys.onEscapePressed: stash.closed()
+
+    MouseArea {
+        anchors.fill: parent
+        onClicked: stash.closed()
+    }
+
+    Rectangle {
+        id: panel
+        x: stash.panelX
+        y: stash.panelY
+        width: 340
+        height: stash.panelH
+        radius: 16
+        color: alpha(Nocturne.surface, 0.96)
+        border.width: 1
+        border.color: alpha(Nocturne.b500, 0.35)
+        MouseArea { anchors.fill: parent }
+
+        // The head.
+        Text {
+            x: 15; y: 14
+            height: 28
+            text: stash.icDiamond
+            font: Nocturne.icon(12)
+            color: Nocturne.b400
+        }
+        Text {
+            x: 34; y: 14
+            height: 28
+            text: "Stash"
+            font: Nocturne.sans(15, 500)
+            color: Nocturne.text
+        }
+        Row {
+            x: panel.width - width - 14
+            y: 14
+            spacing: 6
+            Repeater {
+                model: 3
+                Rectangle {
+                    width: 28; height: 28
+                    radius: 6
+                    color: "transparent"
+                    border.width: 1
+                    border.color: headArea.containsMouse ? Nocturne.a500 : Nocturne.n700
+                    Text {
+                        anchors.centerIn: parent
+                        text: index == 0 ? stash.icFolder : index == 1 ? stash.icTrash : stash.icClose
+                        font: Nocturne.icon(14)
+                        color: headArea.containsMouse ? Nocturne.text : Nocturne.n300
+                    }
+                    MouseArea {
+                        id: headArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: { if (index == 0) { stash.openFolder() } else { if (index == 1) { stash.clearAll() } else { stash.closed() } } }
+                    }
+                }
+            }
+        }
+        Text {
+            x: 14; y: 52
+            visible: !stash.empty
+            text: "Pick one to open it"
+            font: Nocturne.sans(12, 400)
+            color: Nocturne.n500
+        }
+        Text {
+            x: panel.width - 14 - implicitWidth
+            y: 52
+            text: stash.count
+            font: Nocturne.sans(12, 400)
+            color: Nocturne.n500
+        }
+        Text {
+            visible: stash.empty
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 90
+            text: "Empty. Drop files on the Stash button."
+            font: Nocturne.sans(12.5, 400)
+            color: Nocturne.n500
+        }
+
+        // The files.
+        Grid {
+            x: 14; y: 80
+            columns: 4
+            columnSpacing: 6
+            rowSpacing: 10
+            Repeater {
+                model: stash.tiles
+                Rectangle {
+                    width: 73; height: 96
+                    radius: 10
+                    color: tileArea.containsMouse ? alpha(Nocturne.text, 0.06) : "transparent"
+                    opacity: modelData.gone ? 0.45 : 1
+                    Rectangle {
+                        x: 10.5; y: 6
+                        width: 52; height: 52
+                        radius: 16
+                        color: modelData.tint
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.icon
+                            font: Nocturne.icon(24)
+                            color: "#1d1f2b"
+                        }
+                    }
+                    Text {
+                        y: 64
+                        width: 73
+                        horizontalAlignment: Text.AlignHCenter
+                        text: modelData.first
+                        font: Nocturne.sans(11.5, 400)
+                        color: Nocturne.n200
+                    }
+                    Text {
+                        y: 79
+                        width: 73
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                        text: modelData.second
+                        font: Nocturne.sans(11.5, 400)
+                        color: Nocturne.n200
+                    }
+                    MouseArea {
+                        id: tileArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: stash.pick(index)
+                    }
+                    // Remove: shown while the pointer is over the tile.
+                    Rectangle {
+                        visible: tileArea.containsMouse || removeArea.containsMouse
+                        x: 55; y: 2
+                        width: 18; height: 18
+                        radius: 9
+                        color: Nocturne.surface
+                        border.width: 1
+                        border.color: Nocturne.n700
+                        Text {
+                            anchors.centerIn: parent
+                            text: stash.icClose
+                            font: Nocturne.icon(9)
+                            color: removeArea.containsMouse ? Nocturne.text : Nocturne.n400
+                        }
+                        MouseArea {
+                            id: removeArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: stash.remove(index)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

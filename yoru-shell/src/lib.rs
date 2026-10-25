@@ -4,11 +4,14 @@
 //! with tole in the Nocturne tokens, kept up to date from hyprix's IPC.
 
 pub mod cli;
+pub mod drop;
 pub mod hypr;
 pub mod json;
 pub mod look;
 pub mod model;
 pub mod picker;
+pub mod shelf;
+pub mod stash;
 pub mod switch;
 pub mod ui;
 pub mod walls;

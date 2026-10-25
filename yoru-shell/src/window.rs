@@ -131,6 +131,7 @@ fn act(hypr: Option<&Hypr>, state: &mut State, action: Action) {
                 if done { "ok" } else { "refused" }
             ));
         }
+        Action::Stash => dispatch(&format!("exec {} --stash-panel", own_path())),
         Action::Timer => {
             state.pomodoro.toggle();
             say(&format!(
@@ -158,6 +159,43 @@ fn drain(stream: &mut std::os::unix::net::UnixStream, pending: &mut String) -> b
     }
 }
 
+/// A drag over the dock: the tree follows it, so the Stash button lights
+/// under it, and files let go there go into the stash.
+fn dragged(view: &mut View, state: &mut State, drag: crate::drop::Drag) {
+    use crate::drop::Drag;
+    match drag {
+        Drag::Over(x, y, _) => {
+            view.ui.pointer_move(x, y);
+        }
+        Drag::Left => view.ui.pointer_leave(),
+        Drag::Dropped(x, y, text) => {
+            view.ui.pointer_move(x, y);
+            view.ui.update();
+            let over = view.ui.get(view.dock.over_stash);
+            view.ui.pointer_leave();
+            let files = crate::stash::uris(&text);
+            if !over {
+                say(&format!(
+                    "drop: {} files let go off the Stash button",
+                    files.len()
+                ));
+                return;
+            }
+            let Some(dir) = crate::stash::folder() else {
+                return;
+            };
+            match crate::stash::add(&dir, &files) {
+                Ok(n) => say(&format!(
+                    "stash: {n} dropped, {} in all",
+                    crate::stash::count(&dir)
+                )),
+                Err(error) => say(&format!("stash: {}: {error}", dir.display())),
+            }
+            state.stashed = crate::stash::count(&dir);
+        }
+    }
+}
+
 /// Run the dock until the compositor goes away; the exit status.
 #[must_use]
 pub fn run() -> i32 {
@@ -168,6 +206,7 @@ pub fn run() -> i32 {
         );
     }
     let mut state = State::new(model::launchers(&installed()), now());
+    state.stashed = crate::stash::folder().map_or(0, |dir| crate::stash::count(&dir));
     refresh(hypr.as_ref(), &mut state);
     let Some(mut view) = View::new(crate::look::fonts()) else {
         say("err: the dock's tree could not be made");
@@ -205,6 +244,8 @@ pub fn run() -> i32 {
             return 1;
         }
     };
+    // Files dropped on the Stash button.
+    let mut target = crate::drop::Target::bind(window.client());
     let mut events = hypr.as_ref().and_then(Hypr::events);
     let watch = events
         .as_ref()
@@ -236,10 +277,27 @@ pub fn run() -> i32 {
                 Event::Closed(_) | Event::CloseRequested(_) => return 0,
                 Event::Timer(timer) if timer == tick => {
                     state.clock = model::Clock::at(now());
+                    state.stashed =
+                        crate::stash::folder().map_or(0, |dir| crate::stash::count(&dir));
                     if state.pomodoro.tick() {
                         say(&format!("pomodoro: {} begins", state.pomodoro.mode()));
                     }
                     changed = true;
+                }
+                Event::Object {
+                    object,
+                    opcode,
+                    ref args,
+                    ..
+                } if target.is_some() => {
+                    let drag = target
+                        .as_mut()
+                        .and_then(|t| t.event(window.client(), object, opcode, args))
+                        .flatten();
+                    if let Some(drag) = drag {
+                        dragged(&mut view, &mut state, drag);
+                        changed = true;
+                    }
                 }
                 Event::Readable(id) if Some(id) == watch => {
                     if let Some(stream) = events.as_mut()

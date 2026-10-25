@@ -4,7 +4,7 @@
 
 /// Phosphor's code point for each icon the shell draws, from the
 /// package's `src/regular/style.css` (`@phosphor-icons/web` 2.1.1).
-const ICONS: [(&str, u32); 28] = [
+const ICONS: [(&str, u32); 39] = [
     ("clock", 0xe19a),
     ("folder-simple", 0xe25a),
     ("crosshair-simple", 0xe1d8),
@@ -33,6 +33,17 @@ const ICONS: [(&str, u32); 28] = [
     ("rainbow", 0xe598),
     ("sun-dim", 0xe474),
     ("x", 0xe4f6),
+    ("archive", 0xe00c),
+    ("file-pdf", 0xe702),
+    ("file-audio", 0xea20),
+    ("file-code", 0xe914),
+    ("file-text", 0xe23a),
+    ("file-image", 0xea24),
+    ("file-video", 0xea22),
+    ("file-zip", 0xe958),
+    ("file", 0xe230),
+    ("trash", 0xe4a6),
+    ("diamond", 0xe1ec),
 ];
 
 /// The glyph for Phosphor's icon `name`, as text in the `Phosphor` face;

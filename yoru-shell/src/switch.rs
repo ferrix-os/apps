@@ -31,17 +31,17 @@ use crate::window::say;
 pub const NAMESPACE: &str = "yoru-walls";
 
 /// The socket a second start finds the first by.
-fn socket() -> Option<PathBuf> {
+fn socket(name: &str) -> Option<PathBuf> {
     if let Some(dir) = std::env::var("XDG_RUNTIME_DIR")
         .ok()
         .filter(|d| !d.is_empty())
     {
-        return Some(Path::new(&dir).join("yoru-walls.sock"));
+        return Some(Path::new(&dir).join(format!("{name}.sock")));
     }
     // No runtime folder: /tmp, by the person's own number.
     use std::os::unix::fs::MetadataExt as _;
     let uid = std::fs::metadata("/proc/self").ok()?.uid();
-    Some(PathBuf::from(format!("/tmp/yoru-walls-{uid}.sock")))
+    Some(PathBuf::from(format!("/tmp/{name}-{uid}.sock")))
 }
 
 /// The person's home.
@@ -205,14 +205,14 @@ fn apply(hypr: Option<&Hypr>, picker: &Picker) -> bool {
     done
 }
 
-/// Run the switcher until it is closed; the exit status.
-#[must_use]
-pub fn run() -> i32 {
-    let listener = match socket() {
+/// Run `shown` as the only one of `name` (`yoru-walls`): when one is up
+/// already it is told to close and `None` comes back; else `shown`'s exit
+/// status, handed the listener a second start reaches.
+pub(crate) fn once(name: &str, shown: impl FnOnce(Option<&UnixListener>) -> i32) -> Option<i32> {
+    let listener = match socket(name) {
         Some(path) => {
             if UnixStream::connect(&path).is_ok() {
-                say("the wallpaper switcher was up: closed");
-                return 0;
+                return None;
             }
             let _ = std::fs::remove_file(&path);
             UnixListener::bind(&path)
@@ -228,7 +228,16 @@ pub fn run() -> i32 {
     if let Some((_, path)) = listener {
         let _ = std::fs::remove_file(path);
     }
-    code
+    Some(code)
+}
+
+/// Run the switcher until it is closed; the exit status.
+#[must_use]
+pub fn run() -> i32 {
+    once(NAMESPACE, shown).unwrap_or_else(|| {
+        say("the wallpaper switcher was up: closed");
+        0
+    })
 }
 
 /// The switcher's loop.

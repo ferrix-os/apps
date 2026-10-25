@@ -105,6 +105,37 @@ pub fn render_walls(
     Some(frame)
 }
 
+/// The stash panel as drawn for a picture: five files of the four tinted
+/// kinds.
+#[must_use]
+pub fn render_stash(size: (u32, u32), scale: f32) -> Option<tole::Frame> {
+    use crate::stash::{Item, Kind};
+    let items: Vec<Item> = [
+        ("receipt-0417.pdf", Kind::Pdf),
+        ("Quarterly report.pdf", Kind::Pdf),
+        ("night-drive-theme.flac", Kind::Audio),
+        ("layout.rs", Kind::Code),
+        ("Weekly plan for the team.md", Kind::Text),
+    ]
+    .into_iter()
+    .map(|(name, kind)| Item {
+        link: name.to_owned(),
+        target: format!("/home/ada/{name}").into(),
+        name: name.to_owned(),
+        kind,
+        gone: false,
+    })
+    .collect();
+    let mut view = crate::shelf::View::new(crate::look::fonts())?;
+    view.ui.set_scale(scale);
+    view.resize(size);
+    view.show(&items);
+    view.ui.update();
+    let mut frame = tole::Frame::new(size, scale, tole::Color::hex(0x10_2a2c))?;
+    let _ = view.ui.render_into(&mut frame);
+    Some(frame)
+}
+
 /// The program.
 #[must_use]
 pub fn main() -> ExitCode {
@@ -112,6 +143,39 @@ pub fn main() -> ExitCode {
     if arguments.iter().any(|word| word == "--version") {
         println!("yoru-shell {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
+    }
+    if arguments.iter().any(|word| word == "--stash-panel") {
+        return if crate::shelf::run() == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if arguments.first().is_some_and(|word| word == "--stash") {
+        return if crate::shelf::add(arguments.get(1..).unwrap_or_default()) == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if let Some(at) = arguments.iter().position(|word| word == "--render-stash") {
+        let Some(path) = arguments.get(at + 1) else {
+            eprintln!("yoru-shell: --render-stash needs a file");
+            return ExitCode::FAILURE;
+        };
+        let Some(frame) = render_stash((1000, 600), 1.0) else {
+            eprintln!("yoru-shell: the stash could not be drawn");
+            return ExitCode::FAILURE;
+        };
+        let pixmap = frame.pixmap();
+        let png = tole::png::encode(pixmap.width(), pixmap.height(), pixmap.data());
+        return match std::fs::write(path, png) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("yoru-shell: {path}: {error}");
+                ExitCode::FAILURE
+            }
+        };
     }
     if arguments.iter().any(|word| word == "--walls") {
         return if crate::switch::run() == 0 {
@@ -181,7 +245,8 @@ mod tests {
             let pixel = pixmap.pixel(x, y).expect("inside").demultiply();
             (pixel.red(), pixel.green(), pixel.blue())
         };
-        let (r, g, b) = at(400, 30);
+        // Above the icons, below the bar's edge.
+        let (r, g, b) = at(400, 7);
         assert!(
             r < 0x30 && g < 0x30 && b < 0x40,
             "the bar's ground: {r} {g} {b}"
