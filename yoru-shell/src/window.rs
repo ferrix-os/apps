@@ -208,6 +208,20 @@ fn dragged(view: &mut View, state: &mut State, drag: crate::drop::Drag) {
     }
 }
 
+/// The window frames in `tokens`, kept by the compositor as Settings keeps
+/// its choices; a refusal said.
+fn frames(hypr: Option<&Hypr>, tokens: &crate::theme::Tokens) {
+    let Some(hypr) = hypr else { return };
+    for (key, value) in tokens.frame_settings() {
+        let said = hypr
+            .ask(&format!("setting {key} {value}"))
+            .unwrap_or_default();
+        if said.trim() != "ok" {
+            say(&format!("theme: setting {key}: {}", said.trim()));
+        }
+    }
+}
+
 /// Run the dock until the compositor goes away; the exit status.
 #[must_use]
 pub fn run() -> i32 {
@@ -224,6 +238,8 @@ pub fn run() -> i32 {
         say("err: the dock's tree could not be made");
         return 1;
     };
+    let mut theme = crate::theme::Live::new();
+    theme.tokens.apply(&mut view.ui);
     view.show(&state);
     let layer = LayerOptions {
         output: None,
@@ -293,6 +309,14 @@ pub fn run() -> i32 {
                         crate::stash::folder().map_or(0, |dir| crate::stash::count(&dir));
                     if state.pomodoro.tick() {
                         say(&format!("pomodoro: {} begins", state.pomodoro.mode()));
+                    }
+                    if let Some(tokens) = theme.poll() {
+                        tokens.apply(&mut view.ui);
+                        frames(hypr.as_ref(), &tokens);
+                        say(&format!(
+                            "dock: {}",
+                            crate::theme::said(&theme.theme, &tokens)
+                        ));
                     }
                     changed = true;
                 }
