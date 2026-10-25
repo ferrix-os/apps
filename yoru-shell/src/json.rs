@@ -57,6 +57,15 @@ impl Json {
         }
     }
 
+    /// The value as a number.
+    #[must_use]
+    pub fn num(&self) -> Option<f64> {
+        match self {
+            Json::Number(n) => Some(*n),
+            _ => None,
+        }
+    }
+
     /// The value as a whole number.
     #[must_use]
     pub fn int(&self) -> Option<i64> {

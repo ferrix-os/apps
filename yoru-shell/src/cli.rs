@@ -139,7 +139,7 @@ pub fn render_stash(size: (u32, u32), scale: f32) -> Option<tole::Frame> {
 /// A sidebar as drawn for a picture: the left with the clock on
 /// 2026-10-25 21:40, or the right with three tasks.
 #[must_use]
-pub fn render_sidebar(todo: bool, scale: f32) -> Option<tole::Frame> {
+pub fn render_sidebar(todo: bool, weather: bool, scale: f32) -> Option<tole::Frame> {
     use crate::widgets::{Arrangement, Side, Task};
     let tasks = [
         ("Water the plants", true),
@@ -152,12 +152,25 @@ pub fn render_sidebar(todo: bool, scale: f32) -> Option<tole::Frame> {
         done,
     })
     .collect();
+    let mut arrangement = Arrangement::default();
+    if weather {
+        arrangement.show(Side::Left, crate::widgets::Kind::Weather);
+    }
+    let sample =
+        crate::json::Json::parse(SAMPLE_FORECAST).and_then(|j| crate::weather::forecast(&j));
     let shown = crate::side::Shown {
         side: if todo { Side::Right } else { Side::Left },
-        arrangement: Arrangement::default(),
+        arrangement,
         tasks,
         now: crate::widgets::days_from_civil(2026, 10, 25) * 86_400 + 21 * 3600 + 40 * 60 + 7,
         open: true,
+        weather: crate::weather::Weather {
+            on: weather,
+            place: Some(crate::weather::Place::at(53.6, 10.0)),
+        },
+        place: "Hamburg, Germany".to_owned(),
+        forecast: sample,
+        status: "From Open-Meteo at 21:40".to_owned(),
     };
     let size = (crate::side::OPEN, 900);
     let mut view = crate::side::View::new(crate::look::fonts())?;
@@ -169,6 +182,13 @@ pub fn render_sidebar(todo: bool, scale: f32) -> Option<tole::Frame> {
     let _ = view.ui.render_into(&mut frame);
     Some(frame)
 }
+
+/// A forecast as Open-Meteo answers it, for the picture: made up.
+const SAMPLE_FORECAST: &str = r#"{"current":{"temperature_2m":11.4,"apparent_temperature":9.2,"weather_code":2,"is_day":0},
+"hourly":{"time":["2026-10-25T22:00","2026-10-25T23:00","2026-10-26T00:00","2026-10-26T01:00","2026-10-26T02:00","2026-10-26T03:00","2026-10-26T04:00","2026-10-26T05:00"],
+"temperature_2m":[11,10.6,10.1,9.8,9.5,9.1,8.8,8.6],"weather_code":[2,2,3,3,61,61,3,2]},
+"daily":{"time":["2026-10-25","2026-10-26","2026-10-27","2026-10-28","2026-10-29","2026-10-30","2026-10-31"],
+"weather_code":[2,61,3,0,1,80,71],"temperature_2m_max":[14,12,13,15,14,11,7],"temperature_2m_min":[8,7,6,6,7,5,1]}}"#;
 
 /// The program.
 #[must_use]
@@ -184,7 +204,8 @@ pub fn main() -> ExitCode {
             return ExitCode::FAILURE;
         };
         let todo = arguments.iter().any(|word| word == "--todo");
-        let Some(frame) = render_sidebar(todo, 1.0) else {
+        let weather = arguments.iter().any(|word| word == "--weather");
+        let Some(frame) = render_sidebar(todo, weather, 1.0) else {
             eprintln!("yoru-shell: the sidebar could not be drawn");
             return ExitCode::FAILURE;
         };

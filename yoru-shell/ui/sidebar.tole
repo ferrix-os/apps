@@ -27,6 +27,19 @@ struct AddRow {
     label: string
 }
 
+struct DayRow {
+    day: string
+    icon: string
+    high: string
+    low: string
+}
+
+struct HourRow {
+    hour: string
+    icon: string
+    temp: string
+}
+
 export component Sidebar : Item {
     id: side
     property bool open
@@ -52,6 +65,17 @@ export component Sidebar : Item {
     property string icPlus
     property string icCalendar
     property real panelH
+    property bool weatherOn
+    property string wPlace
+    property string wCond
+    property string wNow
+    property string wIcon
+    property string wLine
+    property list<DayRow> wDays
+    property list<HourRow> wHours
+    property string wStatus
+    property string icPin
+    property string icClock
 
     signal tab(int index)
     signal pin()
@@ -61,6 +85,8 @@ export component Sidebar : Item {
     signal toggle(int index)
     signal drop(int index)
     signal task(string text)
+    signal weatherStart(string place)
+    signal weatherStop()
 
     // The edge's hint while closed.
     Rectangle {
@@ -364,12 +390,165 @@ export component Sidebar : Item {
             }
         }
 
+        // The weather: off until the person turns it on with a place.
+        Item {
+            visible: side.kind == 1 && !side.weatherOn
+            x: 16; y: 90
+            width: 288
+            height: 220
+            Text { y: 0; text: "Weather is off."; font: Nocturne.sans(14, 500); color: Nocturne.text }
+            Text { y: 26; text: "On, it sends the place you type, rounded"; font: Nocturne.sans(12, 400); color: Nocturne.n400 }
+            Text { y: 44; text: "to about 10 km, to Open-Meteo, and asks"; font: Nocturne.sans(12, 400); color: Nocturne.n400 }
+            Text { y: 62; text: "nothing else. Your location is never looked up."; font: Nocturne.sans(12, 400); color: Nocturne.n400 }
+            Rectangle {
+                y: 92
+                width: 288; height: 34
+                radius: 10
+                color: alpha(Nocturne.bg, 0.6)
+                border.width: 1
+                border.color: placeInput.activeFocus ? Nocturne.a500 : Nocturne.n800
+                Text {
+                    x: 10
+                    height: 34
+                    visible: placeInput.text == ""
+                    text: "A city, or lat, lon"
+                    font: Nocturne.sans(13, 400)
+                    color: Nocturne.n600
+                }
+                TextInput {
+                    id: placeInput
+                    x: 10
+                    width: 268
+                    height: 34
+                    font: Nocturne.sans(13, 400)
+                    color: Nocturne.text
+                    cursorColor: Nocturne.text
+                    selectionColor: alpha(Nocturne.accent, 0.35)
+                    onAccepted: { if (text != "") { side.weatherStart(text) } }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.IBeamCursor
+                    onPressed: placeInput.forceActiveFocus()
+                }
+            }
+            Rectangle {
+                y: 138
+                width: onRow.width + 28
+                height: 32
+                radius: 8
+                color: placeInput.text != "" ? alpha(Nocturne.accent, 0.2) : "transparent"
+                border.width: 1
+                border.color: placeInput.text != "" ? Nocturne.a500 : Nocturne.n700
+                Row {
+                    id: onRow
+                    x: 14
+                    height: 32
+                    Text { height: 32; text: "Turn on weather"; font: Nocturne.sans(12.5, 500); color: placeInput.text != "" ? Nocturne.a200 : Nocturne.n500 }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: { if (placeInput.text != "") { side.weatherStart(placeInput.text) } }
+                }
+            }
+        }
+        Item {
+            visible: side.kind == 1 && side.weatherOn
+            x: 16; y: 90
+            width: 288
+            height: 420
+            Row {
+                spacing: 6
+                Text { text: side.icPin; font: Nocturne.icon(12); color: Nocturne.n500 }
+                Text { text: side.wPlace; font: Nocturne.sans(12, 500); color: Nocturne.n400 }
+            }
+            Text { y: 22; text: side.wCond; font: Nocturne.sans(13, 400); color: Nocturne.n300 }
+            Row {
+                y: 42
+                spacing: 12
+                Text { text: side.wNow; font: Nocturne.sans(44, 300); color: Nocturne.text }
+                Text { y: 8; text: side.wIcon; font: Nocturne.icon(36); color: Nocturne.a300 }
+            }
+            Text { y: 104; text: side.wLine; font: Nocturne.sans(12, 400); color: Nocturne.n500 }
+            Rectangle {
+                y: 132
+                width: 288; height: 92
+                radius: 12
+                color: alpha(Nocturne.bg, 0.6)
+                border.width: 1
+                border.color: Nocturne.n800
+                Row {
+                    x: 10; y: 10
+                    spacing: 6
+                    Text { text: side.icCalendar; font: Nocturne.icon(12); color: Nocturne.n500 }
+                    Text { text: "DAILY"; font: Nocturne.sans(11, 600); color: Nocturne.n500 }
+                }
+                Row {
+                    x: 6; y: 34
+                    Repeater {
+                        model: side.wDays
+                        Item {
+                            width: 39; height: 54
+                            Text { width: 39; horizontalAlignment: Text.AlignHCenter; text: modelData.day; font: Nocturne.sans(11, 500); color: Nocturne.n500 }
+                            Text { y: 16; width: 39; horizontalAlignment: Text.AlignHCenter; text: modelData.icon; font: Nocturne.icon(15); color: Nocturne.n300 }
+                            Text { y: 36; width: 39; horizontalAlignment: Text.AlignHCenter; text: modelData.high; font: Nocturne.sans(12, 500); color: Nocturne.text }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                y: 234
+                width: 288; height: 92
+                radius: 12
+                color: alpha(Nocturne.bg, 0.6)
+                border.width: 1
+                border.color: Nocturne.n800
+                Row {
+                    x: 10; y: 10
+                    spacing: 6
+                    Text { text: side.icClock; font: Nocturne.icon(12); color: Nocturne.n500 }
+                    Text { text: "HOURLY"; font: Nocturne.sans(11, 600); color: Nocturne.n500 }
+                }
+                Row {
+                    x: 6; y: 34
+                    Repeater {
+                        model: side.wHours
+                        Item {
+                            width: 34; height: 54
+                            Text { width: 34; horizontalAlignment: Text.AlignHCenter; text: modelData.hour; font: Nocturne.sans(11, 500); color: Nocturne.n500 }
+                            Text { y: 16; width: 34; horizontalAlignment: Text.AlignHCenter; text: modelData.icon; font: Nocturne.icon(15); color: Nocturne.n300 }
+                            Text { y: 36; width: 34; horizontalAlignment: Text.AlignHCenter; text: modelData.temp; font: Nocturne.sans(12, 500); color: Nocturne.text }
+                        }
+                    }
+                }
+            }
+            Text { y: 336; text: side.wStatus; font: Nocturne.sans(11, 400); color: Nocturne.n600 }
+            Rectangle {
+                y: 358
+                width: offText.implicitWidth + 24
+                height: 30
+                radius: 8
+                color: "transparent"
+                border.width: 1
+                border.color: offArea.containsMouse ? Nocturne.a500 : Nocturne.n700
+                Text { id: offText; x: 12; height: 30; text: "Turn off weather"; font: Nocturne.sans(12, 500); color: Nocturne.n300 }
+                MouseArea {
+                    id: offArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: side.weatherStop()
+                }
+            }
+        }
+
         // What is not kept yet.
         Text {
-            visible: side.kind == 1 || side.kind == 2
+            visible: side.kind == 2
             x: 16; y: 96
             width: 288
-            text: side.kind == 1 ? "Not kept yet: weather is opt-in, and its widget comes next." : "Not kept yet: quick settings come next; Settings has them now."
+            text: "Not kept yet: quick settings come next; Settings has them now."
             font: Nocturne.sans(12.5, 400)
             color: Nocturne.n500
         }

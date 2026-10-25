@@ -338,6 +338,12 @@ pub fn arrangement_file() -> Option<PathBuf> {
     config_dir().map(|d| d.join("sidebars"))
 }
 
+/// The weather setting's file.
+#[must_use]
+pub fn weather_file() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("weather"))
+}
+
 /// The to-do list's file.
 #[must_use]
 pub fn todo_file() -> Option<PathBuf> {

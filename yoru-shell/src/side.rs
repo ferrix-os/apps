@@ -16,7 +16,7 @@ use tole::window::{
 use tole::{Color, Ui};
 
 use crate::look::icon;
-use crate::ui::{AddRow, Cell, Sidebar, SidebarSignal, Tab, TaskRow};
+use crate::ui::{AddRow, Cell, DayRow, HourRow, Sidebar, SidebarSignal, Tab, TaskRow};
 use crate::widgets::{self, Arrangement, Kind, Side, Task};
 use crate::window::say;
 
@@ -35,7 +35,7 @@ fn s(value: impl AsRef<str>) -> Rc<str> {
 }
 
 /// What the column shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Shown {
     /// Which side it is.
     pub side: Side,
@@ -47,6 +47,14 @@ pub struct Shown {
     pub now: i64,
     /// Whether the column is open.
     pub open: bool,
+    /// The weather setting, the place's name, and what was last read.
+    pub weather: crate::weather::Weather,
+    /// The place's name as Open-Meteo gave it.
+    pub place: String,
+    /// The forecast last read.
+    pub forecast: Option<crate::weather::Forecast>,
+    /// When it was read, or why it could not be.
+    pub status: String,
 }
 
 /// The tree.
@@ -82,6 +90,10 @@ pub enum Asked {
     Delete(usize),
     /// A new task.
     Task(String),
+    /// Weather on, for the place typed.
+    WeatherOn(String),
+    /// Weather off: no request from now on.
+    WeatherOff,
 }
 
 impl View {
@@ -97,6 +109,8 @@ impl View {
             (&side.ic_close, "x"),
             (&side.ic_plus, "plus"),
             (&side.ic_calendar, "calendar-blank"),
+            (&side.ic_pin, "map-pin"),
+            (&side.ic_clock, "clock"),
         ] {
             prop.set(&mut ui, s(icon(name)));
         }
@@ -203,6 +217,66 @@ impl View {
             })
             .collect::<Vec<_>>();
         v.adds.set(ui, adds);
+        self.show_weather(shown);
+    }
+
+    /// The weather tab's part of `shown`.
+    fn show_weather(&mut self, shown: &Shown) {
+        use crate::weather::{condition, degrees};
+        let ui = &mut self.ui;
+        let v = &self.side;
+        v.weather_on.set(ui, shown.weather.on);
+        v.w_place.set(ui, s(&shown.place));
+        v.w_status.set(ui, s(&shown.status));
+        let Some(made) = &shown.forecast else {
+            v.w_cond.set(ui, s(""));
+            v.w_now.set(ui, s("–"));
+            v.w_icon.set(ui, s(""));
+            v.w_line.set(ui, s(""));
+            v.w_days.set(ui, Vec::new());
+            v.w_hours.set(ui, Vec::new());
+            return;
+        };
+        let (label, glyph) = condition(made.code, made.day);
+        v.w_cond.set(ui, s(label));
+        v.w_now.set(ui, s(degrees(made.now)));
+        v.w_icon.set(ui, s(icon(glyph)));
+        let (high, low) = made
+            .days
+            .first()
+            .map_or((f64::NAN, f64::NAN), |(_, _, h, l)| (*h, *l));
+        v.w_line.set(
+            ui,
+            s(format!(
+                "Feels like {} · H {} · L {}",
+                degrees(made.feels),
+                degrees(high),
+                degrees(low)
+            )),
+        );
+        let days = made
+            .days
+            .iter()
+            .take(7)
+            .map(|(day, code, high, low)| DayRow {
+                day: s(day),
+                icon: s(icon(condition(*code, true).1)),
+                high: s(degrees(*high)),
+                low: s(degrees(*low)),
+            })
+            .collect::<Vec<_>>();
+        v.w_days.set(ui, days);
+        let hours = made
+            .hours
+            .iter()
+            .take(8)
+            .map(|(hour, code, temp)| HourRow {
+                hour: s(hour),
+                icon: s(icon(condition(*code, made.day).1)),
+                temp: s(degrees(*temp)),
+            })
+            .collect::<Vec<_>>();
+        v.w_hours.set(ui, hours);
     }
 
     /// What the tree asked since the last call.
@@ -226,6 +300,8 @@ impl View {
                     let text = text.trim().to_owned();
                     (!text.is_empty()).then_some(Asked::Task(text))
                 }
+                SidebarSignal::WeatherStart(text) => Some(Asked::WeatherOn(text.trim().to_owned())),
+                SidebarSignal::WeatherStop => Some(Asked::WeatherOff),
             });
         }
         asked
@@ -280,6 +356,20 @@ pub fn apply(shown: &mut Shown, asked: &Asked) -> (bool, bool) {
                 done: false,
             });
             (false, true)
+        }
+        Asked::WeatherOn(typed) => {
+            shown.weather.place = crate::weather::place(typed);
+            shown.weather.on = shown.weather.place.is_some();
+            shown.place = typed.clone();
+            shown.forecast = None;
+            shown.status = "Asking Open-Meteo…".to_owned();
+            (false, false)
+        }
+        Asked::WeatherOff => {
+            shown.weather.on = false;
+            shown.forecast = None;
+            shown.status.clear();
+            (false, false)
         }
     }
 }
@@ -358,7 +448,24 @@ pub fn run(side: Side) -> i32 {
         tasks: read_tasks(),
         now: now(),
         open: pinned,
+        weather: crate::weather::Weather::default(),
+        place: String::new(),
+        forecast: None,
+        status: String::new(),
     };
+    let weather_file = widgets::weather_file();
+    let (weather, place) = crate::weather::Weather::read(
+        &weather_file
+            .as_ref()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .unwrap_or_default(),
+    );
+    shown.weather = weather;
+    shown.place = place;
+    // The forecast is asked for only while it is on and a place was typed,
+    // on a thread, again each half hour.
+    let (send, answers) = std::sync::mpsc::channel();
+    let mut asked_at: Option<Instant> = None;
     let Some(mut view) = View::new(crate::look::fonts()) else {
         say("err: the sidebar's tree could not be made");
         return 1;
@@ -389,7 +496,53 @@ pub fn run(side: Side) -> i32 {
     let mut left_at: Option<Instant> = None;
     let mut up = false;
     loop {
-        let wait = (shown.open && left_at.is_some()).then_some(Duration::from_millis(150));
+        let due = shown.weather.on
+            && shown.arrangement.on(side).contains(&Kind::Weather)
+            && asked_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(1800));
+        if due {
+            asked_at = Some(Instant::now());
+            let weather = shown.weather.clone();
+            let send = send.clone();
+            let _ = std::thread::Builder::new()
+                .name("weather".to_owned())
+                .spawn(move || {
+                    let _ = send.send(crate::weather::fetch(&weather));
+                });
+        }
+        while let Ok(answer) = answers.try_recv() {
+            match answer {
+                Ok((found, forecast)) => {
+                    if let Some((place, label)) = found {
+                        shown.weather.place = Some(place);
+                        shown.place = label;
+                    }
+                    shown.forecast = Some(forecast);
+                    let of_day = now().rem_euclid(86_400);
+                    shown.status = format!(
+                        "From Open-Meteo at {:02}:{:02}",
+                        of_day / 3600,
+                        of_day / 60 % 60
+                    );
+                    say(&format!("weather: {} read", shown.place));
+                }
+                Err(why) => {
+                    shown.status = why.clone();
+                    say(&format!("weather: {why}"));
+                }
+            }
+            if let Some(f) = &weather_file {
+                widgets::keep(f, &shown.weather.text(&shown.place));
+            }
+            view.show(&shown);
+            let _ = window.refresh(&mut view.ui);
+        }
+        let wait = if (shown.open && left_at.is_some())
+            || asked_at.is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+        {
+            Some(Duration::from_millis(150))
+        } else {
+            None
+        };
         let happened = match window.dispatch(&mut view.ui, wait) {
             Ok(happened) => happened,
             Err(error) => {
@@ -446,6 +599,12 @@ pub fn run(side: Side) -> i32 {
             if tasked && let Some(f) = &todo {
                 widgets::keep(f, &widgets::tasks_text(&shown.tasks));
             }
+            if matches!(asked, Asked::WeatherOn(_) | Asked::WeatherOff) {
+                asked_at = None;
+                if let Some(f) = &weather_file {
+                    widgets::keep(f, &shown.weather.text(&shown.place));
+                }
+            }
             seen = (stamp(file.as_deref()), stamp(todo.as_deref()));
             say(&format!("{} sidebar: {asked:?}", side.id()));
             changed = true;
@@ -486,6 +645,10 @@ mod tests {
             }],
             now: crate::widgets::days_from_civil(2026, 10, 25) * 86_400 + 9 * 3600,
             open: true,
+            weather: crate::weather::Weather::default(),
+            place: String::new(),
+            forecast: None,
+            status: String::new(),
         }
     }
 
