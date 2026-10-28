@@ -17,7 +17,14 @@ CPU; it runs on Ferrix's desktop and on any Linux Wayland desktop.
 * **Tabs** (Ctrl+T, Ctrl+W), each with **one pane or two** (the third
   view button; Tab switches between them). Back and Forward keep each
   pane's history; Up and Backspace go to the folder above; the
-  breadcrumbs go anywhere above.
+  breadcrumbs go anywhere above. One pane shows them in the tool row,
+  between the buttons and the search; two show them over each pane.
+* **Its own title bar** where the compositor agrees (`xdg-decoration`'s
+  `client_side`, which hyprix gives it under Yoru's title bars, or a
+  compositor with no title bars at all): the tab row then has minimize,
+  maximize and close at its end, moves the window when pressed between
+  the tabs and maximizes it on a double click. Where the compositor draws
+  its own title bar over the window, the row is only tabs.
 * **List or grid.** The list sorts by name, kind, size or date (click a
   column; again to turn it round), folders first unless the settings say
   otherwise; the grid shows pictures' thumbnails. Compact rows, hidden
@@ -61,6 +68,8 @@ CPU; it runs on Ferrix's desktop and on any Linux Wayland desktop.
 
 ![inside an archive, as a grid](screenshots/archive.png)
 
+![one pane, its own title bar](screenshots/own-frame.png)
+
 ## Running it
 
 On Ferrix it is in every image a person runs (`Files` in the launcher).
@@ -82,6 +91,8 @@ cargo run -- --render screenshots/dark.png
 cargo run -- --render screenshots/light.png --light
 cargo run -- --render screenshots/rename.png --scene rename
 cargo run -- --render screenshots/archive.png --scene archive --light
+cargo run -- --render screenshots/single.png --scene single --light
+cargo run -- --render screenshots/own-frame.png --scene own-frame
 ```
 
 ## Licence

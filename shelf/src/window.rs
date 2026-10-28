@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use compositor_toolkit::{Event, KeyboardEvent};
 use tole::Element as _;
-use tole::window::{Window, WindowOptions};
+use tole::window::{Decorations, Window, WindowOptions};
 
 use crate::app::{Action, App};
 use crate::cli::say;
@@ -67,6 +67,9 @@ pub fn run(mut app: App) -> i32 {
         min_size: (900, 560),
         resize_edges: true,
         clipboard: true,
+        // Its tab row is its title bar, with its own buttons: hyprix
+        // draws none over it where it agrees.
+        decorations: Decorations::Client,
         ..WindowOptions::default()
     };
     let mut window = match Window::open(view.shelf.common(), options) {
@@ -79,6 +82,7 @@ pub fn run(mut app: App) -> i32 {
     let timer = window.client().add_timer(TICK, Some(TICK));
     let mut toast_since: Option<Instant> = None;
     let mut up = false;
+    let mut own_frame = false;
     while !window.is_closed() {
         let events = match window.dispatch(&mut view.ui, None) {
             Ok(events) => events,
@@ -92,6 +96,21 @@ pub fn run(mut app: App) -> i32 {
             say(&format!("the window is up, {w}x{h}"));
         }
         let mut dirty = false;
+        // The window's own buttons only where the compositor draws no
+        // title bar over it.
+        if window.draws_own_frame() != own_frame {
+            own_frame = window.draws_own_frame();
+            say(&format!(
+                "the window's frame is {}",
+                if own_frame {
+                    "its own"
+                } else {
+                    "the compositor's"
+                }
+            ));
+            view.set_own_frame(own_frame);
+            dirty = true;
+        }
         let mut actions: Vec<Action> = Vec::new();
         for event in events {
             match event {
@@ -144,8 +163,16 @@ pub fn run(mut app: App) -> i32 {
         }
         actions.extend(view.actions());
         for action in actions {
-            app.act(action);
-            dirty = true;
+            match action {
+                Action::WindowMove => window.start_move(),
+                Action::WindowMaximize => window.toggle_maximized(),
+                Action::WindowMinimize => window.minimize(),
+                Action::WindowClose => return 0,
+                action => {
+                    app.act(action);
+                    dirty = true;
+                }
+            }
         }
         if app.toast.is_some() && toast_since.is_none() {
             toast_since = Some(Instant::now());

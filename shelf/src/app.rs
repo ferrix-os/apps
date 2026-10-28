@@ -424,6 +424,17 @@ pub enum Action {
     DialogOk,
     /// Its Cancel, or Escape.
     DialogCancel,
+    /// The window's own title bar, where it draws its own frame: move the
+    /// window by the pointer, maximize it or give it back its size,
+    /// minimize it, close it. The window does these; the state does
+    /// nothing with them.
+    WindowMove,
+    /// See [`Action::WindowMove`].
+    WindowMaximize,
+    /// See [`Action::WindowMove`].
+    WindowMinimize,
+    /// See [`Action::WindowMove`].
+    WindowClose,
 }
 
 /// The disk the home folder is on.

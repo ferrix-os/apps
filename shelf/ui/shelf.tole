@@ -70,6 +70,11 @@ export component Shelf : Rectangle {
     property bool extensions: true
     property bool folderSizes: true
     property bool compact: false
+    // Whether the window draws its own frame: the compositor said
+    // `client_side`, or draws no title bars. Then the tab row is the
+    // window's title bar, with minimize, maximize and close at its right
+    // end; else the compositor's title bar has them.
+    property bool ownFrame: false
 
     // The sidebar.
     property list<Side> quick
@@ -163,6 +168,10 @@ export component Shelf : Rectangle {
     signal bulkPicked(bool format)
     signal dialogOk()
     signal dialogCancel()
+    signal moveWindow()
+    signal maximizeWindow()
+    signal minimizeWindow()
+    signal closeWindow()
 
     width: 1240
     height: 800
@@ -174,12 +183,47 @@ export component Shelf : Rectangle {
     property real previewWidth: previewShown ? 300 : 0
     property real paneWidth: dual ? (width - side - previewWidth) / 2 : width - side - previewWidth
 
-    // Tabs.
+    // Tabs: the window's title bar where it draws its own frame.
     Rectangle {
         width: shelf.width
         height: 44
         color: Theme.bg2
         Rectangle { y: 43; width: parent.width; height: 1; color: Theme.line }
+        // Pressed where no tab or button is, the row moves the window, and
+        // a double click maximizes it or gives it back its size, as a
+        // title bar does; everything on it is pressed before it.
+        MouseArea {
+            visible: shelf.ownFrame
+            anchors.fill: parent
+            onPressed: shelf.moveWindow()
+            onDoubleClicked: shelf.maximizeWindow()
+        }
+        // Minimize, maximize and close, only where the window draws its
+        // own frame: the compositor's title bar has them otherwise.
+        Item {
+            visible: shelf.ownFrame
+            x: shelf.width - 104; y: 9; width: 32; height: 26
+            Rectangle { x: 11; y: 16; width: 10; height: 1.5; color: Theme.ink3 }
+            MouseArea { anchors.fill: parent; onClicked: shelf.minimizeWindow() }
+        }
+        Item {
+            visible: shelf.ownFrame
+            x: shelf.width - 70; y: 9; width: 32; height: 26
+            Rectangle {
+                x: 11; y: 8; width: 10; height: 10
+                radius: 1
+                color: "transparent"
+                border.width: 1.3
+                border.color: Theme.ink3
+            }
+            MouseArea { anchors.fill: parent; onClicked: shelf.maximizeWindow() }
+        }
+        Item {
+            visible: shelf.ownFrame
+            x: shelf.width - 36; y: 9; width: 32; height: 26
+            Cross { x: 11; y: 8; size: 10; ink: Theme.ink3 }
+            MouseArea { anchors.fill: parent; onClicked: shelf.closeWindow() }
+        }
         Row {
             x: 10; y: 8
             spacing: 2
@@ -315,6 +359,33 @@ export component Shelf : Rectangle {
         Shape {
             ShapePath { strokeColor: Theme.ink3; strokeWidth: 1.4; startX: 8; startY: 6; PathLine { x: 8; y: 12 } }
             ShapePath { strokeColor: Theme.ink3; strokeWidth: 1.4; startX: 5; startY: 9; PathLine { x: 11; y: 9 } }
+        }
+    }
+
+    // Where the one pane is, in the tool row between the buttons and the
+    // search: two panes each show their own, over the pane.
+    Rectangle {
+        visible: !shelf.dual
+        x: 290; y: 54
+        width: shelf.width - 14 - 44 - 290 - 8 - 290
+        height: 36
+        radius: 8
+        color: Theme.bg2
+        border.width: 1
+        border.color: Theme.line
+        clip: true
+        ToolButton {
+            x: 4; y: 2
+            onClicked: shelf.up(0)
+            Arrow { dir: 1 }
+        }
+        Breadcrumbs {
+            x: 40
+            height: 36
+            padding: 5
+            crumbs: shelf.crumbs0
+            current: shelf.place0
+            onCrumbClicked: shelf.crumbClicked(0, index)
         }
     }
 
@@ -611,6 +682,7 @@ export component Shelf : Rectangle {
         dual: shelf.dual
         grid: shelf.grid
         wide: !shelf.dual && !shelf.previewShown
+        pathBar: shelf.dual
         compact: shelf.compact
         rows: shelf.rows0
         crumbs: shelf.crumbs0

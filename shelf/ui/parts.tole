@@ -214,6 +214,12 @@ export component PaneView : Rectangle {
     property string sortColumn: "name"
     property bool ascending: true
     property real rowHeight: compact ? 30 : 40
+    // Whether it shows where it is, in a path bar of its own at its top:
+    // two panes do. One pane's path bar is in the window's tool row, and
+    // the list starts higher.
+    property bool pathBar: true
+    // Where the list's head is: under the path bar, or at the top.
+    property real head: pathBar ? 52 : 8
     signal rowClicked(int index)
     signal rowActivated(int index)
     signal crumbClicked(int index)
@@ -239,6 +245,7 @@ export component PaneView : Rectangle {
 
     // Where it is.
     Rectangle {
+        visible: pane.pathBar
         x: 10; y: 8
         width: pane.width - 20 - (pane.dual ? 30 : 0)
         height: 36
@@ -271,7 +278,7 @@ export component PaneView : Rectangle {
     // The list's head: the columns, the sort.
     Item {
         visible: !pane.grid
-        x: 0; y: 52
+        x: 0; y: pane.head
         width: pane.width
         height: 30
         Text {
@@ -319,9 +326,9 @@ export component PaneView : Rectangle {
     ListView {
         id: list
         visible: !pane.grid
-        x: 6; y: 86
+        x: 6; y: pane.head + 34
         width: pane.width - 12
-        height: pane.height - 86 - 28
+        height: pane.height - pane.head - 34 - 28
         model: pane.rows
         delegate: FileListRow {
             id: fileRow
@@ -395,7 +402,7 @@ export component PaneView : Rectangle {
     }
     ScrollBar {
         visible: !pane.grid && list.contentHeight > list.height
-        x: pane.width - 10; y: 86
+        x: pane.width - 10; y: pane.head + 34
         height: list.height
         size: list.contentHeight > 0 ? list.height / list.contentHeight : 1
         position: list.contentHeight > 0 ? list.contentY / list.contentHeight : 0
@@ -405,9 +412,9 @@ export component PaneView : Rectangle {
     Flickable {
         id: grid
         visible: pane.grid
-        x: 10; y: 56
+        x: 10; y: pane.head + 4
         width: pane.width - 20
-        height: pane.height - 56 - 28
+        height: pane.height - pane.head - 4 - 28
         contentHeight: tiles.implicitHeight
         clip: true
         Flow {
@@ -435,7 +442,7 @@ export component PaneView : Rectangle {
     }
 
     Text {
-        x: 20; y: 100
+        x: 20; y: pane.head + 48
         width: pane.width - 40
         visible: pane.rows.length == 0
         elide: Text.ElideRight

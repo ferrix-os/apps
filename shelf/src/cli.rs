@@ -25,7 +25,9 @@ pub fn render_demo(dark: bool, scale: f32) -> Option<Vec<u8>> {
 
 /// The demo's window in one of its scenes: `main` (the design's two
 /// panes), `rename` (two pictures renamed together), `archive` (inside a
-/// zip, one pane, the grid) or `trash`.
+/// zip, one pane, the grid), `single` (one pane, its path bar in the tool
+/// row), `own-frame` (the same, the window drawing its own frame: its
+/// buttons at the tab row's end) or `trash`.
 #[must_use]
 pub fn render_scene(dark: bool, scale: f32, scene: &str) -> Option<Vec<u8>> {
     use crate::app::{Action, Loc};
@@ -46,10 +48,12 @@ pub fn render_scene(dark: bool, scale: f32, scene: &str) -> Option<Vec<u8>> {
             app.act(Action::Grid(true));
             app.act(Action::Click(0, 1, false, false));
         }
+        "single" | "own-frame" => app.act(Action::ToggleDual),
         _ => {}
     }
     let mut view = crate::view::View::new(crate::view::fonts())?;
     view.ui.set_scale(scale);
+    view.set_own_frame(scene == "own-frame");
     view.show(&mut app);
     let size = (1240, 800);
     let frame = view.ui.render(size, tole::Color::TRANSPARENT)?;
@@ -70,7 +74,7 @@ pub fn main() -> ExitCode {
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         say_plain(
-            "shelf [FOLDER] | --demo | --render FILE [--light] [--scale N] [--scene main|rename|archive] | --version",
+            "shelf [FOLDER] | --demo | --render FILE [--light] [--scale N] [--scene main|rename|archive|single|own-frame] | --version",
         );
         return ExitCode::SUCCESS;
     }

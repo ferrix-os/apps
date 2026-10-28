@@ -822,6 +822,14 @@ impl View {
         self.dialog_shown = kind != 0;
     }
 
+    /// Whether the window draws its own frame -- the compositor answered
+    /// `client_side` or draws none -- and so its tab row shows minimize,
+    /// maximize and close and moves the window
+    /// (`tole::window::Window::draws_own_frame`).
+    pub fn set_own_frame(&mut self, on: bool) {
+        self.shelf.own_frame.set(&mut self.ui, on);
+    }
+
     /// What was pressed since the last call, as actions.
     pub fn actions(&mut self) -> Vec<Action> {
         let emitted = self.ui.take_signals();
@@ -899,6 +907,10 @@ impl View {
                 ShelfSignal::BulkPicked(on) => out.push(Action::BulkFormat(on)),
                 ShelfSignal::DialogOk => out.push(Action::DialogOk),
                 ShelfSignal::DialogCancel => out.push(Action::DialogCancel),
+                ShelfSignal::MoveWindow => out.push(Action::WindowMove),
+                ShelfSignal::MaximizeWindow => out.push(Action::WindowMaximize),
+                ShelfSignal::MinimizeWindow => out.push(Action::WindowMinimize),
+                ShelfSignal::CloseWindow => out.push(Action::WindowClose),
             }
         }
         out
@@ -1108,6 +1120,8 @@ mod tests {
             (false, "main", "light"),
             (true, "rename", "rename"),
             (false, "archive", "archive"),
+            (false, "single", "single"),
+            (true, "own-frame", "own-frame"),
         ] {
             let drawn = crate::cli::render_scene(dark, 1.0, scene).expect("drawn");
             let kept = std::fs::read(dir.join(format!("{name}.png"))).unwrap_or_default();
@@ -1179,5 +1193,155 @@ mod tests {
             view.shelf.error1
         });
         assert!(error.starts_with("Search: Invalid regex"), "{error}");
+    }
+
+    /// Where every shown `Text` saying `label` is.
+    fn texts_at(ui: &mut tole::Ui, label: &str) -> Vec<tole::Rect> {
+        let mut found = Vec::new();
+        let mut stack: Vec<tole::ItemId> = ui.roots().to_vec();
+        while let Some(item) = stack.pop() {
+            let Some(common) = ui.common(item) else {
+                continue;
+            };
+            if !ui.get(common.visible) {
+                continue;
+            }
+            if let Some(text) = ui.text(item)
+                && &*ui.get(text.text) == label
+                && let Some(rect) = ui.rect_of(item)
+            {
+                found.push(rect);
+            }
+            stack.extend(ui.children(item).iter().rev());
+        }
+        found
+    }
+
+    /// One pane shows where it is in the tool row, between the buttons and
+    /// the search, and its list starts higher; two panes each show their
+    /// own path bar over the pane, and the tool row has none. The tool
+    /// row's crumbs still walk, and its up button still goes up.
+    #[test]
+    fn one_pane_has_its_path_bar_in_the_tool_row_and_two_have_their_own() {
+        let mut app = crate::demo::app(false);
+        let home = crate::demo::home();
+        let mut view = View::new(super::fonts()).expect("made");
+        view.show(&mut app);
+        let _ = view.ui.render((1240, 800), tole::Color::TRANSPARENT);
+        let split = texts_at(&mut view.ui, "~");
+        assert_eq!(split.len(), 2, "a path bar in each pane: {split:?}");
+        assert!(
+            split.iter().all(|at| at.y > 136.0),
+            "over the panes: {split:?}"
+        );
+
+        app.act(Action::ToggleDual);
+        view.show(&mut app);
+        let _ = view.ui.render((1240, 800), tole::Color::TRANSPARENT);
+        let single = texts_at(&mut view.ui, "~");
+        assert_eq!(single.len(), 1, "one path bar: {single:?}");
+        let crumb = single[0];
+        assert!(
+            (54.0..90.0).contains(&crumb.y) && crumb.x > 290.0 && crumb.x < 1240.0 - 350.0,
+            "in the tool row, between the buttons and the search: {crumb:?}"
+        );
+        // The list's head comes up where the pane's path bar was.
+        let head = texts_at(&mut view.ui, "Name \u{2191}");
+        assert!(
+            head.iter().any(|at| at.y < 136.0 + 44.0),
+            "the list starts at the pane's top: {head:?}"
+        );
+        // Its crumb walks: home.
+        let f = app.focus();
+        app.act(Action::Go(Loc::Dir(home.join("Pictures"))));
+        view.show(&mut app);
+        click(&mut view, &mut app, "~");
+        assert_eq!(app.pane(f).loc, Loc::Dir(home.clone()));
+        // Its up button goes up: from the pictures, home.
+        app.act(Action::Go(Loc::Dir(home.join("Pictures"))));
+        view.show(&mut app);
+        let _ = view.ui.render((1240, 800), tole::Color::TRANSPARENT);
+        view.ui.pointer_move(290.0 + 4.0 + 16.0, 54.0 + 18.0);
+        view.ui.pointer_press();
+        view.ui.pointer_release();
+        let asked = view.actions();
+        assert!(asked.contains(&Action::Up(0)), "the up button: {asked:?}");
+    }
+
+    /// The tab row is the window's title bar only where the window draws
+    /// its own frame: then it has minimize, maximize and close at its
+    /// right end, a press on its empty part moves the window and a double
+    /// click maximizes it. Where the compositor draws the title bar (Yoru's)
+    /// the row has none of that, and a press there asks nothing of the
+    /// window.
+    #[test]
+    fn the_tab_row_is_the_title_bar_only_where_the_window_draws_its_frame() {
+        let window_actions = |asked: &[Action]| -> Vec<Action> {
+            asked
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        action,
+                        Action::WindowMove
+                            | Action::WindowMaximize
+                            | Action::WindowMinimize
+                            | Action::WindowClose
+                    )
+                })
+                .cloned()
+                .collect()
+        };
+        let press = |view: &mut View, x: f32, y: f32, double: bool| -> Vec<Action> {
+            let _ = view.ui.render((1240, 800), tole::Color::TRANSPARENT);
+            view.ui.pointer_move(x, y);
+            view.ui.pointer_press();
+            view.ui.pointer_release();
+            if double {
+                view.ui.pointer_press();
+                view.ui.pointer_release();
+            }
+            view.actions()
+        };
+        let spots = [1240.0 - 88.0, 1240.0 - 54.0, 1240.0 - 20.0];
+        for own in [false, true] {
+            let mut app = crate::demo::app(false);
+            let mut view = View::new(super::fonts()).expect("made");
+            view.set_own_frame(own);
+            view.show(&mut app);
+            let asked: Vec<Vec<Action>> = spots
+                .iter()
+                .map(|&x| window_actions(&press(&mut view, x, 22.0, false)))
+                .collect();
+            let empty = window_actions(&press(&mut view, 700.0, 22.0, false));
+            let double = window_actions(&press(&mut view, 700.0, 22.0, true));
+            if own {
+                assert_eq!(
+                    asked,
+                    [
+                        vec![Action::WindowMinimize],
+                        vec![Action::WindowMaximize],
+                        vec![Action::WindowClose]
+                    ],
+                    "its own buttons"
+                );
+                assert_eq!(empty, [Action::WindowMove], "the row moves the window");
+                assert!(
+                    double.contains(&Action::WindowMaximize),
+                    "a double click maximizes: {double:?}"
+                );
+            } else {
+                assert!(
+                    asked.iter().all(Vec::is_empty) && empty.is_empty() && double.is_empty(),
+                    "the compositor's bar has them: {asked:?} {empty:?} {double:?}"
+                );
+            }
+            // A tab is still a tab.
+            let tab = press(&mut view, 120.0, 26.0, false);
+            assert!(tab.contains(&Action::Tab(0)), "{tab:?}");
+            assert!(
+                window_actions(&tab).is_empty(),
+                "a tab is not the bar: {tab:?}"
+            );
+        }
     }
 }
