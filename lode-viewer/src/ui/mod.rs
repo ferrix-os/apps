@@ -205,6 +205,13 @@ impl View {
         common.height.set(&mut self.ui, height as f32);
     }
 
+    /// Whether the window draws its own frame -- the compositor answered
+    /// `client_side` or draws none -- and so its header shows minimize,
+    /// maximize and close (`tole::window::Window::draws_own_frame`).
+    pub fn set_own_frame(&mut self, on: bool) {
+        self.shell.own_frame.set(&mut self.ui, on);
+    }
+
     /// Take into the state what the tree changed by itself: how far the
     /// pages were scrolled. Call it before acting on the state.
     pub fn pull(&mut self) {

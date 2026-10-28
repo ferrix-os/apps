@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use compositor_toolkit::{Event, KeyboardEvent, PointerEvent};
 use tole::Element as _;
-use tole::window::{Window, WindowOptions};
+use tole::window::{Decorations, Window, WindowOptions};
 
 use crate::app::{Action, App, Page};
 use crate::cli::say;
@@ -97,6 +97,9 @@ pub fn run(app: App) -> i32 {
         min_size: (960, 600),
         resize_edges: true,
         clipboard: false,
+        // Its header is its title bar, with its own buttons: hyprix draws
+        // none over it where it agrees.
+        decorations: Decorations::Client,
         ..WindowOptions::default()
     };
     let started = Instant::now();
@@ -132,6 +135,7 @@ pub fn run(app: App) -> i32 {
         follow_next: false,
     };
     let mut up = false;
+    let mut own_frame = false;
     while !state.done && !window.is_closed() {
         let events = match window.dispatch(&mut state.view.ui, None) {
             Ok(events) => events,
@@ -140,6 +144,21 @@ pub fn run(app: App) -> i32 {
                 return 1;
             }
         };
+        // The window's own buttons only where the compositor draws no
+        // title bar over it.
+        if window.draws_own_frame() != own_frame {
+            own_frame = window.draws_own_frame();
+            say(&format!(
+                "the window's frame is {}",
+                if own_frame {
+                    "its own"
+                } else {
+                    "the compositor's"
+                }
+            ));
+            state.view.set_own_frame(own_frame);
+            state.dirty = true;
+        }
         if !up && let Some(size) = window.size() {
             up = true;
             let lines = state.app.borrow().lines.len();

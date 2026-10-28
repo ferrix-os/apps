@@ -1029,24 +1029,66 @@ fn a_screenshot_lode_could_not_keep_is_said_and_an_old_stores_file_still_read() 
     );
 }
 
-/// The window's own header has no minimize, maximize or close: the
-/// compositor's title bar has them (Yoru's), and with both the window had
-/// two rows of them (the N150, 2026-10-28). A click where each of the three
-/// was, at the header's right end, asks nothing of the window; the Light
-/// and Dark switch moved there still works.
+/// How many of the window's three buttons -- 32 by 26 at the header's
+/// right end, of a window 1440 wide -- are shown.
+fn window_buttons_shown(view: &mut crate::ui::View) -> usize {
+    let spots = [1440.0 - 104.0, 1440.0 - 70.0, 1440.0 - 36.0];
+    let mut found: Vec<f32> = Vec::new();
+    let mut stack: Vec<tole::ItemId> = view.ui.roots().to_vec();
+    while let Some(item) = stack.pop() {
+        let shown = view
+            .ui
+            .common(item)
+            .is_some_and(|common| view.ui.get(common.visible));
+        if !shown {
+            continue;
+        }
+        if let Some(rect) = view.ui.rect_of(item)
+            && spots.contains(&rect.x)
+            && rect.y == 6.0
+            && rect.w == 32.0
+            && rect.h == 26.0
+            && !found.contains(&rect.x)
+        {
+            found.push(rect.x);
+        }
+        stack.extend(view.ui.children(item).iter().rev());
+    }
+    found.len()
+}
+
+/// The window's own minimize, maximize and close, at the header's right
+/// end, are there only where the window draws its own frame: the
+/// compositor said `client_side`, or draws no title bars. Where it draws
+/// its title bar over the window (Yoru's), that bar has them, and with both
+/// the window had two rows of them (the N150, 2026-10-28): a click where
+/// each would be asks nothing of the window. The Light and Dark switch
+/// answers in both, beside the buttons or at the end.
 #[test]
-fn the_header_leaves_the_window_buttons_to_the_compositor() {
-    let app = App::new(
-        log(),
-        Origin::File("sample.jsonl".into()),
-        "sample".to_owned(),
-    );
-    let mut view = view_of(app, (1440, 900));
-    for x in [1440.0 - 88.0, 1440.0 - 54.0, 1440.0 - 20.0] {
+fn the_header_has_the_window_buttons_only_where_the_window_draws_its_frame() {
+    let spots = [1440.0 - 88.0, 1440.0 - 54.0, 1440.0 - 20.0];
+    let press = |view: &mut crate::ui::View, x: f32| {
         view.ui.pointer_move(x, 19.0);
         view.ui.pointer_press();
         view.ui.pointer_release();
-        let asked = view.step().1;
+        view.step().1
+    };
+    let fresh = || {
+        view_of(
+            App::new(
+                log(),
+                Origin::File("sample.jsonl".into()),
+                "sample".to_owned(),
+            ),
+            (1440, 900),
+        )
+    };
+
+    // The compositor's title bar: no buttons of the window's own.
+    let mut view = fresh();
+    assert_eq!(window_buttons_shown(&mut view), 0, "none of its own");
+    for x in spots {
+        let asked = press(&mut view, x);
         assert!(
             !asked.iter().any(|action| matches!(
                 action,
@@ -1056,4 +1098,32 @@ fn the_header_leaves_the_window_buttons_to_the_compositor() {
         );
     }
     assert!(!click(&mut view, "Dark").is_empty(), "the switch answers");
+
+    // Its own frame: each button shown asks what it shows.
+    let mut view = fresh();
+    view.set_own_frame(true);
+    view.ui.update();
+    assert_eq!(window_buttons_shown(&mut view), 3, "its own three");
+    let asked: Vec<Vec<Action>> = spots.iter().map(|&x| press(&mut view, x)).collect();
+    assert!(
+        matches!(asked[0].as_slice(), [Action::WindowMinimize]),
+        "minimize: {asked:?}"
+    );
+    assert!(
+        matches!(asked[1].as_slice(), [Action::WindowMaximize]),
+        "maximize: {asked:?}"
+    );
+    assert!(
+        asked[2]
+            .iter()
+            .any(|action| matches!(action, Action::WindowClose)),
+        "close: {asked:?}"
+    );
+    let mut view = fresh();
+    view.set_own_frame(true);
+    view.ui.update();
+    assert!(
+        !click(&mut view, "Dark").is_empty(),
+        "the switch answers beside them"
+    );
 }

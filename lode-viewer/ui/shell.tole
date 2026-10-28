@@ -51,6 +51,11 @@ export component Shell : Rectangle {
     property bool naming
     // The saved query the menu is for.
     property int menuFor: -1
+    // Whether the window draws its own frame: the compositor said
+    // `client_side`, or draws no title bars at all. Then the header has
+    // the window's minimize, maximize and close; else the compositor's
+    // title bar has them.
+    property bool ownFrame
 
     signal theme(bool dark)
     signal moveWindow()
@@ -309,20 +314,60 @@ export component Shell : Rectangle {
         Text { id: name; x: 40; height: 38; text: "lode"; font: Theme.sans(13, 600); color: Theme.ink }
         Text {
             x: 40 + name.implicitWidth + 10
-            width: shell.width - (40 + name.implicitWidth + 10) - 226
+            width: shell.width - (40 + name.implicitWidth + 10) - (shell.ownFrame ? 330 : 226)
             height: 38
             elide: Text.ElideRight
             text: shell.place
             font: Theme.sans(13)
             color: Theme.ink4
         }
-        // No minimize, maximize or close of the window's own: the
-        // compositor's title bar has them (Yoru's, hyprix:titlebars), as
-        // Settings leaves them to it. Drawn here too, the window had two
-        // rows of them (the customer, N150, 2026-10-28).
-        // Light | Dark.
+        // Minimize, maximize and close, as GNOME's own windows draw them:
+        // only where the window draws its own frame. Where the compositor
+        // draws a title bar (Yoru's, hyprix:titlebars) it has them, and
+        // drawn here too the window had two rows of them (the customer,
+        // N150, 2026-10-28).
+        Item {
+            visible: shell.ownFrame
+            x: shell.width - 104; y: 6; width: 32; height: 26
+            Rectangle { x: 11; y: 16; width: 10; height: 1.5; color: Theme.ink3 }
+            MouseArea { anchors.fill: parent; onClicked: shell.minimizeWindow() }
+        }
+        Item {
+            visible: shell.ownFrame
+            x: shell.width - 70; y: 6; width: 32; height: 26
+            Rectangle {
+                x: 11; y: 8; width: 10; height: 10
+                radius: 1
+                color: "transparent"
+                border.width: 1.3
+                border.color: Theme.ink3
+            }
+            MouseArea { anchors.fill: parent; onClicked: shell.maximizeWindow() }
+        }
+        Item {
+            visible: shell.ownFrame
+            x: shell.width - 36; y: 6; width: 32; height: 26
+            Shape {
+                ShapePath {
+                    strokeColor: Theme.ink3
+                    strokeWidth: 1.4
+                    capStyle: ShapePath.FlatCap
+                    startX: 11; startY: 8
+                    PathLine { x: 21; y: 18 }
+                }
+                ShapePath {
+                    strokeColor: Theme.ink3
+                    strokeWidth: 1.4
+                    capStyle: ShapePath.FlatCap
+                    startX: 21; startY: 8
+                    PathLine { x: 11; y: 18 }
+                }
+            }
+            MouseArea { anchors.fill: parent; onClicked: shell.closeWindow() }
+        }
+        // Light | Dark: left of the window's buttons where they are drawn.
         Rectangle {
-            x: shell.width - 136; y: 8; width: 120; height: 22
+            x: shell.width - (shell.ownFrame ? 240 : 136); y: 8; width: 120; height: 22
             radius: 6
             color: Theme.bg3
             border.width: 1

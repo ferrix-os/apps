@@ -48,4 +48,6 @@ cargo xtask test-compositor --arch x86_64 --boot lode-viewer  # the desktop, the
 
 The tests read `testdata/n150-boot-excerpt.jsonl`: 801 records of the N150's first boot under lode, from before lode read levels itself, with its private addresses replaced by documentation ones.
 
-**Not yet**: the design's Timeline, Sources, Crashes (the sidebar's Crashes opens Logs on them), Boots and Rules & alerts pages; dragging the brush's edges (a press or a drag on the track moves the window); Export…; a merged view of several machines (they are shown one at a time); a link's ssh asking for a host key's change to be accepted (it is refused, as ssh refuses it); moving the window by its own header where a compositor draws no title bar.
+**Not yet**: the design's Timeline, Sources, Crashes (the sidebar's Crashes opens Logs on them), Boots and Rules & alerts pages; dragging the brush's edges (a press or a drag on the track moves the window); Export…; a merged view of several machines (they are shown one at a time); a link's ssh asking for a host key's change to be accepted (it is refused, as ssh refuses it).
+
+**Its title bar.** The viewer asks to draw its own frame (`xdg-decoration`'s `client_side`, through tole's `Decorations::Client`). Where the compositor agrees -- hyprix under Yoru's title bars, or a compositor that draws none -- the header has minimize, maximize and close at its right end, moves the window when pressed and maximizes it on a double click; where the compositor draws its own title bar over the window, the header leaves the buttons to it.
