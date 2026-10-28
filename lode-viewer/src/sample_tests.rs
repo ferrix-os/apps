@@ -1028,3 +1028,32 @@ fn a_screenshot_lode_could_not_keep_is_said_and_an_old_stores_file_still_read() 
         crate::crashes::Screenshot::None
     );
 }
+
+/// The window's own header has no minimize, maximize or close: the
+/// compositor's title bar has them (Yoru's), and with both the window had
+/// two rows of them (the N150, 2026-10-28). A click where each of the three
+/// was, at the header's right end, asks nothing of the window; the Light
+/// and Dark switch moved there still works.
+#[test]
+fn the_header_leaves_the_window_buttons_to_the_compositor() {
+    let app = App::new(
+        log(),
+        Origin::File("sample.jsonl".into()),
+        "sample".to_owned(),
+    );
+    let mut view = view_of(app, (1440, 900));
+    for x in [1440.0 - 88.0, 1440.0 - 54.0, 1440.0 - 20.0] {
+        view.ui.pointer_move(x, 19.0);
+        view.ui.pointer_press();
+        view.ui.pointer_release();
+        let asked = view.step().1;
+        assert!(
+            !asked.iter().any(|action| matches!(
+                action,
+                Action::WindowMinimize | Action::WindowMaximize | Action::WindowClose
+            )),
+            "a click at {x} asked {asked:?}"
+        );
+    }
+    assert!(!click(&mut view, "Dark").is_empty(), "the switch answers");
+}
