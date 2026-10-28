@@ -28,6 +28,12 @@ Phosphor for icons. An app (Ferrix's
   under it; a press starts or pauses it.
 - **The clock** and the date, in UTC or `TZ=UTC±h` (Ferrix keeps no zone
   database).
+- **Power**, at the right end: `yoru-shell --power`, a card over the
+  dimmed screen with Lock, Restart and Shut down (Lock not in the live
+  session, whose person has no password). Restart and Shut down ask once
+  more, then call `svc reboot` or `svc poweroff`, which the init allows the
+  person at the machine (Ferrix's docs/INIT.md §10.1); a refusal is shown in
+  the card. `--render-power FILE [--live] [--confirm]` draws it.
 
 It follows hyprix through Hyprland's IPC: `.socket2.sock`'s events, and
 `j/workspaces`, `j/activeworkspace` and `j/clients` after each one that

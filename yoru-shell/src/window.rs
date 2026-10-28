@@ -137,6 +137,7 @@ fn act(hypr: Option<&Hypr>, state: &mut State, action: Action) {
             ));
         }
         Action::Stash => dispatch(&format!("exec {} --stash-panel", own_path())),
+        Action::Power => dispatch(&format!("exec {} --power", own_path())),
         // Said for the tooltip's sake, and for a boot that finds a launcher
         // by moving the pointer along the dock.
         Action::Hover(title) => {

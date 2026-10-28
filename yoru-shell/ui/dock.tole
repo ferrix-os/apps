@@ -38,6 +38,7 @@ export component Dock : Item {
     property painter frame
     property string stashIcon
     property string stashBadge
+    property string powerIcon
     property bool overStash: stashArea.containsMouse
 
     signal search()
@@ -47,6 +48,7 @@ export component Dock : Item {
     signal focusMode()
     signal timer()
     signal stash()
+    signal power()
     // What the pointer is over: a launcher's or a tool's title, said for
     // its tooltip (empty when it leaves).
     signal hover(string title)
@@ -355,6 +357,28 @@ export component Dock : Item {
                     text: dock.date
                     font: Nocturne.sans(10.5, 500)
                     color: Nocturne.n500
+                }
+            }
+            // Power: Lock, Restart and Shut down (`src/power.rs`).
+            Rectangle {
+                y: 2
+                width: 32; height: 32
+                radius: 8
+                color: powerArea.containsMouse ? Nocturne.n900 : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: dock.powerIcon
+                    font: Nocturne.icon(17)
+                    color: powerArea.containsMouse ? Nocturne.c300 : Nocturne.n400
+                }
+                MouseArea {
+                    id: powerArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: dock.power()
+                    onEntered: dock.hover("Power · restart or shut down")
+                    onExited: dock.hover("")
                 }
             }
         }

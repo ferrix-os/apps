@@ -10,6 +10,7 @@ pub mod json;
 pub mod look;
 pub mod model;
 pub mod picker;
+pub mod power;
 pub mod quick;
 pub mod shelf;
 pub mod side;

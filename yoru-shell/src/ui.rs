@@ -31,6 +31,8 @@ pub enum Action {
     Timer,
     /// The stash's panel.
     Stash,
+    /// The power menu.
+    Power,
     /// The pointer came over a launcher or a tool (its title), or left
     /// one (empty).
     Hover(String),
@@ -125,6 +127,7 @@ impl View {
         dock.search_icon.set(&mut ui, s(icon("magnifying-glass")));
         dock.focus_icon.set(&mut ui, s(icon("crosshair-simple")));
         dock.stash_icon.set(&mut ui, s(icon("archive")));
+        dock.power_icon.set(&mut ui, s(icon("power")));
         Some(View {
             ui,
             dock,
@@ -214,6 +217,7 @@ impl View {
                 DockSignal::FocusMode => Some(Action::Focus),
                 DockSignal::Timer => Some(Action::Timer),
                 DockSignal::Stash => Some(Action::Stash),
+                DockSignal::Power => Some(Action::Power),
                 DockSignal::Hover(title) => Some(Action::Hover(title.to_string())),
             };
             actions.extend(action);

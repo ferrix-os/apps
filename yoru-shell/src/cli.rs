@@ -302,6 +302,37 @@ pub fn main() -> ExitCode {
             }
         };
     }
+    if arguments.iter().any(|word| word == "--power") {
+        return if crate::power::run() == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if let Some(at) = arguments.iter().position(|word| word == "--render-power") {
+        let Some(path) = arguments.get(at + 1) else {
+            eprintln!("yoru-shell: --render-power needs a file");
+            return ExitCode::FAILURE;
+        };
+        let live = arguments.iter().any(|word| word == "--live");
+        let asking = arguments
+            .iter()
+            .any(|word| word == "--confirm")
+            .then_some(crate::power::Offer::ShutDown);
+        let Some(frame) = crate::power::render(live, asking, (1280, 800), 1.0) else {
+            eprintln!("yoru-shell: the power menu could not be drawn");
+            return ExitCode::FAILURE;
+        };
+        let pixmap = frame.pixmap();
+        let png = tole::png::encode(pixmap.width(), pixmap.height(), pixmap.data());
+        return match std::fs::write(path, png) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("yoru-shell: {path}: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if arguments.iter().any(|word| word == "--walls") {
         return if crate::switch::run() == 0 {
             ExitCode::SUCCESS

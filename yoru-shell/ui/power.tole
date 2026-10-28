@@ -1,0 +1,207 @@
+// Yoru's power menu, from the dock's power button: a card in the middle of
+// a dimmed screen with Lock, Restart and Shut down, each that the session
+// has; Restart and Shut down ask once more before they go. A press outside
+// the card, Escape or Cancel closes it. Rust says what is offered and does
+// what was chosen (`src/power.rs`).
+import Fx
+
+struct Choice {
+    icon: string
+    label: string
+    hint: string
+}
+
+export component Power : FocusScope {
+    id: power
+    property list<Choice> choices
+    // 0: the choices; 1: the question; 2: going (no more presses).
+    property int stage
+    property string icPower
+    property string icClose
+    property string question
+    property string detail
+    property string verb
+    property string status
+
+    signal closed()
+    signal choose(int index)
+    signal confirm()
+
+    focus: true
+    Keys.onEscapePressed: power.closed()
+
+    // The screen behind, dimmed; a press on it closes the menu.
+    Rectangle {
+        anchors.fill: parent
+        color: alpha(Nocturne.bg, 0.55)
+        MouseArea {
+            anchors.fill: parent
+            onClicked: { if (power.stage != 2) { power.closed() } }
+        }
+    }
+
+    Rectangle {
+        id: card
+        x: (power.width - width) / 2
+        y: (power.height - height) / 2
+        width: 340
+        height: power.stage == 0 ? 76 + power.choices.length * 52 + 8 : 172
+        radius: 16
+        color: alpha(Nocturne.surface, 0.97)
+        border.width: 1
+        border.color: alpha(Nocturne.a500, 0.35)
+        MouseArea { anchors.fill: parent }
+
+        // The head: the power glyph, the title, close.
+        Rectangle {
+            x: 14; y: 14
+            width: 32; height: 32
+            radius: 16
+            color: Nocturne.a900
+            border.width: 1
+            border.color: Nocturne.a700
+            Text {
+                anchors.centerIn: parent
+                text: power.icPower
+                font: Nocturne.icon(16)
+                color: Nocturne.a200
+            }
+        }
+        Text {
+            x: 56; y: 14
+            height: 32
+            text: power.stage == 0 ? "Power" : power.question
+            font: Nocturne.sans(15, 500)
+            color: Nocturne.text
+        }
+        Rectangle {
+            visible: power.stage != 2
+            x: card.width - 42; y: 16
+            width: 28; height: 28
+            radius: 6
+            color: "transparent"
+            border.width: 1
+            border.color: closeArea.containsMouse ? Nocturne.a500 : Nocturne.n700
+            Text {
+                anchors.centerIn: parent
+                text: power.icClose
+                font: Nocturne.icon(14)
+                color: closeArea.containsMouse ? Nocturne.text : Nocturne.n300
+            }
+            MouseArea {
+                id: closeArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: power.closed()
+            }
+        }
+
+        // The choices.
+        Column {
+            visible: power.stage == 0
+            x: 12; y: 64
+            spacing: 4
+            Repeater {
+                model: power.choices
+                Rectangle {
+                    width: 316; height: 48
+                    radius: 10
+                    color: choiceArea.containsMouse ? alpha(Nocturne.accent, 0.14) : "transparent"
+                    border.width: choiceArea.containsMouse ? 1 : 0
+                    border.color: Nocturne.a600
+                    Text {
+                        x: 14
+                        height: 48
+                        text: modelData.icon
+                        font: Nocturne.icon(19)
+                        color: choiceArea.containsMouse ? Nocturne.a200 : Nocturne.n300
+                    }
+                    Text {
+                        x: 46; y: 6
+                        text: modelData.label
+                        font: Nocturne.sans(13.5, 500)
+                        color: Nocturne.text
+                    }
+                    Text {
+                        x: 46; y: 26
+                        text: modelData.hint
+                        font: Nocturne.sans(11, 400)
+                        color: Nocturne.n500
+                    }
+                    MouseArea {
+                        id: choiceArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: power.choose(index)
+                    }
+                }
+            }
+        }
+
+        // The question, and then what happened.
+        Text {
+            visible: power.stage != 0
+            x: 18; y: 66
+            width: 304
+            elide: Text.ElideRight
+            text: power.detail
+            font: Nocturne.sans(12.5, 400)
+            color: Nocturne.n300
+        }
+        Text {
+            visible: power.stage != 0
+            x: 18; y: 90
+            width: 304
+            elide: Text.ElideRight
+            text: power.status
+            font: Nocturne.sans(12.5, 500)
+            color: Nocturne.c300
+        }
+        Row {
+            visible: power.stage == 1
+            x: card.width - width - 14
+            y: card.height - 52
+            spacing: 8
+            Rectangle {
+                width: 96; height: 36
+                radius: 8
+                color: cancelArea.containsMouse ? Nocturne.n900 : "transparent"
+                border.width: 1
+                border.color: Nocturne.n700
+                Text {
+                    anchors.centerIn: parent
+                    text: "Cancel"
+                    font: Nocturne.sans(13, 500)
+                    color: Nocturne.n200
+                }
+                MouseArea {
+                    id: cancelArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: power.closed()
+                }
+            }
+            Rectangle {
+                width: 112; height: 36
+                radius: 8
+                color: goArea.containsMouse ? Nocturne.a500 : Nocturne.a600
+                Text {
+                    anchors.centerIn: parent
+                    text: power.verb
+                    font: Nocturne.sans(13, 600)
+                    color: "#ffffff"
+                }
+                MouseArea {
+                    id: goArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: power.confirm()
+                }
+            }
+        }
+    }
+}
