@@ -131,12 +131,19 @@ name = "compositor-xkb"
 version = "0.1.0"
 
 [[package]]
+name = "ferrix-errno"
+version = "0.1.0"
+
+[[package]]
 name = "ferrix-fbtext"
 version = "0.1.0"
 
 [[package]]
 name = "ferrix-linux-abi"
 version = "0.1.0"
+dependencies = [
+ "ferrix-errno",
+]
 
 [[package]]
 name = "libc"
